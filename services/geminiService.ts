@@ -4,31 +4,46 @@ import { UnitPlan, AssessmentData } from "../types";
 // Proxy API helper — tous les appels Gemini passent par /api/generate (Vercel
 // serverless function forcée en région US iad1) pour contourner le blocage
 // de l'API Gemini depuis les régions EU (Paris).
+// Utilise gemini-2.0-flash via streaming SSE pour éviter les timeouts.
 // ─────────────────────────────────────────────────────────────────────────────
 const callGeminiViaProxy = async (
   contents: string,
   systemInstruction?: string,
   generationConfig?: Record<string, any>
 ): Promise<string> => {
-  const response = await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents, systemInstruction, generationConfig }),
-  });
+  // AbortController pour un timeout côté client de 270s (légèrement inférieur au maxDuration serveur)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 270_000);
 
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    const msg = errData?.details
-      ? (() => {
-          try { return JSON.parse(errData.details)?.error?.message || errData.message || 'Erreur API'; }
-          catch { return errData.message || 'Erreur API'; }
-        })()
-      : errData?.message || `HTTP ${response.status}`;
-    throw new Error(msg);
+  try {
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents, systemInstruction, generationConfig }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      const msg = errData?.details
+        ? (() => {
+            try { return JSON.parse(errData.details)?.error?.message || errData.message || 'Erreur API'; }
+            catch { return errData.message || 'Erreur API'; }
+          })()
+        : errData?.message || `HTTP ${response.status}`;
+      throw new Error(msg);
+    }
+
+    const data = await response.json();
+    return data.text || '';
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error("La génération a pris trop de temps. Essayez avec moins de chapitres ou réessayez.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json();
-  return data.text || '';
 };
 
 // Helper function to detect if subject should use English generation

@@ -1,7 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '';
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+
+// Utilise gemini-2.0-flash : beaucoup plus rapide que 2.5-flash (pas de thinking overhead)
+// et suffisamment performant pour les plans PEI
+const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_STREAM_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent`;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -25,7 +29,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!GEMINI_API_KEY) {
     return res.status(500).json({
       error: 'GEMINI_API_KEY not configured on server',
-      message: 'Veuillez configurer GEMINI_API_KEY dans les variables d\'environnement Vercel.'
+      message: "Veuillez configurer GEMINI_API_KEY dans les variables d'environnement Vercel."
     });
   }
 
@@ -50,35 +54,84 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       };
     }
 
-    if (generationConfig) {
-      requestBody.generationConfig = generationConfig;
-    }
+    // Config par défaut : désactiver le thinking pour plus de rapidité
+    requestBody.generationConfig = {
+      temperature: 0.7,
+      maxOutputTokens: 8192,
+      ...(generationConfig || {}),
+    };
 
-    const url = `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`;
+    // Utilise alt=sse pour recevoir le stream Server-Sent Events
+    const url = `${GEMINI_STREAM_URL}?key=${GEMINI_API_KEY}&alt=sse`;
 
-    const response = await fetch(url, {
+    const geminiResponse = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
     });
 
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error('❌ Gemini API error:', response.status, errorBody);
-      return res.status(response.status).json({
-        error: `Gemini API error: ${response.status}`,
+    if (!geminiResponse.ok) {
+      const errorBody = await geminiResponse.text();
+      console.error('❌ Gemini API error:', geminiResponse.status, errorBody);
+      return res.status(geminiResponse.status).json({
+        error: `Gemini API error: ${geminiResponse.status}`,
         details: errorBody
       });
     }
 
-    const data = await response.json();
+    // Lire le stream SSE et accumuler le texte complet
+    const reader = geminiResponse.body?.getReader();
+    if (!reader) {
+      return res.status(500).json({ error: 'No response body from Gemini' });
+    }
 
-    // Extract text from Gemini response
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buffer = '';
 
-    return res.status(200).json({ text, raw: data });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Traiter chaque ligne SSE
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // garder la ligne incomplète dans le buffer
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+        const jsonStr = trimmed.slice(6).trim(); // enlever "data: "
+        if (jsonStr === '[DONE]') continue;
+
+        try {
+          const chunk = JSON.parse(jsonStr);
+          const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (chunkText) {
+            fullText += chunkText;
+          }
+        } catch {
+          // Ignorer les chunks non-parsables
+        }
+      }
+    }
+
+    // Traiter le buffer restant
+    if (buffer.trim().startsWith('data: ')) {
+      try {
+        const jsonStr = buffer.trim().slice(6);
+        if (jsonStr && jsonStr !== '[DONE]') {
+          const chunk = JSON.parse(jsonStr);
+          const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (chunkText) fullText += chunkText;
+        }
+      } catch { /* ignore */ }
+    }
+
+    console.log(`✅ Gemini stream complete, total text length: ${fullText.length}`);
+    return res.status(200).json({ text: fullText });
 
   } catch (error: any) {
     console.error('❌ [API/generate] Error:', error);

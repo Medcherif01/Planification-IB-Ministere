@@ -5,13 +5,13 @@
   "regions": ["iad1"],
   "functions": {
     "api/generate.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "api/planifications.ts": {
-      "maxDuration": 30
+      "maxDuration": 60
     },
     "api/exams.ts": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   },
   "rewrites": [
