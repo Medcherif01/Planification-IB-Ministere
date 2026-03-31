@@ -1,11 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// Force this function to run in US East region to bypass EU Gemini API restrictions
-export const config = {
-  runtime: 'nodejs20.x',
-  regions: ['iad1'], // Washington DC - US East (Gemini API available in US)
-};
-
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 

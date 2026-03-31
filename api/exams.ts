@@ -1,12 +1,6 @@
 import { MongoClient, ServerApiVersion } from 'mongodb';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// Force la région US East
-export const config = {
-  runtime: 'nodejs20.x',
-  regions: ['iad1'],
-};
-
 const MONGO_URL = process.env.MONGO_URL || '';
 const DB_NAME = 'planpei';
 const COLLECTION_NAME = 'exams';

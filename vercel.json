@@ -2,15 +2,16 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "regions": ["iad1"],
   "functions": {
     "api/generate.ts": {
-      "regions": ["iad1"]
+      "maxDuration": 60
     },
     "api/planifications.ts": {
-      "regions": ["iad1"]
+      "maxDuration": 30
     },
     "api/exams.ts": {
-      "regions": ["iad1"]
+      "maxDuration": 30
     }
   },
   "rewrites": [
