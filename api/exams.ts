@@ -1,5 +1,11 @@
-import { MongoClient } from 'mongodb';
+import { MongoClient, ServerApiVersion } from 'mongodb';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+// Force la région US East
+export const config = {
+  runtime: 'nodejs20.x',
+  regions: ['iad1'],
+};
 
 const MONGO_URL = process.env.MONGO_URL || '';
 const DB_NAME = 'planpei';
@@ -16,7 +22,13 @@ async function connectToDatabase() {
     throw new Error('MONGO_URL non définie dans les variables d\'environnement');
   }
 
-  const client = new MongoClient(MONGO_URL);
+  const client = new MongoClient(MONGO_URL, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: false,
+      deprecationErrors: false,
+    }
+  });
   await client.connect();
   cachedClient = client;
   return client;

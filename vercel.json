@@ -2,6 +2,17 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "functions": {
+    "api/generate.ts": {
+      "regions": ["iad1"]
+    },
+    "api/planifications.ts": {
+      "regions": ["iad1"]
+    },
+    "api/exams.ts": {
+      "regions": ["iad1"]
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",

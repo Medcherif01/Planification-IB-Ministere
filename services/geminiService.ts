@@ -1,38 +1,34 @@
-import { GoogleGenAI } from "@google/genai";
 import { UnitPlan, AssessmentData } from "../types";
 
-const getClient = () => {
-  // Get API key from environment variable only
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || 
-                  process.env.GEMINI_API_KEY || 
-                  process.env.API_KEY;
-  
-  if (!apiKey) {
-    const errorMsg = `
-⚠️ ERREUR DE CONFIGURATION API
+// ─────────────────────────────────────────────────────────────────────────────
+// Proxy API helper — tous les appels Gemini passent par /api/generate (Vercel
+// serverless function forcée en région US iad1) pour contourner le blocage
+// de l'API Gemini depuis les régions EU (Paris).
+// ─────────────────────────────────────────────────────────────────────────────
+const callGeminiViaProxy = async (
+  contents: string,
+  systemInstruction?: string,
+  generationConfig?: Record<string, any>
+): Promise<string> => {
+  const response = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents, systemInstruction, generationConfig }),
+  });
 
-La clé API Gemini n'est pas configurée.
-
-POUR RÉSOUDRE CE PROBLÈME:
-
-1. Si vous êtes en développement local:
-   - Créez un fichier .env.local à la racine du projet
-   - Ajoutez: VITE_GEMINI_API_KEY=votre_clé_api_ici
-   - Obtenez une clé gratuite sur: https://aistudio.google.com/app/apikey
-   - Redémarrez le serveur de développement
-
-2. Si vous êtes sur Vercel (production):
-   - Allez dans Settings > Environment Variables
-   - Ajoutez: GEMINI_API_KEY=votre_clé_api_ici
-   - Redéployez l'application
-
-La génération IA ne fonctionnera pas sans cette clé.
-    `.trim();
-    
-    throw new Error(errorMsg);
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const msg = errData?.details
+      ? (() => {
+          try { return JSON.parse(errData.details)?.error?.message || errData.message || 'Erreur API'; }
+          catch { return errData.message || 'Erreur API'; }
+        })()
+      : errData?.message || `HTTP ${response.status}`;
+    throw new Error(msg);
   }
-  
-  return new GoogleGenAI({ apiKey });
+
+  const data = await response.json();
+  return data.text || '';
 };
 
 // Helper function to detect if subject should use English generation
@@ -282,7 +278,6 @@ export const generateStatementOfInquiry = async (
 ): Promise<string[]> => {
   const lang = subject ? getGenerationLanguage(subject) : 'fr';
   try {
-    const ai = getClient();
     const relatedStr = relatedConcepts.join(", ");
     
     const prompt = lang === 'en'
@@ -309,12 +304,7 @@ export const generateStatementOfInquiry = async (
         Retourne UNIQUEMENT les 3 énoncés sous forme de liste de texte brut, séparés par des retours à la ligne. Ne pas numéroter ni ajouter de texte d'introduction.
       `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-
-    const text = response.text || "";
+    const text = await callGeminiViaProxy(prompt);
     return text.split('\n').filter(line => line.trim().length > 0).map(l => l.replace(/^- /, '').trim());
   } catch (error) {
     console.error("Error generating SOI:", error);
@@ -330,7 +320,6 @@ export const generateInquiryQuestions = async (
   subject?: string
 ): Promise<{ factual: string[], conceptual: string[], debatable: string[] }> => {
   try {
-    const ai = getClient();
     const lang = subject ? getGenerationLanguage(subject) : 'fr';
     
     const prompt = lang === 'en'
@@ -365,13 +354,8 @@ export const generateInquiryQuestions = async (
         Retourne UNIQUEMENT le JSON.
       `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: "application/json" }
-    });
-    
-    const jsonText = cleanJsonText(response.text || "");
+    const rawText = await callGeminiViaProxy(prompt, undefined, { responseMimeType: 'application/json' });
+    const jsonText = cleanJsonText(rawText);
     const parsed = JSON.parse(jsonText);
     return parsed;
   } catch (error) {
@@ -382,7 +366,6 @@ export const generateInquiryQuestions = async (
 
 export const generateLearningExperiences = async (plan: UnitPlan): Promise<string> => {
   try {
-    const ai = getClient();
     const lang = getGenerationLanguage(plan.subject);
     
     const prompt = lang === 'en'
@@ -399,11 +382,7 @@ export const generateLearningExperiences = async (plan: UnitPlan): Promise<strin
         Réponds en Français, format liste à puces.
       `;
     
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-    return response.text || "";
+    return await callGeminiViaProxy(prompt);
   } catch (error) {
     const errorMsg = getGenerationLanguage(plan.subject) === 'en'
       ? "Generation error."
@@ -869,7 +848,6 @@ export const generateFullUnitPlan = async (
   gradeLevel: string
 ): Promise<Partial<UnitPlan>> => {
   try {
-    const ai = getClient();
     const lang = getGenerationLanguage(subject);
     
     let userPrompt = '';
@@ -989,17 +967,12 @@ export const generateFullUnitPlan = async (
       `;
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: userPrompt,
-      config: {
-        systemInstruction: getSystemInstruction(subject),
-        responseMimeType: "application/json",
-        temperature: 0.7
-      }
-    });
+    const text = await callGeminiViaProxy(
+      userPrompt,
+      getSystemInstruction(subject),
+      { responseMimeType: 'application/json', temperature: 0.7 }
+    );
 
-    const text = response.text;
     if (!text || text.trim() === "") {
       throw new Error("L'IA n'a retourné aucune réponse. Veuillez réessayer.");
     }
@@ -1071,7 +1044,6 @@ export const generateCourseFromChapters = async (
     gradeLevel: string
   ): Promise<UnitPlan[]> => {
     try {
-      const ai = getClient();
       const lang = getGenerationLanguage(subject);
       
       let taskInstruction = '';
@@ -1138,17 +1110,12 @@ export const generateCourseFromChapters = async (
         `;
       }
   
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: userPrompt,
-        config: {
-          systemInstruction: systemInstruction,
-          responseMimeType: "application/json",
-          temperature: 0.7
-        }
-      });
+      const text = await callGeminiViaProxy(
+        userPrompt,
+        systemInstruction,
+        { responseMimeType: 'application/json', temperature: 0.7 }
+      );
   
-      const text = response.text;
       if (!text || text.trim() === "") {
         console.error("❌ L'IA n'a retourné aucune réponse");
         throw new Error("L'IA n'a pas retourné de plan valide. Veuillez réessayer.");
