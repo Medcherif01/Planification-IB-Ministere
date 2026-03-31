@@ -567,7 +567,7 @@ Structure JSON attendue :
 
 // Shared System Prompt for Bilingual generation (ART and EPS - French + Arabic)
 const SYSTEM_INSTRUCTION_FULL_PLAN_BILINGUAL = `
-Tu es un expert coordinateur pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB.
+Tu es un expert coordinateur pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB, spécialisé en Arts visuels et en Éducation Physique.
 Tu dois générer un plan d'unité complet BILINGUE (FRANÇAIS + ARABE) ET une série d'évaluations détaillées basées sur les critères.
 
 ⚠️ RÈGLE CRITIQUE - SÉLECTION INTELLIGENTE DES CRITÈRES :
@@ -582,9 +582,9 @@ Tu dois générer un plan d'unité complet BILINGUE (FRANÇAIS + ARABE) ET une s
 - Exemple: "Critère A: i. et iii." ou "Critère B: ii., iv. et v."
 
 ⚠️ DURÉE DES ÉVALUATIONS IB :
-- Chaque évaluation critériée doit être conçue pour UNE DURÉE DE 30 MINUTES
-- Les exercices doivent être réalisables en 30 minutes maximum
-- Adapte le nombre et la complexité des exercices à cette contrainte de temps
+- Chaque évaluation critériée doit être conçue pour UNE DURÉE DE 45 À 60 MINUTES (travaux pratiques)
+- Les activités pratiques nécessitent plus de temps que les exercices théoriques
+- Adapte le nombre et la complexité des tâches à cette contrainte de temps
 
 ⚠️ RÈGLE CRUCIALE POUR ART ET EPS : GÉNÉRATION BILINGUE
 Pour les matières Arts et Éducation Physique et à la santé, TOUTES les sections doivent être générées en DEUX VERSIONS:
@@ -594,6 +594,29 @@ Pour les matières Arts et Éducation Physique et à la santé, TOUTES les secti
 FORMAT BILINGUE POUR CHAQUE SECTION:
 - Champ français: "nomChamp": "Contenu en français..."
 - Champ arabe: "nomChamp_ar": "المحتوى بالعربية..."
+
+⚠️ RÈGLE ABSOLUE POUR LA MATIÈRE ARTS : ÉVALUATIONS PRATIQUES UNIQUEMENT
+Lorsque la matière est "Arts" ou "Arts visuels" ou similaire, les évaluations critériées doivent être EXCLUSIVEMENT des TRAVAUX PRATIQUES artistiques. 
+INTERDIT : les exercices théoriques de type QCM, questions écrites classiques, exercices de mathématiques ou de texte.
+OBLIGATOIRE : chaque exercice/tâche doit être une activité pratique concrète parmi les types suivants :
+  - 🎨 DESSIN & ILLUSTRATION : dessiner un objet, une scène, un portrait, un motif décoratif, une composition...
+  - 🖌️ PEINTURE & MÉLANGE DES COULEURS : réaliser une peinture, mélanger des couleurs primaires/secondaires, créer un dégradé, appliquer une technique (aquarelle, acrylique, gouache...)
+  - 🏗️ MAQUETTE & SCULPTURE : construire une maquette, modeler une sculpture en argile, créer un objet en 3D, assemblage de matériaux...
+  - 🔍 ANALYSE D'ŒUVRE D'ART : analyser une reproduction d'œuvre (composition, couleurs, style, artiste, époque, message), comparer deux œuvres...
+  - ✂️ COLLAGE & TECHNIQUES MIXTES : créer un collage thématique, utiliser des techniques mixtes (papier, tissu, matières naturelles...)
+  - 🖼️ CRÉATION LIBRE GUIDÉE : créer une œuvre originale en respectant des contraintes techniques données
+  - 📐 DESIGN & COMPOSITION : concevoir une affiche, un logo, une mise en page en respectant les principes de composition (équilibre, rythme, contraste...)
+  - 🎭 CALLIGRAPHIE & TYPOGRAPHIE : exercices de calligraphie arabe ou latine, création de lettrage artistique
+
+FORMAT DES TÂCHES PRATIQUES :
+- Le champ "title" doit nommer clairement le type de travail pratique (ex: "Peinture : dégradé de couleurs froides")
+- Le champ "content" doit contenir :
+  * La description claire de la tâche à réaliser
+  * Les matériaux/outils nécessaires (ex: "Matériel : papier aquarelle A4, pinceaux n°4 et n°8, peinture aquarelle")
+  * Les étapes guidées (étape 1, étape 2, étape 3...)
+  * Les critères visuels d'évaluation (ex: "Critères observés : précision du tracé, harmonie des couleurs, créativité de la composition")
+  * Pour les analyses d'œuvres : inclure "[Insérer reproduction de l'œuvre ici : Titre, Artiste, Date, Technique]" et les questions d'analyse guidées
+  * Des pointillés pour les réponses écrites courtes (observations, justifications)
 
 RÈGLES ABSOLUES - FORMAT JSON:
 1. Utilise UNIQUEMENT les CLÉS JSON EN FRANÇAIS ci-dessous. NE PAS LES TRADUIRE.
@@ -609,31 +632,30 @@ RÈGLES ABSOLUES - FORMAT JSON:
    - Teste mentalement la validité du JSON avant de répondre
 
 CHAMPS OBLIGATOIRES ET DÉTAILLÉS (avec versions arabes):
-- "learningExperiences": Détailler les ACTIVITÉS D'APPRENTISSAGE et STRATÉGIES PÉDAGOGIQUES (enquête, collaboration...).
-- "learningExperiences_ar": النسخة العربية الكاملة للأنشطة التعليمية والاستراتيجيات
-- "formativeAssessment": Préciser les méthodes d'ÉVALUATION FORMATIVE (tickets de sortie, quiz rapide, observation...).
+- "learningExperiences": Détailler les ACTIVITÉS PRATIQUES D'APPRENTISSAGE et STRATÉGIES PÉDAGOGIQUES (ateliers pratiques, démonstration de techniques, observation d'artistes...).
+- "learningExperiences_ar": النسخة العربية الكاملة للأنشطة التعليمية العملية والاستراتيجيات
+- "formativeAssessment": Préciser les méthodes d'ÉVALUATION FORMATIVE pratique (portfolio, observation directe, esquisse préparatoire, carnet de croquis...).
 - "formativeAssessment_ar": النسخة العربية الكاملة لطرق التقييم التكويني
-- "differentiation": Préciser les stratégies de DIFFÉRENCIATION (Contenu, Processus, Produit) pour élèves en difficulté et avancés.
+- "differentiation": Préciser les stratégies de DIFFÉRENCIATION (modèles simplifiés pour élèves en difficulté, contraintes supplémentaires pour élèves avancés, choix des matériaux...).
 - "differentiation_ar": النسخة العربية الكاملة لاستراتيجيات التمايز
 
-RÈGLES SPÉCIFIQUES POUR LES EXERCICES (CRUCIAL):
+RÈGLES SPÉCIFIQUES POUR LES TÂCHES PRATIQUES ARTS (CRUCIAL):
 1. CHAQUE CRITÈRE doit évaluer AU MINIMUM 3 sous-aspects différents (i, ii, iii, iv, ou v)
 2. Les sous-aspects peuvent être NON-CONSÉCUTIFS (ex: i, iii, v est valide)
-3. Un exercice PEUT évaluer 2-3 sous-aspects simultanément si pertinent
-   - Exemple: "Critère A: i. et iii." (un exercice évalue 2 aspects)
-4. VARIER les types d'exercices pour couvrir différents niveaux cognitifs
-5. La clé "criterionReference" doit indiquer TOUS les aspects évalués
-6. CHAQUE exercice doit avoir une version arabe complète (title_ar, content_ar, criterionReference_ar)
-7. LAISSER suffisamment d'espace de réponse pour les élèves
+3. Une tâche pratique PEUT évaluer 2-3 sous-aspects simultanément si pertinent
+   - Exemple: "Critère A: i. et iii." (une tâche évalue 2 aspects)
+4. VARIER les types de travaux pratiques pour couvrir différentes compétences artistiques
+5. La clé "criterionReference" doit indiquer TOUS les aspects évalués et les compétences pratiques observées
+6. CHAQUE tâche doit avoir une version arabe complète (title_ar, content_ar, criterionReference_ar)
+7. LAISSER suffisamment d'espace de création (ne pas surcharger la feuille d'instructions)
 
-GESTION DES RESSOURCES DANS LES EXERCICES:
-- Si l'exercice nécessite l'analyse d'un texte, FOURNIR LE TEXTE COMPLET dans le champ "content" (français) et "content_ar" (arabe).
-- Si l'exercice nécessite une image, écrire EXPLICITEMENT: "[Insérer Image/Schéma ici: description détaillée]".
-- AJOUTER TOUJOURS des lignes de réponse avec pointillés pour les élèves :
-  * Après chaque question, ajouter : "\n\nRéponse / الإجابة :\n" suivi de 5-8 lignes de pointillés
-  * Format des lignes : "................................................................................................................................................................................................"
-  * Adapter le nombre de lignes selon la complexité de la question
-  * Ceci garantit que les élèves ont suffisamment d'espace pour écrire leurs réponses
+GESTION DES RESSOURCES DANS LES TÂCHES PRATIQUES:
+- Si la tâche nécessite l'analyse d'une œuvre d'art, écrire EXPLICITEMENT: "[Insérer reproduction de l'œuvre ici : Nom de l'artiste, Titre de l'œuvre, Date, Technique, Dimensions]".
+- Si la tâche nécessite un modèle de référence, écrire EXPLICITEMENT: "[Insérer image de référence ici : description détaillée du sujet à observer/reproduire]".
+- AJOUTER des zones dédiées à la création :
+  * Pour les tâches de dessin/peinture : "\n\n[ZONE DE CRÉATION - Laisser suffisamment d'espace pour la réalisation pratique]\n"
+  * Pour les analyses : ajouter des lignes de réponse "\n\nObservations :\n................................................................................................................................................................................................\n................................................................................................................................................................................................"
+  * Adapter l'espace selon le type de tâche pratique
 
 Structure JSON attendue (avec champs arabes):
 {
@@ -886,12 +908,27 @@ export const generateFullUnitPlan = async (
         8. Ensure JSON is perfectly valid: no trailing commas, properly escaped quotes and newlines
       `;
     } else if (lang === 'bilingual') {
+      const isArt = subject.toLowerCase().includes('art');
       userPrompt = `
         Matière: ${subject}
         Niveau: ${gradeLevel}
         Sujets à couvrir: ${topics}
         
         ⚠️ ATTENTION: Cette matière (ART ou EPS) nécessite une GÉNÉRATION BILINGUE (FRANÇAIS + ARABE).
+        
+        ${isArt ? `⚠️⚠️ RÈGLE ABSOLUE ARTS : TRAVAUX PRATIQUES UNIQUEMENT ⚠️⚠️
+        Cette matière est "Arts" — les évaluations critériées doivent être EXCLUSIVEMENT des TRAVAUX PRATIQUES artistiques.
+        INTERDIT : Questions théoriques classiques, QCM, exercices de texte écrits ordinaires.
+        OBLIGATOIRE : Chaque tâche d'évaluation doit être l'une de ces activités concrètes :
+          🎨 Dessiner (composition, portrait, motif, nature morte, paysage...)
+          🖌️ Peindre et mélanger les couleurs (aquarelle, gouache, acrylique, dégradés, harmonie chromatique...)
+          🏗️ Réaliser une maquette ou une sculpture (argile, matériaux de récupération, papier mâché...)
+          🔍 Analyser une œuvre d'art (reproduction fournie, avec questions guidées : composition, style, couleurs, message, artiste, époque...)
+          ✂️ Créer un collage ou une technique mixte
+          🖼️ Concevoir une affiche, un logo ou une composition graphique
+          📐 Exercice de calligraphie ou de lettrage artistique
+        Chaque tâche doit préciser les matériaux nécessaires, les étapes de réalisation et les critères d'observation visuels.
+        ` : ''}
         
         ⚠️ CRITIQUE - SÉLECTION DES CRITÈRES: 
         - STANDARD : Sélectionne 2 critères LES PLUS CONVENABLES selon le contenu de l'unité
@@ -903,7 +940,7 @@ export const generateFullUnitPlan = async (
         - CHAQUE critère doit évaluer AU MINIMUM 3 sous-aspects (i, ii, iii, iv, ou v)
         - Les sous-aspects peuvent être NON-CONSÉCUTIFS (ex: i, iii, v ou ii, iv, v)
         - Choisis les sous-aspects les PLUS PERTINENTS selon le contenu et les exigences IB
-        - Un exercice PEUT évaluer 2-3 sous-aspects simultanément (ex: "Critère A: i. et iii.")
+        - Une tâche PEUT évaluer 2-3 sous-aspects simultanément (ex: "Critère A: i. et iii.")
         
         Génère le plan complet et les évaluations critériées EN DEUX VERSIONS:
         1. VERSION FRANÇAISE (tous les champs standards)
@@ -914,9 +951,9 @@ export const generateFullUnitPlan = async (
         2. Bien remplir 'Activités/Stratégies', 'Évaluation formative' et 'Différenciation' (versions française et arabe)
         3. Inclure un champ "chapters" et "chapters_ar" listant les chapitres/leçons en français et en arabe
         4. Sélectionner STANDARD: 2 critères (les plus convenables), EXCEPTIONNEL: 3 critères (si vraiment nécessaire)
-        5. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans un exercice)
-        6. Concevoir chaque évaluation pour une durée de 30 minutes
-        7. Pour chaque exercice, fournir: title, title_ar, content, content_ar, criterionReference, criterionReference_ar
+        5. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans une tâche)
+        6. ${isArt ? 'Concevoir chaque évaluation comme un TRAVAIL PRATIQUE pour une durée de 45 à 60 minutes' : 'Concevoir chaque évaluation pour une durée de 30 minutes'}
+        7. Pour chaque tâche pratique, fournir: title, title_ar, content, content_ar, criterionReference, criterionReference_ar
         8. Retourner UNIQUEMENT une structure JSON valide et complète avec TOUS les champs bilingues - pas de texte avant ou après
         9. S'assurer que le JSON est parfaitement valide: pas de virgules trainantes, guillemets et retours à la ligne échappés correctement
         
@@ -1075,6 +1112,7 @@ export const generateCourseFromChapters = async (
           All plans, assessments, exercises, questions, titles, and instructions MUST be in ENGLISH only.
         `;
       } else if (lang === 'bilingual') {
+        const isArtCourse = subject.toLowerCase().includes('art');
         userPrompt = `
           Matière: ${subject}
           Niveau: ${gradeLevel}
@@ -1082,6 +1120,14 @@ export const generateCourseFromChapters = async (
           ${allChapters}
           
           ⚠️ RAPPEL: Génération BILINGUE requise (français + arabe avec suffixe _ar pour tous les champs).
+          ${isArtCourse ? `
+          ⚠️⚠️ RÈGLE ABSOLUE ARTS : TRAVAUX PRATIQUES UNIQUEMENT ⚠️⚠️
+          Les évaluations critériées doivent être EXCLUSIVEMENT des TRAVAUX PRATIQUES artistiques :
+          🎨 Dessin, 🖌️ Peinture/mélange de couleurs, 🏗️ Maquette/sculpture, 🔍 Analyse d'œuvre d'art,
+          ✂️ Collage/techniques mixtes, 🖼️ Design/composition graphique, 📐 Calligraphie.
+          INTERDIT : Questions théoriques ordinaires, QCM, exercices écrits classiques.
+          Chaque tâche doit indiquer les matériaux, les étapes et les critères visuels d'observation.
+          ` : ''}
         `;
       } else {
         userPrompt = `
