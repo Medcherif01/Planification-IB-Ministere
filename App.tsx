@@ -44,24 +44,30 @@ const App: React.FC = () => {
             console.log('📋 Session restaurée:', sessionData);
             setSession(sessionData);
             
-            // Restaurer la vue active
-            if (savedView && savedView !== AppView.LOGIN) {
-              console.log('🖼️ Vue restaurée:', savedView);
-              setView(savedView as AppView);
+            // Restaurer la vue active — priorité à la vue sauvegardée
+            // Note: AppView.EDITOR n'est pas restaurable (editingPlan non persisté) → on revient au DASHBOARD
+            const restoredView = savedView && savedView !== AppView.LOGIN && savedView !== AppView.EDITOR
+              ? savedView as AppView
+              : null;
+
+            if (restoredView) {
+              console.log('🖼️ Vue restaurée:', restoredView);
+              setView(restoredView);
             } else if (sessionData.mode === AppMode.EXAMS) {
               setView(AppView.EXAMS_WIZARD);
             } else if (sessionData.mode === AppMode.PEI_PLANNER) {
               setView(AppView.DASHBOARD);
             } else {
-              // Par défaut, retourner à l'écran de sélection (mais l'utilisateur reste authentifié)
+              // Fallback : écran de sélection (l'utilisateur reste authentifié)
               setView(AppView.LOGIN);
             }
           } catch (error) {
             console.error('❌ Erreur lors de la restauration de la session:', error);
-            // En cas d'erreur, retourner à l'écran de sélection (mais l'utilisateur reste authentifié)
+            // En cas d'erreur de parsing, aller à l'écran de sélection (authentifié)
             setView(AppView.LOGIN);
           }
         } else {
+          // Authentifié mais pas de session sauvegardée → écran de sélection matière/classe
           console.log('ℹ️ Aucune session active, affichage écran de sélection');
           setView(AppView.LOGIN);
         }
@@ -198,6 +204,32 @@ const App: React.FC = () => {
 
   const handleAuthenticated = () => {
     setIsAuthenticated(true);
+    // Après connexion initiale, essayer de restaurer une session existante
+    const savedSession = localStorage.getItem('userSession');
+    const savedView = localStorage.getItem('currentView');
+    if (savedSession) {
+      try {
+        const sessionData = JSON.parse(savedSession);
+        setSession(sessionData);
+        // AppView.EDITOR non restaurable (editingPlan non persisté) → on revient au DASHBOARD
+        const restoredView = savedView && savedView !== AppView.LOGIN && savedView !== AppView.EDITOR
+          ? savedView as AppView
+          : null;
+        if (restoredView) {
+          setView(restoredView);
+        } else if (sessionData.mode === AppMode.EXAMS) {
+          setView(AppView.EXAMS_WIZARD);
+        } else if (sessionData.mode === AppMode.PEI_PLANNER) {
+          setView(AppView.DASHBOARD);
+        } else {
+          setView(AppView.LOGIN);
+        }
+      } catch {
+        setView(AppView.LOGIN);
+      }
+    } else {
+      setView(AppView.LOGIN);
+    }
   };
 
   const handleCreateNew = () => {
