@@ -25,12 +25,20 @@ const callGeminiViaProxy = async (
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
-      const msg = errData?.details
+
+      // Handle quota / rate-limit errors (from both OpenAI and Gemini)
+      if (response.status === 429) {
+        throw new Error("Limite d'utilisation de l'IA atteinte. Réessayez dans quelques minutes.");
+      }
+
+      const msg = errData?.message
+        ? errData.message
+        : errData?.details
         ? (() => {
-            try { return JSON.parse(errData.details)?.error?.message || errData.message || 'Erreur API'; }
-            catch { return errData.message || 'Erreur API'; }
+            try { return JSON.parse(errData.details)?.error?.message || 'Erreur API'; }
+            catch { return errData.details || 'Erreur API'; }
           })()
-        : errData?.message || `HTTP ${response.status}`;
+        : `HTTP ${response.status}`;
       throw new Error(msg);
     }
 
@@ -1041,12 +1049,12 @@ export const generateFullUnitPlan = async (
     const errorMsg = error?.message || "Erreur inconnue lors de la génération";
     
     // Message d'erreur plus clair pour l'utilisateur
-    if (errorMsg.includes("API") || errorMsg.includes("key") || errorMsg.includes("GEMINI_API_KEY")) {
+    if (errorMsg.toLowerCase().includes("limite") || errorMsg.toLowerCase().includes("quota") || errorMsg.toLowerCase().includes("limit") || errorMsg.includes("429")) {
+      throw new Error("❌ Limite d'utilisation de l'IA atteinte. Veuillez réessayer dans quelques minutes.");
+    } else if (errorMsg.includes("OPENAI_API_KEY") || errorMsg.includes("GEMINI_API_KEY") || errorMsg.includes("No AI API key")) {
       throw new Error("❌ Erreur de connexion à l'IA. Vérifiez votre clé API dans les paramètres Vercel.");
     } else if (errorMsg.includes("JSON") || errorMsg.includes("format") || errorMsg.includes("parse")) {
       throw new Error("❌ L'IA n'a pas retourné de plan valide. Veuillez réessayer avec des sujets plus précis.\n\nConseils:\n- Soyez plus spécifique dans les chapitres\n- Essayez avec moins de sujets à la fois\n- Attendez quelques instants et réessayez");
-    } else if (errorMsg.includes("quota") || errorMsg.includes("limit")) {
-      throw new Error("❌ Limite d'utilisation de l'IA atteinte. Veuillez réessayer dans quelques minutes.");
     }
     
     throw new Error(`❌ Erreur: ${errorMsg}`);
@@ -1181,10 +1189,10 @@ export const generateCourseFromChapters = async (
       const errorMsg = error?.message || String(error);
       
       // Propager l'erreur pour la gestion au niveau du Dashboard
-      if (errorMsg.includes("API") || errorMsg.includes("key") || errorMsg.includes("GEMINI_API_KEY")) {
-        throw new Error("❌ Erreur de connexion à l'IA. Vérifiez votre clé API.");
-      } else if (errorMsg.includes("quota") || errorMsg.includes("limit")) {
+      if (errorMsg.toLowerCase().includes("limite") || errorMsg.toLowerCase().includes("quota") || errorMsg.toLowerCase().includes("limit") || errorMsg.includes("429")) {
         throw new Error("❌ Limite d'utilisation de l'IA atteinte. Réessayez dans quelques minutes.");
+      } else if (errorMsg.includes("OPENAI_API_KEY") || errorMsg.includes("GEMINI_API_KEY") || errorMsg.includes("No AI API key")) {
+        throw new Error("❌ Erreur de connexion à l'IA. Vérifiez votre clé API.");
       }
       
       throw new Error(`❌ Erreur lors de la génération de la planification: ${errorMsg}`);
