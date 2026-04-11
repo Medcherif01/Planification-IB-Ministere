@@ -201,6 +201,126 @@ const cleanJsonText = (text: string): string => {
   return "{}";
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Critères IB par défaut par matière (fallback si l'IA n'en génère pas assez)
+// ─────────────────────────────────────────────────────────────────────────────
+const DEFAULT_CRITERIA_BY_SUBJECT: Record<string, Array<{ criterion: string; criterionName: string; strands: string[] }>> = {
+  'mathématiques': [
+    { criterion: 'A', criterionName: 'Connaissances et compréhension', strands: ['i. Savoir des faits, concepts et techniques mathématiques', 'ii. Résoudre des problèmes mathématiques', 'iii. Appliquer des techniques et des règles mathématiques', 'iv. Décrire et expliquer des résultats mathématiques'] },
+    { criterion: 'B', criterionName: 'Investigation de modèles', strands: ['i. Sélectionner et appliquer des stratégies', 'ii. Décrire des modèles comme des relations', 'iii. Vérifier et justifier des modèles', 'iv. Faire des prédictions fondées sur des modèles'] },
+    { criterion: 'C', criterionName: 'Communication en mathématiques', strands: ['i. Utiliser des représentations mathématiques appropriées', 'ii. Rédiger des preuves mathématiques complètes', 'iii. Utiliser la terminologie et la notation mathématiques'] },
+    { criterion: 'D', criterionName: 'Application des mathématiques dans des contextes réels', strands: ["i. Identifier les éléments mathématiques pertinents", "ii. Élaborer une stratégie de résolution", "iii. Appliquer des stratégies de résolution", "iv. Justifier le degré d'exactitude", "v. Réfléchir sur les solutions"] },
+  ],
+  'sciences': [
+    { criterion: 'A', criterionName: 'Connaissances et compréhension', strands: ['i. Expliquer des connaissances scientifiques', 'ii. Appliquer des connaissances scientifiques', 'iii. Analyser et évaluer des informations'] },
+    { criterion: 'B', criterionName: 'Recherche et conception', strands: ['i. Expliquer un problème ou une question', 'ii. Formuler une hypothèse testable', 'iii. Expliquer la méthode', 'iv. Décrire les contrôles des variables'] },
+    { criterion: 'C', criterionName: 'Traitement et évaluation', strands: ['i. Présenter les données recueillies', 'ii. Analyser et interpréter les données', 'iii. Évaluer la validité des hypothèses', 'iv. Évaluer les faiblesses de la recherche'] },
+    { criterion: 'D', criterionName: 'Réflexion sur les répercussions de la science', strands: ['i. Décrire une application de la science', 'ii. Analyser des répercussions de la science', 'iii. Proposer des solutions fondées sur des données scientifiques'] },
+  ],
+  'individus et sociétés': [
+    { criterion: 'A', criterionName: 'Connaissances et compréhension', strands: ['i. Utiliser la terminologie propre à la matière', 'ii. Démontrer une connaissance et une compréhension des concepts', 'iii. Analyser des concepts dans des contextes variés'] },
+    { criterion: 'B', criterionName: 'Recherche', strands: ['i. Formuler une question de recherche claire', 'ii. Sélectionner et recenser des sources', 'iii. Évaluer des sources', 'iv. Reconnaître les lacunes de la recherche'] },
+    { criterion: 'C', criterionName: 'Communication', strands: ['i. Communiquer clairement ses idées', 'ii. Structurer les informations de façon cohérente', 'iii. Documenter ses sources'] },
+    { criterion: 'D', criterionName: 'Réflexion critique', strands: ['i. Discuter des connaissances acquises', 'ii. Synthétiser des informations pour construire une argumentation', "iii. Réfléchir à l'impact des connaissances"] },
+  ],
+  'default': [
+    { criterion: 'A', criterionName: 'Connaissances et compréhension', strands: ['i. Expliquer des connaissances', 'ii. Appliquer des connaissances dans des contextes variés', 'iii. Analyser et évaluer des informations'] },
+    { criterion: 'B', criterionName: 'Développement des compétences', strands: ['i. Démontrer des compétences de base', 'ii. Appliquer des compétences dans des contextes variés', 'iii. Évaluer et améliorer ses compétences'] },
+    { criterion: 'C', criterionName: 'Communication', strands: ['i. Communiquer de manière claire et organisée', "ii. Utiliser une terminologie appropriée", 'iii. Structurer et présenter ses idées'] },
+    { criterion: 'D', criterionName: 'Réflexion et évaluation', strands: ['i. Réfléchir sur son apprentissage', "ii. Évaluer ses travaux par rapport aux critères", 'iii. Proposer des améliorations'] },
+  ],
+};
+
+const getDefaultCriteria = (subject: string) => {
+  const norm = subject.toLowerCase();
+  if (norm.includes('math')) return DEFAULT_CRITERIA_BY_SUBJECT['mathématiques'];
+  if (norm.includes('science')) return DEFAULT_CRITERIA_BY_SUBJECT['sciences'];
+  if (norm.includes('individu') || norm.includes('société')) return DEFAULT_CRITERIA_BY_SUBJECT['individus et sociétés'];
+  return DEFAULT_CRITERIA_BY_SUBJECT['default'];
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RÈGLE OBLIGATOIRE IB : Au minimum 2 critères avec au moins 3 sous-aspects chacun
+// Cette fonction corrige automatiquement ce que l'IA aurait pu oublier.
+// ─────────────────────────────────────────────────────────────────────────────
+const enforceAssessmentsRules = (assessments: AssessmentData[], subject: string): AssessmentData[] => {
+  const defaults = getDefaultCriteria(subject);
+  let result = [...assessments];
+
+  // ── Règle 1 : chaque critère doit avoir ≥ 3 sous-aspects (strands) ─────────
+  result = result.map(a => {
+    if (a.strands.length >= 3) return a;
+    // Compléter avec les sous-aspects par défaut pour ce critère
+    const defCrit = defaults.find(d => d.criterion === a.criterion);
+    const extraStrands = defCrit ? defCrit.strands : [
+      `i. Comprendre les concepts fondamentaux de ${a.criterionName}`,
+      `ii. Appliquer les connaissances dans des contextes variés`,
+      `iii. Analyser et évaluer les résultats`,
+      `iv. Justifier les démarches et les solutions`,
+    ];
+    const merged = [...a.strands];
+    for (const s of extraStrands) {
+      if (merged.length >= 3) break;
+      if (!merged.includes(s)) merged.push(s);
+    }
+    console.warn(`⚠️ Critère ${a.criterion} avait ${a.strands.length} sous-aspect(s) → complété à ${merged.length}`);
+    return { ...a, strands: merged };
+  });
+
+  // ── Règle 2 : chaque critère doit avoir au moins 1 exercice ───────────────
+  result = result.map(a => {
+    if (a.exercises.length > 0) return a;
+    console.warn(`⚠️ Critère ${a.criterion} n'avait aucun exercice → ajout d'un exercice générique`);
+    return {
+      ...a,
+      exercises: [{
+        title: `Exercice — Critère ${a.criterion} (${a.strands.slice(0, 2).map(s => s.split('.')[0]).join(', ')})`,
+        content: `Réponds aux questions suivantes en lien avec les aspects évalués :\n\n${a.strands.map((s, i) => `${i + 1}. En lien avec « ${s} », explique...\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n................................................................................................................................................................................................`).join('\n\n')}`,
+        criterionReference: `Critère ${a.criterion} : ${a.strands.map(s => s.split('.')[0].trim()).join(', ')}`,
+        workspaceNeeded: true,
+      }]
+    };
+  });
+
+  // ── Règle 3 : il faut OBLIGATOIREMENT au minimum 2 critères ───────────────
+  if (result.length < 2) {
+    const existingLetters = result.map(a => a.criterion);
+    // Choisir parmi les critères par défaut ceux qui ne sont pas déjà présents
+    const toAdd = defaults.filter(d => !existingLetters.includes(d.criterion));
+    const needed = 2 - result.length;
+    console.warn(`⚠️ Seulement ${result.length} critère(s) → ajout de ${needed} critère(s) obligatoire(s)`);
+    for (let i = 0; i < needed && i < toAdd.length; i++) {
+      const d = toAdd[i];
+      result.push({
+        criterion: d.criterion,
+        criterionName: d.criterionName,
+        maxPoints: 8,
+        strands: d.strands.slice(0, 4),
+        rubricRows: [
+          { level: '1-2', descriptor: `L'élève est capable de démontrer une compréhension limitée de ${d.criterionName.toLowerCase()}.` },
+          { level: '3-4', descriptor: `L'élève est capable de démontrer une compréhension partielle de ${d.criterionName.toLowerCase()}.` },
+          { level: '5-6', descriptor: `L'élève est capable de démontrer une bonne compréhension de ${d.criterionName.toLowerCase()}.` },
+          { level: '7-8', descriptor: `L'élève est capable de démontrer une compréhension approfondie et nuancée de ${d.criterionName.toLowerCase()}.` },
+        ],
+        exercises: [{
+          title: `Exercice — Critère ${d.criterion} : ${d.strands.slice(0, 3).map(s => s.split('.')[0]).join(', ')}`,
+          content: `Réponds aux questions suivantes :\n\n${d.strands.slice(0, 3).map((s, idx) => `${idx + 1}. ${s}\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n................................................................................................................................................................................................`).join('\n\n')}`,
+          criterionReference: `Critère ${d.criterion} : ${d.strands.slice(0, 3).map(s => s.split('.')[0].trim()).join(', ')}`,
+          workspaceNeeded: true,
+        }],
+      });
+    }
+  }
+
+  // ── Règle 4 : pas plus de 3 critères par unité (règle IB) ─────────────────
+  if (result.length > 3) {
+    console.warn(`⚠️ ${result.length} critères → tronqué à 3 (règle IB)`);
+    result = result.slice(0, 3);
+  }
+
+  return result;
+};
+
 const sanitizeAssessmentData = (data: any): AssessmentData | undefined => {
   // If data is missing or empty, return a safe default structure to prevent export crashes
   if (!data || typeof data !== 'object') return undefined;
@@ -246,6 +366,10 @@ export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string)
       const single = sanitizeAssessmentData(plan.assessmentData);
       if (single) assessments.push(single);
   }
+
+  // ── RÈGLE IB OBLIGATOIRE : ≥ 2 critères, ≥ 3 sous-aspects par critère ────
+  assessments = enforceAssessmentsRules(assessments, subject || plan.subject || '');
+  console.log(`✅ Critères après validation IB : ${assessments.map(a => `${a.criterion}(${a.strands.length} sous-aspects)`).join(', ')}`);
 
   return {
     id: plan.id || Date.now().toString(),
@@ -419,23 +543,22 @@ const SYSTEM_INSTRUCTION_FULL_PLAN_FR = `
 Tu es un expert pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB.
 Tu dois générer un Plan d'Unité complet ET une série d'Évaluations Critériées détaillées en Français.
 
-⚠️ RÈGLE CRITIQUE - SÉLECTION INTELLIGENTE DES CRITÈRES :
-- NE GÉNÈRE PAS AUTOMATIQUEMENT LES 4 CRITÈRES (A, B, C, D) pour une seule unité
-- Le choix des critères est ÉTROITEMENT LIÉ au contenu de l'unité et aux exigences de l'IB
+❗❗❗ LOI ABSOLUE N°1 — CRITÈRES OBLIGATOIRES (NON NÉGOCIABLE) ❗❗❗
+CHAQUE UNITÉ DOIT CONTENIR EXACTEMENT 2 CRITÈRES D'ÉVALUATION dans le tableau "assessments".
+- Sélectionne les 2 critères les PLUS PERTINENTS pour le contenu de cette unité
+- JAMAIS 1 seul critère — JAMAIS 3 ou 4 — TOUJOURS exactement 2
+- Sur le semestre (2 unités), les 4 critères A, B, C, D doivent tous être couverts
+- Exemple : unité algèbre → Critères A + C | unité géométrie → Critères A + D
+- Si tu génères ≠ 2 critères dans "assessments", ta réponse est INVALIDE et rejetée
 
-⚠️ PRINCIPE FONDAMENTAL IB :
-- À LA FIN DU SEMESTRE (après 2 unités), les 4 critères (A, B, C, D) doivent être couverts
-- CHAQUE UNITÉ évalue UNIQUEMENT les critères les plus pertinents pour son contenu
-
-⚠️ NOMBRE DE CRITÈRES PAR UNITÉ :
-- STANDARD : 2 critères par unité (le plus courant et RECOMMANDÉ)
-  * Choisis les 2 critères les PLUS CONVENABLES selon le contenu de l'unité
-  * Exemple : Unité sur algèbre → Critères A + C
-  * Exemple : Unité sur recherche → Critères B + D
-- EXCEPTIONNEL : 3 critères par unité (SEULEMENT si vraiment nécessaire)
-  * Uniquement si l'unité DOIT OBLIGATOIREMENT être évaluée par ces 3 critères
-  * C'est le PIRE DES CAS, à éviter si possible
-- JAMAIS : 4 critères dans une seule unité (interdit)
+❗❗❗ LOI ABSOLUE N°2 — SOUS-ASPECTS OBLIGATOIRES (NON NÉGOCIABLE) ❗❗❗
+CHAQUE CRITÈRE doit lister AU MINIMUM 3 sous-aspects dans le champ "strands".
+- Les sous-aspects sont numérotés i., ii., iii., iv., v.
+- Ils N'ONT PAS besoin d'être consécutifs : i, iii, v est valide
+- Un exercice PEUT couvrir 2–3 sous-aspects simultanément
+- Si tu génères < 3 sous-aspects pour un critère, ta réponse est INVALIDE
+- Exemple VALIDE   : "strands": ["i. Sélectionner", "iii. Résoudre", "iv. Expliquer"]
+- Exemple INVALIDE : "strands": ["i. Aspect", "ii. Aspect"]  ← seulement 2, refusé
 
 ⚠️ SÉLECTION DES CRITÈRES :
 - Choisis les critères les PLUS CONVENABLES selon :
@@ -445,14 +568,6 @@ Tu dois générer un Plan d'Unité complet ET une série d'Évaluations Critéri
   * La cohérence pédagogique
 - Assure-toi que les critères choisis sont VRAIMENT pertinents pour cette unité
 - Pense à la complémentarité avec d'autres unités du semestre
-
-⚠️ SOUS-ASPECTS FLEXIBLES ET OBLIGATOIRES :
-- CHAQUE CRITÈRE doit évaluer AU MINIMUM 3 sous-aspects (i, ii, iii, iv, ou v)
-- Les sous-aspects ne doivent PAS nécessairement être consécutifs (ex: i, iii, v est acceptable)
-- Choisis les sous-aspects les PLUS PERTINENTS selon le contenu de l'unité
-- Un MÊME exercice PEUT évaluer 2 ou 3 sous-aspects simultanément si approprié
-- Exemple: "Critère A: i. et iii." ou "Critère B: ii., iv. et v."
-- L'ordre et la sélection doivent refléter les exigences IB pour cette matière
 
 ⚠️ DURÉE DES ÉVALUATIONS IB :
 - Chaque évaluation critériée doit être conçue pour UNE DURÉE DE 30 MINUTES
@@ -572,15 +687,18 @@ const SYSTEM_INSTRUCTION_FULL_PLAN_BILINGUAL = `
 Tu es un expert coordinateur pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB, spécialisé en Arts visuels et en Éducation Physique.
 Tu dois générer un plan d'unité complet BILINGUE (FRANÇAIS + ARABE) ET une série d'évaluations détaillées basées sur les critères.
 
-⚠️ RÈGLE CRITIQUE - SÉLECTION INTELLIGENTE DES CRITÈRES :
-- NE GÉNÈRE PAS AUTOMATIQUEMENT LES 4 CRITÈRES (A, B, C, D) pour une seule unité
-- PRINCIPE FONDAMENTAL : À la fin du semestre (2 unités), les 4 critères doivent être couverts
-- STANDARD : 2 critères par unité (choisis les PLUS CONVENABLES selon le contenu)
-- EXCEPTIONNEL : 3 critères (SEULEMENT si l'unité doit OBLIGATOIREMENT être évaluée par ces 3 critères)
-- JAMAIS : 4 critères dans une seule unité
-- CHAQUE CRITÈRE doit évaluer AU MINIMUM 3 sous-aspects (i, ii, iii, iv, ou v)
+❗❗❗ LOI ABSOLUE N°1 — CRITÈRES OBLIGATOIRES (NON NÉGOCIABLE) ❗❗❗
+CHAQUE UNITÉ DOIT CONTENIR EXACTEMENT 2 CRITÈRES D'ÉVALUATION dans le tableau "assessments".
+- Sélectionne les 2 critères les PLUS PERTINENTS pour le contenu de cette unité
+- JAMAIS 1 seul critère — JAMAIS 3 ou 4 — TOUJOURS exactement 2
+- Sur le semestre (2 unités), les 4 critères A, B, C, D doivent tous être couverts
+
+❗❗❗ LOI ABSOLUE N°2 — SOUS-ASPECTS OBLIGATOIRES (NON NÉGOCIABLE) ❗❗❗
+CHAQUE CRITÈRE doit lister AU MINIMUM 3 sous-aspects dans le champ "strands".
+- Moins de 3 sous-aspects pour un critère = réponse INVALIDE
 - Les sous-aspects peuvent être NON-CONSÉCUTIFS (ex: i, iii, v)
 - Un exercice PEUT évaluer 2-3 sous-aspects simultanément
+- Exemple valide : "strands": ["i. Sélectionner", "iii. Résoudre", "iv. Expliquer"]
 - Exemple: "Critère A: i. et iii." ou "Critère B: ii., iv. et v."
 
 ⚠️ DURÉE DES ÉVALUATIONS IB :
@@ -749,17 +867,21 @@ You must generate a complete Unit Plan AND a series of detailed Criterion-based 
 - ALL criterion references must be in ENGLISH
 - This ensures students practice the target language throughout the assessment
 
-⚠️ CRITICAL RULE - INTELLIGENT CRITERIA SELECTION:
-- DO NOT AUTOMATICALLY GENERATE ALL 4 CRITERIA (A, B, C, D) for a single unit
-- FUNDAMENTAL PRINCIPLE: At the end of the semester (2 units), all 4 criteria must be covered
-- STANDARD: 2 criteria per unit (choose the MOST SUITABLE based on content)
-- EXCEPTIONAL: 3 criteria (ONLY if the unit MUST be assessed by these 3 criteria)
-- NEVER: 4 criteria in a single unit
-- EACH CRITERION must assess AT LEAST 3 sub-aspects (i, ii, iii, iv, or v)
-- Sub-aspects do NOT need to be consecutive (e.g., i, iii, v is valid)
-- Choose the MOST RELEVANT sub-aspects based on unit content
-- A SINGLE exercise CAN assess 2-3 sub-aspects simultaneously if appropriate
-- Example: "Criterion A: i. and iii." or "Criterion B: ii., iv., and v."
+‼️‼️‼️ ABSOLUTE LAW #1 — MANDATORY CRITERIA (NON-NEGOTIABLE) ‼️‼️‼️
+EACH UNIT MUST CONTAIN EXACTLY 2 ASSESSMENT CRITERIA in the "assessments" array.
+- Select the 2 MOST RELEVANT criteria based on unit content
+- NEVER 1 criterion alone — NEVER 3 or 4 — ALWAYS exactly 2
+- Over the semester (2 units), all 4 criteria A, B, C, D must be covered
+- Generating ≠ 2 criteria in "assessments" = INVALID, rejected response
+
+‼️‼️‼️ ABSOLUTE LAW #2 — MANDATORY SUB-ASPECTS (NON-NEGOTIABLE) ‼️‼️‼️
+EACH CRITERION must list AT LEAST 3 sub-aspects in the "strands" field.
+- Sub-aspects are numbered i., ii., iii., iv., v.
+- They do NOT need to be consecutive: i, iii, v is valid
+- Fewer than 3 sub-aspects for any criterion = INVALID response
+- Valid example: "strands": ["i. Select", "iii. Solve", "iv. Explain"]
+- Invalid example (rejected): "strands": ["i. Aspect", "ii. Aspect"] ← only 2
+- One exercise CAN cover 2–3 sub-aspects simultaneously"
 
 ⚠️ IB ASSESSMENT DURATION:
 - Each criterion-based assessment must be designed for a 30-MINUTE DURATION
@@ -886,22 +1008,16 @@ export const generateFullUnitPlan = async (
         
         Generate the complete plan and criterion-based assessments.
         
-        ⚠️ CRITICAL CRITERIA SELECTION: 
-        - STANDARD: Select 2 MOST SUITABLE criteria based on unit content
-        - EXCEPTIONAL: 3 criteria ONLY if unit MUST be assessed by these 3 criteria (worst case)
-        - NEVER: 4 criteria in one unit
-        - REMEMBER: Over 2 units (semester), all 4 criteria (A, B, C, D) must be covered
-        
-        ⚠️ CRITICAL - SUB-ASPECTS (MINIMUM 3 PER CRITERION):
-        - EACH criterion must assess AT LEAST 3 sub-aspects (i, ii, iii, iv, or v)
-        - Sub-aspects can be NON-CONSECUTIVE (e.g., i, iii, v or ii, iv, v)
-        - Choose the MOST RELEVANT sub-aspects based on content and IB requirements
-        - One exercise CAN assess 2-3 sub-aspects simultaneously (e.g., "Criterion A: i. and iii.")
+        ❗ MANDATORY — STRICT IB RULE:
+        1. The "assessments" field must contain EXACTLY 2 criteria (not 1, not 3, not 4)
+        2. Each criterion must have AT LEAST 3 sub-aspects in "strands" (e.g., i, iii, iv)
+        3. Sub-aspects can be non-consecutive — choose the most relevant ones
+        4. Over 2 units (semester), all 4 criteria A, B, C, D must be covered
         
         Make sure to:
         1. Fill in ALL sections including 'Activities/Strategies', 'Formative Assessment' and 'Differentiation'
         2. Include a "chapters" field listing the chapters/lessons covered in this unit (bullet points format)
-        3. Select STANDARD: 2 criteria (most suitable), EXCEPTIONAL: 3 criteria (if truly necessary)
+        3. Generate EXACTLY 2 criteria in "assessments", each with ≥ 3 sub-aspects in "strands"
         4. Adapt sub-aspects to unit content (can combine multiple in one exercise)
         5. Design assessments for 30-minute duration
         6. Generate ALL content in ENGLISH (this is a language acquisition subject)
@@ -966,23 +1082,17 @@ export const generateFullUnitPlan = async (
         Niveau: ${gradeLevel}
         Sujets à couvrir: ${topics}
         
-        ⚠️ CRITIQUE - SÉLECTION DES CRITÈRES: 
-        - STANDARD : Sélectionne 2 critères LES PLUS CONVENABLES selon le contenu de l'unité
-        - EXCEPTIONNEL : 3 critères SEULEMENT si l'unité DOIT OBLIGATOIREMENT être évaluée par ces 3 critères (pire des cas)
-        - JAMAIS : 4 critères dans une seule unité
-        - IMPORTANT : Sur 2 unités (semestre), les 4 critères (A, B, C, D) doivent être couverts
-        
-        ⚠️ CRITIQUE - SOUS-ASPECTS (MINIMUM 3 PAR CRITÈRE):
-        - CHAQUE critère doit évaluer AU MINIMUM 3 sous-aspects (i, ii, iii, iv, ou v)
-        - Les sous-aspects peuvent être NON-CONSÉCUTIFS (ex: i, iii, v ou ii, iv, v)
-        - Choisis les sous-aspects les PLUS PERTINENTS selon le contenu et les exigences IB
-        - Un exercice PEUT évaluer 2-3 sous-aspects simultanément (ex: "Critère A: i. et iii.")
+        ❗ OBLIGATOIRE — RÈGLE IB STRICTE :
+        1. Le champ "assessments" doit contenir EXACTEMENT 2 critères (ni 1, ni 3, ni 4)
+        2. Chaque critère doit avoir AU MINIMUM 3 sous-aspects dans "strands" (ex: i, iii, iv)
+        3. Les sous-aspects peuvent être non-consécutifs — choisis les plus pertinents
+        4. Sur 2 unités (semestre), les 4 critères A, B, C, D doivent être couverts
         
         Génère le plan complet et les évaluations critériées.
         Assure-toi de:
         1. Bien remplir TOUTES les sections incluant 'Activités/Stratégies', 'Évaluation formative' et 'Différenciation'
         2. Inclure un champ "chapters" listant les chapitres/leçons couverts dans cette unité (format tirets)
-        3. Sélectionner STANDARD: 2 critères (les plus convenables), EXCEPTIONNEL: 3 critères (si vraiment nécessaire)
+        3. Générer EXACTEMENT 2 critères dans "assessments" avec chacun ≥ 3 sous-aspects dans "strands"
         4. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans un exercice)
         5. Concevoir chaque évaluation pour une durée de 30 minutes
         6. Retourner UNIQUEMENT une structure JSON valide et complète - pas de texte avant ou après
