@@ -1,86 +1,60 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API Keys — OpenAI (primary) and Gemini (fallback)
+// Collecte toutes les clés Gemini disponibles dans l'ordre de priorité :
+// GEMINI_API_KEY_1, GEMINI_API_KEY_2, …, GEMINI_API_KEY_8, puis GEMINI_API_KEY
+// Seules les clés non-vides sont retenues.
 // ─────────────────────────────────────────────────────────────────────────────
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const OPENAI_MODEL = 'gpt-5';
+function getGeminiKeys(): string[] {
+  const keys: string[] = [];
+  for (let i = 1; i <= 8; i++) {
+    const k = process.env[`GEMINI_API_KEY_${i}`] || '';
+    if (k.trim()) keys.push(k.trim());
+  }
+  // Clé générique en dernier (GEMINI_API_KEY ou VITE_GEMINI_API_KEY)
+  const generic = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
+  if (generic && !keys.includes(generic)) keys.push(generic);
+  return keys;
+}
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-2.0-flash';
-const GEMINI_STREAM_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent`;
+const GEMINI_BASE_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent`;
+
+// OpenAI / GROQ — utilisé comme dernier recours si TOUTES les clés Gemini sont épuisées
+const OPENAI_API_KEY   = (process.env.OPENAI_API_KEY  || '').trim();
+const OPENAI_BASE_URL  = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').trim();
+const OPENAI_MODEL     = 'gpt-4o';
+const GROQ_API_KEY     = (process.env.GROQ_API_KEY    || '').trim();
+const GROQ_BASE_URL    = 'https://api.groq.com/openai/v1';
+const GROQ_MODEL       = 'llama-3.3-70b-versatile';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OpenAI generation (primary)
+// Détermine si une erreur HTTP signifie un quota/rate-limit épuisé
 // ─────────────────────────────────────────────────────────────────────────────
-async function generateWithOpenAI(
-  contents: string,
-  systemInstruction?: string,
-  generationConfig?: Record<string, any>
-): Promise<string> {
-  if (!OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY not configured');
-  }
-
-  const messages: Array<{ role: string; content: string }> = [];
-
-  if (systemInstruction) {
-    messages.push({ role: 'system', content: systemInstruction });
-  }
-
-  // contents can be a string or an array — normalise to string
-  const userContent = typeof contents === 'string'
-    ? contents
-    : JSON.stringify(contents);
-
-  messages.push({ role: 'user', content: userContent });
-
-  const requestBody: Record<string, any> = {
-    model: OPENAI_MODEL,
-    messages,
-    temperature: generationConfig?.temperature ?? 0.7,
-    max_tokens: generationConfig?.maxOutputTokens ?? 8192,
-  };
-
-  // If caller wants JSON, ask OpenAI to return JSON
-  if (generationConfig?.responseMimeType === 'application/json') {
-    requestBody.response_format = { type: 'json_object' };
-  }
-
-  const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error('❌ OpenAI API error:', response.status, errorBody);
-    throw new Error(`OpenAI API error ${response.status}: ${errorBody}`);
-  }
-
-  const data = await response.json();
-  const text = data?.choices?.[0]?.message?.content || '';
-  console.log(`✅ OpenAI generation complete, text length: ${text.length}`);
-  return text;
+function isQuotaError(status: number, body: string): boolean {
+  if (status === 429) return true;
+  if (status === 503) return true;
+  const lower = body.toLowerCase();
+  return (
+    lower.includes('quota') ||
+    lower.includes('rate limit') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('too many requests')
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Gemini generation (fallback via SSE streaming)
+// Tentative Gemini avec UNE clé donnée
+// Retourne le texte généré ou lance une erreur.
+// Lance { quota: true } si c'est un problème de quota (pour déclencher la rotation).
 // ─────────────────────────────────────────────────────────────────────────────
-async function generateWithGemini(
+async function tryGeminiKey(
+  apiKey: string,
+  keyLabel: string,
   contents: any,
   systemInstruction?: string,
   generationConfig?: Record<string, any>
 ): Promise<string> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY not configured');
-  }
-
   const requestBody: Record<string, any> = {
     contents: Array.isArray(contents)
       ? contents
@@ -100,8 +74,7 @@ async function generateWithGemini(
     ...(generationConfig || {}),
   };
 
-  const url = `${GEMINI_STREAM_URL}?key=${GEMINI_API_KEY}&alt=sse`;
-
+  const url = `${GEMINI_BASE_URL}?key=${apiKey}&alt=sse`;
   const geminiResponse = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -110,14 +83,19 @@ async function generateWithGemini(
 
   if (!geminiResponse.ok) {
     const errorBody = await geminiResponse.text();
-    console.error('❌ Gemini API error:', geminiResponse.status, errorBody);
-    throw new Error(`Gemini API error ${geminiResponse.status}: ${errorBody}`);
+    if (isQuotaError(geminiResponse.status, errorBody)) {
+      console.warn(`⚠️ [${keyLabel}] Quota épuisé (${geminiResponse.status}), rotation vers la clé suivante…`);
+      const err: any = new Error(`Quota épuisé pour ${keyLabel}`);
+      err.isQuota = true;
+      throw err;
+    }
+    console.error(`❌ [${keyLabel}] Erreur Gemini ${geminiResponse.status}:`, errorBody.slice(0, 300));
+    throw new Error(`Gemini API error ${geminiResponse.status}: ${errorBody.slice(0, 200)}`);
   }
 
+  // Lire le stream SSE et accumuler le texte
   const reader = geminiResponse.body?.getReader();
-  if (!reader) {
-    throw new Error('No response body from Gemini');
-  }
+  if (!reader) throw new Error('Aucun corps de réponse de Gemini');
 
   const decoder = new TextDecoder();
   let fullText = '';
@@ -126,7 +104,6 @@ async function generateWithGemini(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
@@ -140,11 +117,11 @@ async function generateWithGemini(
         const chunk = JSON.parse(jsonStr);
         const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
         if (chunkText) fullText += chunkText;
-      } catch { /* ignore non-parseable chunks */ }
+      } catch { /* ignore */ }
     }
   }
 
-  // Process remaining buffer
+  // Buffer restant
   if (buffer.trim().startsWith('data: ')) {
     try {
       const jsonStr = buffer.trim().slice(6);
@@ -156,15 +133,116 @@ async function generateWithGemini(
     } catch { /* ignore */ }
   }
 
-  console.log(`✅ Gemini stream complete, total text length: ${fullText.length}`);
+  console.log(`✅ [${keyLabel}] Gemini OK — longueur texte: ${fullText.length}`);
   return fullText;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main Vercel handler
+// Rotation automatique sur toutes les clés Gemini disponibles
+// ─────────────────────────────────────────────────────────────────────────────
+async function generateWithGeminiRotation(
+  contents: any,
+  systemInstruction?: string,
+  generationConfig?: Record<string, any>
+): Promise<string> {
+  const keys = getGeminiKeys();
+  if (keys.length === 0) throw new Error('Aucune clé Gemini configurée');
+
+  let lastError: any = null;
+
+  for (let i = 0; i < keys.length; i++) {
+    const label = i < 8 ? `GEMINI_API_KEY_${i + 1}` : 'GEMINI_API_KEY';
+    try {
+      const text = await tryGeminiKey(keys[i], label, contents, systemInstruction, generationConfig);
+      if (i > 0) {
+        console.log(`✅ Succès avec la clé #${i + 1} (${i} clé(s) épuisée(s) avant)`);
+      }
+      return text;
+    } catch (err: any) {
+      lastError = err;
+      if (err.isQuota) {
+        // Quota → on essaie la clé suivante
+        continue;
+      }
+      // Erreur non liée au quota → propager immédiatement
+      throw err;
+    }
+  }
+
+  // Toutes les clés Gemini sont épuisées
+  console.error('❌ Toutes les clés Gemini sont épuisées ou en erreur.');
+  const allQuota: any = new Error('Toutes les clés Gemini sont épuisées');
+  allQuota.isQuota = true;
+  allQuota.allExhausted = true;
+  throw allQuota;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fallback OpenAI-compatible (OpenAI ou GROQ)
+// ─────────────────────────────────────────────────────────────────────────────
+async function generateWithOpenAICompat(
+  contents: any,
+  systemInstruction?: string,
+  generationConfig?: Record<string, any>
+): Promise<{ text: string; provider: string }> {
+  // Choisir le provider disponible (préférer GROQ si disponible car gratuit)
+  const apiKey   = GROQ_API_KEY  || OPENAI_API_KEY;
+  const baseUrl  = GROQ_API_KEY  ? GROQ_BASE_URL  : OPENAI_BASE_URL;
+  const model    = GROQ_API_KEY  ? GROQ_MODEL     : OPENAI_MODEL;
+  const provider = GROQ_API_KEY  ? 'GROQ'         : 'OpenAI';
+
+  if (!apiKey) throw new Error('Aucune clé OpenAI/GROQ configurée');
+
+  const messages: Array<{ role: string; content: string }> = [];
+  if (systemInstruction) messages.push({ role: 'system', content: systemInstruction });
+
+  const userContent = typeof contents === 'string' ? contents : JSON.stringify(contents);
+  messages.push({ role: 'user', content: userContent });
+
+  const requestBody: Record<string, any> = {
+    model,
+    messages,
+    temperature: generationConfig?.temperature ?? 0.7,
+    max_tokens: generationConfig?.maxOutputTokens ?? 8192,
+  };
+
+  if (generationConfig?.responseMimeType === 'application/json') {
+    requestBody.response_format = { type: 'json_object' };
+  }
+
+  console.log(`🔀 Tentative fallback avec ${provider} (${model})…`);
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error(`❌ ${provider} API error ${response.status}:`, errorBody.slice(0, 300));
+    if (isQuotaError(response.status, errorBody)) {
+      const err: any = new Error(`Quota ${provider} épuisé`);
+      err.isQuota = true;
+      throw err;
+    }
+    throw new Error(`${provider} API error ${response.status}: ${errorBody.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const text = data?.choices?.[0]?.message?.content || '';
+  console.log(`✅ ${provider} OK — longueur texte: ${text.length}`);
+  return { text, provider };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Handler principal Vercel
 // ─────────────────────────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS headers
+  // En-têtes CORS
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -173,95 +251,93 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (req.method !== 'POST')    { return res.status(405).json({ error: 'Method not allowed' }); }
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  // Vérification : au moins une clé configurée
+  const geminiKeys = getGeminiKeys();
+  const hasOpenAI  = !!OPENAI_API_KEY || !!GROQ_API_KEY;
 
-  // Require at least one AI key
-  if (!OPENAI_API_KEY && !GEMINI_API_KEY) {
+  if (geminiKeys.length === 0 && !hasOpenAI) {
     return res.status(500).json({
       error: 'No AI API key configured',
       message:
-        "Veuillez configurer OPENAI_API_KEY ou GEMINI_API_KEY dans les variables d'environnement Vercel.",
+        "Veuillez configurer au moins GEMINI_API_KEY_1 (ou GEMINI_API_KEY) dans les variables d'environnement Vercel.",
     });
   }
 
   try {
     const { contents, systemInstruction, generationConfig } = req.body;
+    if (!contents) return res.status(400).json({ error: 'Missing contents in request body' });
 
-    if (!contents) {
-      return res.status(400).json({ error: 'Missing contents in request body' });
-    }
-
-    let fullText = '';
+    let fullText    = '';
     let usedProvider = '';
 
-    // ── Try OpenAI first ──────────────────────────────────────────────────────
-    if (OPENAI_API_KEY) {
+    // ── Étape 1 : Rotation automatique entre toutes les clés Gemini ──────────
+    if (geminiKeys.length > 0) {
       try {
-        console.log('🚀 Trying OpenAI API (primary)...');
-        fullText = await generateWithOpenAI(contents, systemInstruction, generationConfig);
-        usedProvider = 'openai';
-      } catch (openaiError: any) {
-        console.warn('⚠️ OpenAI failed, trying Gemini fallback:', openaiError.message);
-
-        // ── Fallback to Gemini ─────────────────────────────────────────────────
-        if (GEMINI_API_KEY) {
-          try {
-            console.log('🤖 Trying Gemini API (fallback)...');
-            fullText = await generateWithGemini(contents, systemInstruction, generationConfig);
-            usedProvider = 'gemini';
-          } catch (geminiError: any) {
-            console.error('❌ Both AI providers failed');
-            console.error('OpenAI error:', openaiError.message);
-            console.error('Gemini error:', geminiError.message);
-
-            // Return a user-friendly error
-            const geminiMsg = geminiError.message || '';
-            if (geminiMsg.includes('429') || geminiMsg.toLowerCase().includes('quota') || geminiMsg.toLowerCase().includes('limit')) {
+        console.log(`🔑 ${geminiKeys.length} clé(s) Gemini disponible(s) — démarrage rotation…`);
+        fullText     = await generateWithGeminiRotation(contents, systemInstruction, generationConfig);
+        usedProvider = 'Gemini';
+      } catch (geminiErr: any) {
+        if (geminiErr.allExhausted || geminiErr.isQuota) {
+          // Toutes les clés Gemini épuisées → tenter OpenAI/GROQ
+          console.warn('⚠️ Toutes les clés Gemini épuisées, tentative fallback OpenAI/GROQ…');
+          if (hasOpenAI) {
+            try {
+              const result  = await generateWithOpenAICompat(contents, systemInstruction, generationConfig);
+              fullText      = result.text;
+              usedProvider  = result.provider;
+            } catch (openaiErr: any) {
+              // OpenAI/GROQ aussi épuisé → répondre avec une erreur claire
+              console.error('❌ OpenAI/GROQ aussi épuisé:', openaiErr.message);
               return res.status(429).json({
-                error: 'AI quota exceeded',
-                message: "Limite d'utilisation de l'IA atteinte. Réessayez dans quelques minutes.",
+                error: 'all_providers_exhausted',
+                message:
+                  "Toutes les clés IA sont temporairement épuisées. Veuillez réessayer dans quelques minutes.",
               });
             }
-            throw geminiError;
+          } else {
+            // Pas de fallback disponible
+            return res.status(429).json({
+              error: 'all_gemini_keys_exhausted',
+              message:
+                "Toutes les clés Gemini sont épuisées. Réessayez dans quelques minutes ou ajoutez des clés supplémentaires.",
+            });
           }
         } else {
-          // No Gemini key — re-throw OpenAI error
-          throw openaiError;
+          // Erreur non-quota (ex: réseau, format…) → propager
+          throw geminiErr;
         }
       }
+
+    // ── Étape 2 : Pas de clé Gemini → utiliser directement OpenAI/GROQ ──────
     } else {
-      // No OpenAI key — use Gemini directly
-      console.log('🤖 Using Gemini API (no OpenAI key)...');
-      fullText = await generateWithGemini(contents, systemInstruction, generationConfig);
-      usedProvider = 'gemini';
+      console.log('🔀 Aucune clé Gemini configurée, utilisation OpenAI/GROQ…');
+      const result  = await generateWithOpenAICompat(contents, systemInstruction, generationConfig);
+      fullText      = result.text;
+      usedProvider  = result.provider;
     }
 
-    console.log(`✅ Generation complete via ${usedProvider}, text length: ${fullText.length}`);
+    console.log(`✅ Génération terminée via ${usedProvider} — longueur: ${fullText.length}`);
     return res.status(200).json({ text: fullText });
 
   } catch (error: any) {
-    console.error('❌ [API/generate] Error:', error);
-
+    console.error('❌ [API/generate] Erreur inattendue:', error);
     const msg: string = error?.message || String(error);
 
-    // Quota / rate-limit errors
-    if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate') || msg.toLowerCase().includes('limit')) {
+    if (
+      msg.includes('429') ||
+      msg.toLowerCase().includes('quota') ||
+      msg.toLowerCase().includes('rate') ||
+      msg.toLowerCase().includes('épuisé')
+    ) {
       return res.status(429).json({
-        error: 'AI quota exceeded',
+        error: 'quota_exceeded',
         message: "Limite d'utilisation de l'IA atteinte. Réessayez dans quelques minutes.",
       });
     }
 
-    return res.status(500).json({
-      error: 'Internal server error',
-      message: msg,
-    });
+    return res.status(500).json({ error: 'Internal server error', message: msg });
   }
 }
