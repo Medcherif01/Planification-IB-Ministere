@@ -1157,16 +1157,41 @@ export const generateCourseFromChapters = async (
       
       let plans;
       try {
-        plans = JSON.parse(cleanedJson);
-      } catch (parseError) {
+        const parsed = JSON.parse(cleanedJson);
+        
+        // Cas 1 : tableau direct  → [ {...}, {...} ]
+        if (Array.isArray(parsed)) {
+          plans = parsed;
+        }
+        // Cas 2 : objet wrapper (OpenAI/GROQ ne peut pas retourner un tableau à la racine)
+        // Formes possibles : { units:[...] } | { plans:[...] } | { unitPlans:[...] }
+        //                    { unit_plans:[...] } | { data:[...] } | { results:[...] }
+        else if (parsed && typeof parsed === 'object') {
+          const arrayKey = ['units','plans','unitPlans','unit_plans','data','results','planifications']
+            .find(k => Array.isArray(parsed[k]));
+          if (arrayKey) {
+            console.log(`✓ Tableau trouvé dans la clé wrapper "${arrayKey}"`);
+            plans = parsed[arrayKey];
+          } else {
+            // Dernier recours : si l'objet ressemble à un plan unique, l'envelopper dans un tableau
+            if (parsed.title || parsed.keyConcept || parsed.subject) {
+              console.log('✓ Objet unique détecté, enveloppé dans un tableau');
+              plans = [parsed];
+            } else {
+              console.error("❌ L'IA n'a pas retourné un tableau de plans, clés reçues:", Object.keys(parsed).join(', '));
+              throw new Error("L'IA n'a pas retourné de plan valide. Veuillez réessayer.");
+            }
+          }
+        } else {
+          throw new Error("Format JSON inattendu.");
+        }
+      } catch (parseError: any) {
+        if (parseError.message && (parseError.message.includes('plan valide') || parseError.message.includes('inattendu'))) {
+          throw parseError;
+        }
         console.error("❌ Erreur de parsing JSON:", parseError);
         console.error("JSON problématique:", cleanedJson.substring(0, 500));
         throw new Error("Le format des plans générés est invalide. Veuillez réessayer avec des chapitres plus clairs.");
-      }
-      
-      if (!Array.isArray(plans)) {
-        console.error("❌ L'IA n'a pas retourné un tableau de plans");
-        throw new Error("L'IA n'a pas retourné de plan valide. Veuillez réessayer.");
       }
       
       if (plans.length === 0) {

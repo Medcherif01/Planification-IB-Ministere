@@ -68,11 +68,17 @@ async function tryGeminiKey(
     };
   }
 
-  requestBody.generationConfig = {
+  // Filtrer les clés inconnues de generationConfig pour Gemini
+  // (éviter de passer des champs non supportés)
+  const geminiConfig: Record<string, any> = {
     temperature: 0.7,
     maxOutputTokens: 8192,
-    ...(generationConfig || {}),
   };
+  if (generationConfig?.temperature !== undefined) geminiConfig.temperature = generationConfig.temperature;
+  if (generationConfig?.maxOutputTokens !== undefined) geminiConfig.maxOutputTokens = generationConfig.maxOutputTokens;
+  if (generationConfig?.responseMimeType) geminiConfig.responseMimeType = generationConfig.responseMimeType;
+
+  requestBody.generationConfig = geminiConfig;
 
   const url = `${GEMINI_BASE_URL}?key=${apiKey}&alt=sse`;
   const geminiResponse = await fetch(url, {
@@ -194,7 +200,18 @@ async function generateWithOpenAICompat(
   if (!apiKey) throw new Error('Aucune clé OpenAI/GROQ configurée');
 
   const messages: Array<{ role: string; content: string }> = [];
-  if (systemInstruction) messages.push({ role: 'system', content: systemInstruction });
+
+  // ── Instruction système ───────────────────────────────────────────────────
+  // OpenAI/GROQ avec json_object NE PEUT PAS retourner un tableau à la racine.
+  // On ajoute une consigne claire pour envelopper dans un objet wrapper.
+  let systemText = systemInstruction || '';
+  if (generationConfig?.responseMimeType === 'application/json') {
+    systemText +=
+      '\n\n⚠️ RÈGLE ABSOLUE JSON : Retourne TOUJOURS un objet JSON valide à la racine.' +
+      " Si la réponse est une liste d'unités/plans, enveloppe-la dans {\"units\": [...]}." +
+      ' Ne commence jamais par [ directement.';
+  }
+  if (systemText.trim()) messages.push({ role: 'system', content: systemText });
 
   const userContent = typeof contents === 'string' ? contents : JSON.stringify(contents);
   messages.push({ role: 'user', content: userContent });
