@@ -67,17 +67,25 @@ const isLanguageAcquisition = (subject: string): boolean => {
 // Helper function to detect if subject is ART or EPS (need Arabic version)
 const isArtOrEPS = (subject: string): boolean => {
   const normalized = subject.toLowerCase().trim();
-  return normalized.includes('arts') || 
+  return (normalized.includes('arts') || 
          normalized.includes('art') || 
          normalized.includes('éducation physique') || 
          normalized.includes('eps') ||
-         normalized.includes('santé');
+         normalized.includes('santé')) &&
+         !normalized.includes('design'); // Design a son propre mode
+};
+
+// Helper function to detect if subject is Design
+const isDesignSubject = (subject: string): boolean => {
+  const normalized = subject.toLowerCase().trim();
+  return normalized === 'design' || normalized.startsWith('design');
 };
 
 // Get language code based on subject
-const getGenerationLanguage = (subject: string): 'fr' | 'en' | 'bilingual' => {
+const getGenerationLanguage = (subject: string): 'fr' | 'en' | 'bilingual' | 'design' => {
   if (isLanguageAcquisition(subject)) return 'en';
-  if (isArtOrEPS(subject)) return 'bilingual'; // Français + Arabe
+  if (isDesignSubject(subject)) return 'design'; // Design : 4 critères + dossier de conception
+  if (isArtOrEPS(subject)) return 'bilingual'; // Arts/EPS : Français + Arabe
   return 'fr';
 };
 
@@ -231,8 +239,16 @@ const DEFAULT_CRITERIA_BY_SUBJECT: Record<string, Array<{ criterion: string; cri
   ],
 };
 
+const DEFAULT_CRITERIA_DESIGN = [
+  { criterion: 'A', criterionName: 'Rechercher et définir', strands: ['i. Expliquer et justifier la nécessité d\'une solution', 'ii. Construire un profil de client et identifier les besoins', 'iii. Analyser les produits similaires existants en utilisant les spécifications', 'iv. Développer un cahier des charges de conception'] },
+  { criterion: 'B', criterionName: 'Idéer et concevoir', strands: ['i. Développer des idées de conception originales et créatives', 'ii. Présenter des esquisses et schémas annotés détaillés', 'iii. Présenter et justifier la solution de conception retenue', 'iv. Développer un planning de fabrication étape par étape'] },
+  { criterion: 'C', criterionName: 'Créer la solution', strands: ['i. Construire la solution en utilisant les techniques demandées', 'ii. Démontrer les compétences techniques requises', 'iii. Suivre le planning de façon sécuritaire et organisée', 'iv. Démontrer l\'utilisation responsable des ressources'] },
+  { criterion: 'D', criterionName: 'Évaluer', strands: ['i. Décrire des méthodes d\'évaluation pertinentes', 'ii. Tester et évaluer la solution selon le cahier des charges', 'iii. Évaluer l\'impact de la solution sur l\'utilisateur et l\'environnement', 'iv. Expliquer comment la solution pourrait être améliorée'] },
+];
+
 const getDefaultCriteria = (subject: string) => {
   const norm = subject.toLowerCase();
+  if (norm === 'design' || norm.startsWith('design')) return DEFAULT_CRITERIA_DESIGN;
   if (norm.includes('math')) return DEFAULT_CRITERIA_BY_SUBJECT['mathématiques'];
   if (norm.includes('science')) return DEFAULT_CRITERIA_BY_SUBJECT['sciences'];
   if (norm.includes('individu') || norm.includes('société')) return DEFAULT_CRITERIA_BY_SUBJECT['individus et sociétés'];
@@ -282,12 +298,13 @@ const enforceAssessmentsRules = (assessments: AssessmentData[], subject: string)
     };
   });
 
-  // ── Règle 3 : il faut OBLIGATOIREMENT au minimum 2 critères ───────────────
-  if (result.length < 2) {
+  // ── Règle 3 : minimum 2 critères (4 pour Design) ──────────────────────────
+  const minCriteria = isDesignSubject(subject) ? 4 : 2;
+  if (result.length < minCriteria) {
     const existingLetters = result.map(a => a.criterion);
     // Choisir parmi les critères par défaut ceux qui ne sont pas déjà présents
     const toAdd = defaults.filter(d => !existingLetters.includes(d.criterion));
-    const needed = 2 - result.length;
+    const needed = minCriteria - result.length;
     console.warn(`⚠️ Seulement ${result.length} critère(s) → ajout de ${needed} critère(s) obligatoire(s)`);
     for (let i = 0; i < needed && i < toAdd.length; i++) {
       const d = toAdd[i];
@@ -312,10 +329,11 @@ const enforceAssessmentsRules = (assessments: AssessmentData[], subject: string)
     }
   }
 
-  // ── Règle 4 : pas plus de 3 critères par unité (règle IB) ─────────────────
-  if (result.length > 3) {
-    console.warn(`⚠️ ${result.length} critères → tronqué à 3 (règle IB)`);
-    result = result.slice(0, 3);
+  // ── Règle 4 : maximum 3 critères (4 pour Design) ──────────────────────────
+  const maxCriteria = isDesignSubject(subject) ? 4 : 3;
+  if (result.length > maxCriteria) {
+    console.warn(`⚠️ ${result.length} critères → tronqué à ${maxCriteria} (règle IB)`);
+    result = result.slice(0, maxCriteria);
   }
 
   return result;
@@ -979,9 +997,198 @@ Expected JSON Structure:
 }
 `;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// System Prompt DESIGN — Dossier de conception avec les 4 critères A, B, C, D
+// Toutes les questions sont liées et forment un seul projet cohérent
+// ─────────────────────────────────────────────────────────────────────────────
+const SYSTEM_INSTRUCTION_FULL_PLAN_DESIGN = `
+Tu es un expert pédagogique IB PEI spécialisé en Design.
+Tu dois générer un Plan d'Unité complet ET un DOSSIER DE CONCEPTION détaillé en Français.
+
+❗❗❗ LOI ABSOLUE N°1 — DOSSIER DE CONCEPTION : LES 4 CRITÈRES (NON NÉGOCIABLE) ❗❗❗
+En Design IB, CHAQUE UNITÉ doit être évaluée sur les 4 CRITÈRES A, B, C et D OBLIGATOIREMENT.
+L'évaluation prend la forme d'un DOSSIER DE CONCEPTION cohérent (un seul projet fil conducteur).
+
+CRITÈRES DESIGN IB (obligatoires) :
+- Critère A — Rechercher et définir (max 8 pts) :
+  i. Expliquer et justifier la nécessité d'une solution
+  ii. Construire un profil de client et identifier les besoins
+  iii. Analyser des produits similaires en utilisant les spécifications
+  iv. Développer un cahier des charges de conception
+
+- Critère B — Idéer et concevoir (max 8 pts) :
+  i. Développer des idées de conception originales et créatives
+  ii. Présenter des esquisses et schémas annotés détaillés
+  iii. Présenter et justifier la solution de conception retenue
+  iv. Développer un planning de fabrication étape par étape
+
+- Critère C — Créer la solution (max 8 pts) :
+  i. Construire la solution en utilisant les techniques demandées
+  ii. Démontrer les compétences techniques requises
+  iii. Suivre le planning de façon sécuritaire et organisée
+  iv. Démontrer l'utilisation responsable des ressources
+
+- Critère D — Évaluer (max 8 pts) :
+  i. Décrire des méthodes d'évaluation pertinentes
+  ii. Tester et évaluer la solution selon le cahier des charges
+  iii. Évaluer l'impact de la solution sur l'utilisateur et l'environnement
+  iv. Expliquer comment la solution pourrait être améliorée
+
+❗❗❗ LOI ABSOLUE N°2 — DOSSIER COHÉRENT ET INTERDÉPENDANT (NON NÉGOCIABLE) ❗❗❗
+L'évaluation doit former un SEUL PROJET DE CONCEPTION cohérent :
+- UN seul contexte/problème de conception pour tous les critères
+- Les questions des critères A, B, C et D doivent être TOUTES LIÉES au MÊME projet
+- Le fil conducteur : identifier le problème (A) → concevoir (B) → créer (C) → évaluer (D)
+- Exemple de projet : "Concevoir un objet utilitaire pour résoudre un problème de la vie quotidienne"
+- Chaque partie du dossier doit faire référence au MÊME objet/solution conçu(e)
+
+❗❗❗ LOI ABSOLUE N°3 — SOUS-ASPECTS OBLIGATOIRES (NON NÉGOCIABLE) ❗❗❗
+CHAQUE CRITÈRE doit lister AU MINIMUM 3 sous-aspects dans le champ "strands".
+- Si tu génères < 3 sous-aspects pour un critère → réponse INVALIDE
+
+⚠️ DURÉE DU DOSSIER DE CONCEPTION :
+- Le dossier complet (4 critères) peut être réalisé sur 2-3 séances (60-90 min chacune)
+- Chaque section du dossier est clairement délimitée avec ses critères d'évaluation
+
+RÈGLES ABSOLUES - FORMAT JSON :
+1. Utilise UNIQUEMENT les CLÉS JSON EN ANGLAIS. NE LES TRADUIS PAS.
+2. Le CONTENU (les valeurs) doit être en FRANÇAIS.
+3. Ne laisse AUCUN champ vide.
+4. Le JSON doit être PARFAITEMENT VALIDE — pas de virgules traînantes, guillemets échappés.
+
+STRUCTURE DU DOSSIER DE CONCEPTION (exercices interdépendants) :
+Le champ "assessments" contient les 4 critères dans l'ordre A → B → C → D.
+Chaque critère a ses propres exercices qui font partie du MÊME projet.
+
+Exemple de projet fil conducteur : "Concevoir un porte-stylos ergonomique pour les élèves"
+- Critère A : Recherche — analyser le besoin, profil utilisateur, cahier des charges
+- Critère B : Idéation — 3 esquisses, choix justifié, planning de fabrication
+- Critère C : Réalisation — construction, techniques utilisées, gestion des ressources
+- Critère D : Évaluation — tests, comparaison au cahier des charges, améliorations
+
+Structure JSON attendue :
+{
+  "title": "Titre de l'unité Design en Français",
+  "duration": "XX heures",
+  "chapters": "- Chapitre 1: ...\n- Chapitre 2: ...",
+  "keyConcept": "Un concept clé IB",
+  "relatedConcepts": ["Concept 1", "Concept 2"],
+  "globalContext": "Un contexte mondial",
+  "statementOfInquiry": "Énoncé de recherche complet...",
+  "inquiryQuestions": {
+    "factual": ["Q1", "Q2"],
+    "conceptual": ["Q1", "Q2"],
+    "debatable": ["Q1", "Q2"]
+  },
+  "objectives": ["Critère A: Rechercher et définir", "Critère B: Idéer et concevoir", "Critère C: Créer la solution", "Critère D: Évaluer"],
+  "atlSkills": ["Compétence de réflexion...", "Compétence de recherche..."],
+  "content": "Contenu détaillé de l'unité...",
+  "learningExperiences": "Activités d'apprentissage et stratégies d'enseignement Design...",
+  "summativeAssessment": "Dossier de conception complet (Critères A+B+C+D) — projet: [description du projet fil conducteur]",
+  "formativeAssessment": "Évaluations formatives progressives...",
+  "differentiation": "Stratégies de différenciation...",
+  "resources": "Matériaux, outils, ressources numériques...",
+  "reflection": {
+    "prior": "Connaissances préalables en design...",
+    "during": "Engagement dans le processus de conception...",
+    "after": "Résultats et apprentissages..."
+  },
+  "assessments": [
+    {
+      "criterion": "A",
+      "criterionName": "Rechercher et définir",
+      "maxPoints": 8,
+      "strands": ["i. Expliquer et justifier la nécessité d'une solution", "ii. Construire un profil de client", "iii. Analyser des produits similaires", "iv. Développer un cahier des charges"],
+      "rubricRows": [
+        {"level": "1-2", "descriptor": "L'élève identifie le problème de façon limitée..."},
+        {"level": "3-4", "descriptor": "L'élève identifie et décrit le problème..."},
+        {"level": "5-6", "descriptor": "L'élève analyse le problème et formule des spécifications..."},
+        {"level": "7-8", "descriptor": "L'élève développe un cahier des charges complet et justifié..."}
+      ],
+      "exercises": [
+        {
+          "title": "Partie A — Dossier de conception : Recherche et définition du problème",
+          "content": "CONTEXTE DU PROJET : [Présenter le contexte du projet de conception commun à tout le dossier]\n\nA.i — Justification du besoin :\nExplique pourquoi il est nécessaire de concevoir une solution pour ce problème.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nA.ii — Profil de l'utilisateur :\nDécris le client/utilisateur cible (âge, besoins, habitudes, contraintes).\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nA.iii — Analyse de produits existants :\nAnalyse deux produits similaires existants en utilisant les spécifications suivantes : [fonctionnalité, esthétique, durabilité, coût, impact environnemental].\n\n[Insérer images des deux produits analysés]\n\nProduit 1 : ...\nProduit 2 : ...\n\nA.iv — Cahier des charges :\nDéveloppe le cahier des charges de conception (min. 5 critères avec leurs niveaux de performance).",
+          "criterionReference": "Critère A : i, ii, iii, iv",
+          "workspaceNeeded": true
+        }
+      ]
+    },
+    {
+      "criterion": "B",
+      "criterionName": "Idéer et concevoir",
+      "maxPoints": 8,
+      "strands": ["i. Développer des idées de conception originales", "ii. Présenter des esquisses annotées", "iii. Justifier la solution retenue", "iv. Développer un planning de fabrication"],
+      "rubricRows": [
+        {"level": "1-2", "descriptor": "L'élève présente une seule idée peu développée..."},
+        {"level": "3-4", "descriptor": "L'élève présente quelques idées avec esquisses basiques..."},
+        {"level": "5-6", "descriptor": "L'élève développe plusieurs idées avec justification..."},
+        {"level": "7-8", "descriptor": "L'élève présente des idées originales, esquisses détaillées, planning complet..."}
+      ],
+      "exercises": [
+        {
+          "title": "Partie B — Dossier de conception : Idéation et planification",
+          "content": "En référence au cahier des charges défini en Partie A :\n\nB.i & B.ii — Esquisses de conception :\nDéveloppe 3 idées de conception différentes pour le projet. Pour chaque idée, réalise une esquisse annotée avec les dimensions, matériaux et techniques envisagés.\n\n[ZONE D'ESQUISSE 1 — Idée 1]\n................................................................................................................................................................................................\n\n[ZONE D'ESQUISSE 2 — Idée 2]\n................................................................................................................................................................................................\n\n[ZONE D'ESQUISSE 3 — Idée 3]\n................................................................................................................................................................................................\n\nB.iii — Justification du choix :\nExplique pourquoi tu as choisi cette idée en référence aux critères du cahier des charges.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nB.iv — Planning de fabrication :\nDéveloppe un planning étape par étape (minimum 5 étapes avec matériaux, outils et durée).",
+          "criterionReference": "Critère B : i, ii, iii, iv",
+          "workspaceNeeded": true
+        }
+      ]
+    },
+    {
+      "criterion": "C",
+      "criterionName": "Créer la solution",
+      "maxPoints": 8,
+      "strands": ["i. Construire la solution selon les techniques demandées", "ii. Démontrer les compétences techniques", "iii. Suivre le planning de façon organisée", "iv. Utiliser les ressources de façon responsable"],
+      "rubricRows": [
+        {"level": "1-2", "descriptor": "L'élève réalise partiellement la solution avec peu de compétences..."},
+        {"level": "3-4", "descriptor": "L'élève réalise la solution avec des compétences basiques..."},
+        {"level": "5-6", "descriptor": "L'élève réalise la solution avec de bonnes compétences techniques..."},
+        {"level": "7-8", "descriptor": "L'élève réalise une solution de haute qualité avec excellentes compétences..."}
+      ],
+      "exercises": [
+        {
+          "title": "Partie C — Dossier de conception : Journal de fabrication",
+          "content": "Durant la fabrication de ta solution (en référence au planning Partie B) :\n\nC.i & C.ii — Journal de fabrication :\nDocumente chaque étape de ta fabrication (photos, croquis, notes techniques).\n\nÉtape 1 réalisée :\n................................................................................................................................................................................................\nÉtape 2 réalisée :\n................................................................................................................................................................................................\nÉtape 3 réalisée :\n................................................................................................................................................................................................\n\nC.iii — Suivi du planning :\nCompare ce que tu as réalisé avec ton planning initial. Y a-t-il eu des modifications ? Justifie.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nC.iv — Gestion des ressources :\nComment as-tu géré les matériaux et les déchets de façon responsable ?\n\nRéponse :\n................................................................................................................................................................................................",
+          "criterionReference": "Critère C : i, ii, iii, iv",
+          "workspaceNeeded": true
+        }
+      ]
+    },
+    {
+      "criterion": "D",
+      "criterionName": "Évaluer",
+      "maxPoints": 8,
+      "strands": ["i. Décrire des méthodes d'évaluation pertinentes", "ii. Tester et évaluer selon le cahier des charges", "iii. Évaluer l'impact de la solution", "iv. Proposer des améliorations"],
+      "rubricRows": [
+        {"level": "1-2", "descriptor": "L'élève décrit l'évaluation de façon superficielle..."},
+        {"level": "3-4", "descriptor": "L'élève teste la solution et formule quelques conclusions..."},
+        {"level": "5-6", "descriptor": "L'élève évalue la solution selon le cahier des charges..."},
+        {"level": "7-8", "descriptor": "L'élève mène une évaluation complète et propose des améliorations pertinentes..."}
+      ],
+      "exercises": [
+        {
+          "title": "Partie D — Dossier de conception : Évaluation finale",
+          "content": "En référence à ta solution créée en Partie C :\n\nD.i — Méthodes d'évaluation :\nDécris comment tu vas tester ta solution (minimum 2 méthodes différentes).\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nD.ii — Tests selon le cahier des charges :\nPour chaque critère de ton cahier des charges (Partie A), indique si ta solution le respecte ou non, avec justification.\n\nCritère 1 : ...\nRéponse :\n................................................................................................................................................................................................\n\nCritère 2 : ...\nRéponse :\n................................................................................................................................................................................................\n\nD.iii — Impact de la solution :\nÉvalue l'impact de ta solution sur l'utilisateur et sur l'environnement.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nD.iv — Améliorations possibles :\nSi tu devais améliorer ta solution, que changerais-tu ? Justifie.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................",
+          "criterionReference": "Critère D : i, ii, iii, iv",
+          "workspaceNeeded": true
+        }
+      ]
+    }
+  ]
+}
+
+⚠️ RAPPEL FINAL DESIGN :
+- TOUJOURS 4 critères A, B, C, D dans chaque unité Design
+- Le dossier forme UN SEUL PROJET cohérent (questions interdépendantes)
+- Critère A (Recherche) → B (Idéation) → C (Création) → D (Évaluation) : progression logique
+- Chaque critère doit avoir ≥ 3 sous-aspects dans "strands"
+- Le summativeAssessment DOIT décrire le projet de conception complet
+`;
+
 // Get appropriate system instruction based on subject
 const getSystemInstruction = (subject: string): string => {
   const lang = getGenerationLanguage(subject);
+  if (lang === 'design') return SYSTEM_INSTRUCTION_FULL_PLAN_DESIGN;
   if (lang === 'en') return SYSTEM_INSTRUCTION_FULL_PLAN_EN;
   if (lang === 'bilingual') return SYSTEM_INSTRUCTION_FULL_PLAN_BILINGUAL;
   return SYSTEM_INSTRUCTION_FULL_PLAN_FR;
@@ -997,7 +1204,29 @@ export const generateFullUnitPlan = async (
     
     let userPrompt = '';
     
-    if (lang === 'en') {
+    if (lang === 'design') {
+      userPrompt = `
+        Matière: ${subject}
+        Niveau: ${gradeLevel}
+        Sujets à couvrir: ${topics}
+        
+        ❗❗❗ OBLIGATOIRE — RÈGLE DESIGN IB ❗❗❗
+        1. Le champ "assessments" doit contenir EXACTEMENT 4 critères : A, B, C et D
+        2. L'évaluation est un DOSSIER DE CONCEPTION cohérent (projet unique fil conducteur)
+        3. Toutes les questions sont liées au MÊME projet de conception
+        4. Chaque critère doit avoir AU MINIMUM 3 sous-aspects dans "strands"
+        5. Le summativeAssessment doit décrire le projet de conception complet
+        
+        Génère le plan d'unité complet et le dossier de conception avec les 4 critères.
+        Assure-toi de:
+        1. Définir UN projet de conception clair comme fil conducteur (ex: concevoir un objet utilitaire)
+        2. Relier toutes les questions des 4 critères au MÊME projet
+        3. Respecter l'ordre logique A (Recherche) → B (Idéation) → C (Création) → D (Évaluation)
+        4. Inclure un champ "chapters" listant les chapitres/leçons de design couverts
+        5. Retourner UNIQUEMENT un JSON valide et complet - pas de texte avant ou après
+        6. S'assurer que le JSON est parfaitement valide: pas de virgules traînantes
+      `;
+    } else if (lang === 'en') {
       userPrompt = `
         Subject: ${subject}
         Grade Level: ${gradeLevel}
@@ -1077,6 +1306,7 @@ export const generateFullUnitPlan = async (
         La traduction arabe doit être pédagogiquement appropriée et naturelle.
       `;
     } else {
+      // Français standard (toutes les matières sauf Design, EN, Bilingue)
       userPrompt = `
         Matière: ${subject}
         Niveau: ${gradeLevel}
@@ -1096,7 +1326,7 @@ export const generateFullUnitPlan = async (
         4. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans un exercice)
         5. Concevoir chaque évaluation pour une durée de 30 minutes
         6. Retourner UNIQUEMENT une structure JSON valide et complète - pas de texte avant ou après
-        7. S'assurer que le JSON est parfaitement valide: pas de virgules trainantes, guillemets et retours à la ligne échappés correctement
+        7. S'assurer que le JSON est parfaitement valide: pas de virgules traînantes, guillemets et retours à la ligne échappés correctement
       `;
     }
 
@@ -1178,24 +1408,36 @@ export const generateCourseFromChapters = async (
   ): Promise<UnitPlan[]> => {
     try {
       const lang = getGenerationLanguage(subject);
+      const isDesign = isDesignSubject(subject);
       
+      // ── Task instruction ajoutée au system prompt ────────────────────────
       let taskInstruction = '';
       
-      if (lang === 'en') {
+      if (isDesign) {
         taskInstruction = `
-        TASK: Divide the provided curriculum into 4 to 6 logical units.
+        TÂCHE : Divise le programme de Design fourni en MINIMUM 4 et MAXIMUM 6 unités logiques (idéalement 4 unités pour couvrir l'année entière).
+        Retourne une LISTE JSON (Array) d'objets UnitPlan.
+        ❗ CHAQUE unité Design DOIT avoir les 4 critères A, B, C, D dans "assessments" (DOSSIER DE CONCEPTION).
+        ❗ MINIMUM 4 unités, MAXIMUM 6 unités.
+        `;
+      } else if (lang === 'en') {
+        taskInstruction = `
+        TASK: Divide the provided curriculum into MINIMUM 4 and MAXIMUM 6 logical units (aim for 4-5 units covering the full year).
         Return a JSON LIST (Array) of UnitPlan objects.
+        ❗ MINIMUM 4 units, MAXIMUM 6 units.
         `;
       } else if (lang === 'bilingual') {
         taskInstruction = `
-        TACHE : Divise le programme fourni en 4 à 6 unités logiques.
+        TÂCHE : Divise le programme fourni en MINIMUM 4 et MAXIMUM 6 unités logiques (idéalement 4-5 unités pour l'année).
         Retourne une LISTE JSON (Array) d'objets UnitPlan BILINGUES (français + arabe).
         ⚠️ CHAQUE unité doit avoir TOUS les champs en version française ET arabe (suffixe _ar).
+        ❗ MINIMUM 4 unités, MAXIMUM 6 unités.
         `;
       } else {
         taskInstruction = `
-        TACHE : Divise le programme fourni en 4 à 6 unités logiques.
+        TÂCHE : Divise le programme fourni en MINIMUM 4 et MAXIMUM 6 unités logiques (idéalement 4-5 unités pour l'année complète).
         Retourne une LISTE JSON (Array) d'objets UnitPlan.
+        ❗ MINIMUM 4 unités, MAXIMUM 6 unités — jamais moins de 4.
         `;
       }
       
@@ -1204,9 +1446,25 @@ export const generateCourseFromChapters = async (
       ${taskInstruction}
       `;
   
+      // ── User prompt selon la langue / matière ────────────────────────────
       let userPrompt = '';
       
-      if (lang === 'en') {
+      if (isDesign) {
+        userPrompt = `
+          Matière: ${subject}
+          Niveau: ${gradeLevel}
+          Programme complet:
+          ${allChapters}
+          
+          ❗❗❗ RÈGLE ABSOLUE DESIGN ❗❗❗
+          1. Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 4 unités)
+          2. CHAQUE unité Design doit avoir les 4 critères A, B, C et D dans "assessments"
+          3. L'évaluation de chaque unité est un DOSSIER DE CONCEPTION cohérent (projet fil conducteur unique)
+          4. Les 4 critères de chaque unité doivent être liés au MÊME projet de conception
+          5. Chaque unité a un projet de conception DIFFÉRENT adapté au contenu de l'unité
+          6. Retourne UNIQUEMENT un JSON valide et complet
+        `;
+      } else if (lang === 'en') {
         userPrompt = `
           Subject: ${subject}
           Grade Level: ${gradeLevel}
@@ -1215,6 +1473,7 @@ export const generateCourseFromChapters = async (
           
           ⚠️ CRITICAL: This is a LANGUAGE ACQUISITION subject - generate ALL CONTENT in ENGLISH.
           All plans, assessments, exercises, questions, titles, and instructions MUST be in ENGLISH only.
+          ❗ Generate MINIMUM 4 units and MAXIMUM 6 units (aim for 4-5).
         `;
       } else if (lang === 'bilingual') {
         const isArtCourse = subject.toLowerCase().includes('art');
@@ -1225,6 +1484,7 @@ export const generateCourseFromChapters = async (
           ${allChapters}
           
           ⚠️ RAPPEL: Génération BILINGUE requise (français + arabe avec suffixe _ar pour tous les champs).
+          ❗ Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 4-5).
           ${isArtCourse ? `
           ⚠️⚠️ RÈGLE ABSOLUE ARTS : TRAVAUX PRATIQUES UNIQUEMENT ⚠️⚠️
           Les évaluations critériées doivent être EXCLUSIVEMENT des TRAVAUX PRATIQUES artistiques :
@@ -1240,6 +1500,9 @@ export const generateCourseFromChapters = async (
           Niveau: ${gradeLevel}
           Programme complet:
           ${allChapters}
+          
+          ❗ Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 4-5 unités pour couvrir l'année complète).
+          ❗ JAMAIS moins de 4 unités.
         `;
       }
   
@@ -1307,6 +1570,17 @@ export const generateCourseFromChapters = async (
       if (plans.length === 0) {
         console.error("❌ L'IA a retourné un tableau vide");
         throw new Error("Aucun plan n'a été généré. Veuillez vérifier que les chapitres sont bien renseignés et réessayer.");
+      }
+      
+      // ── Validation : minimum 4 unités ────────────────────────────────────
+      if (plans.length < 4) {
+        console.warn(`⚠️ Seulement ${plans.length} unité(s) générée(s) — minimum requis : 4. Relance possible.`);
+        // On ne bloque pas, on avertit. L'utilisateur peut relancer si besoin.
+        // Note : l'IA peut parfois en générer moins si le contenu est court.
+      }
+      if (plans.length > 6) {
+        console.warn(`⚠️ ${plans.length} unités générées — tronqué à 6 (maximum autorisé)`);
+        plans = plans.slice(0, 6);
       }
       
       console.log(`✓ ${plans.length} plan(s) validé(s) avec succès`);
