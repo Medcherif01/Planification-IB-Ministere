@@ -3,14 +3,14 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 // ─────────────────────────────────────────────────────────────────────────────
 // Modèles Gemini essayés en cascade pour chaque clé (quota indépendant)
 // Ordre : du plus capable au plus léger
-//   gemini-2.5-flash-preview-04-17 : quota indépendant, très généreux en préversion
-//   gemini-2.0-flash               : modèle principal, bon équilibre qualité/quota
-//   gemini-2.0-flash-lite          : quota BEAUCOUP plus généreux (RPM et RPD élevés)
-//   gemini-1.5-flash               : quota indépendant de 2.0, bon fallback
-//   gemini-1.5-flash-8b            : quota très généreux, léger mais suffisant
+//   gemini-2.5-flash      : modèle stable actuel (juin 2025), quota propre à la série 2.5
+//   gemini-2.0-flash      : modèle principal série 2.0, quota indépendant de 2.5
+//   gemini-2.0-flash-lite : quota BEAUCOUP plus généreux (RPM et RPD élevés)
+//   gemini-1.5-flash      : quota indépendant des séries 2.x, bon fallback
+//   gemini-1.5-flash-8b   : quota très généreux, léger mais suffisant
 // ─────────────────────────────────────────────────────────────────────────────
 const GEMINI_MODELS = [
-  'gemini-2.5-flash-preview-04-17',
+  'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-2.0-flash-lite',
   'gemini-1.5-flash',
