@@ -1,20 +1,25 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Modèles Gemini essayés en cascade pour chaque clé (quota indépendant)
-// Ordre : du plus capable au plus léger
-//   gemini-2.5-flash      : modèle stable actuel (juin 2025), quota propre à la série 2.5
-//   gemini-2.0-flash      : modèle principal série 2.0, quota indépendant de 2.5
-//   gemini-2.0-flash-lite : quota BEAUCOUP plus généreux (RPM et RPD élevés)
-//   gemini-1.5-flash      : quota indépendant des séries 2.x, bon fallback
-//   gemini-1.5-flash-8b   : quota très généreux, léger mais suffisant
+// Modèles Gemini actifs (vérifiés sur la page officielle des dépréciations)
+// Dernière vérification : 15 avril 2026
+//
+// SUPPRIMÉS (shut down — 404 sur v1beta) :
+//   ✗ gemini-1.5-flash      → shut down
+//   ✗ gemini-1.5-flash-8b   → shut down
+//   ✗ gemini-2.5-flash-lite-preview-09-2025 → shut down (31 mars 2026)
+//
+// ACTIFS jusqu'à au moins juin 2026 :
+//   gemini-2.5-flash      → stable, quota série 2.5, shutdown juin 2026
+//   gemini-2.5-flash-lite → stable, quota distinct, shutdown juillet 2026
+//   gemini-2.0-flash      → stable, shutdown juin 2026
+//   gemini-2.0-flash-lite → stable, quota plus généreux, shutdown juin 2026
 // ─────────────────────────────────────────────────────────────────────────────
 const GEMINI_MODELS = [
   'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
   'gemini-2.0-flash',
   'gemini-2.0-flash-lite',
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-8b',
 ];
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -43,17 +48,25 @@ function getGeminiKeys(): string[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Détermine si une erreur HTTP signifie quota/rate-limit
+// Détermine si une erreur HTTP doit déclencher une rotation vers le modèle/clé suivant.
+// On fait tourner sur :
+//   • 429 / 503        → quota / rate-limit
+//   • 404              → modèle inconnu ou désactivé (ex: 1.5-flash shutdown)
+//   • 400 avec message « not found » ou « not supported » → idem
 // ─────────────────────────────────────────────────────────────────────────────
-function isQuotaError(status: number, body: string): boolean {
+function isRotatableError(status: number, body: string): boolean {
   if (status === 429 || status === 503) return true;
+  if (status === 404) return true; // modèle shut-down ou inconnu → passer au suivant
   const lower = body.toLowerCase();
   return (
     lower.includes('quota') ||
     lower.includes('rate limit') ||
     lower.includes('resource_exhausted') ||
     lower.includes('too many requests') ||
-    lower.includes('overloaded')
+    lower.includes('overloaded') ||
+    lower.includes('not found') ||
+    lower.includes('not supported') ||
+    lower.includes('is not supported for generatecontent')
   );
 }
 
@@ -106,10 +119,11 @@ async function tryGeminiKeyWithModel(
 
   if (!geminiResponse.ok) {
     const errorBody = await geminiResponse.text();
-    if (isQuotaError(geminiResponse.status, errorBody)) {
-      console.warn(`⚠️ [${label}/${model}] Quota épuisé (${geminiResponse.status}), rotation…`);
-      const err: any = new Error(`Quota épuisé: ${label}/${model}`);
-      err.isQuota = true;
+    if (isRotatableError(geminiResponse.status, errorBody)) {
+      const reason = geminiResponse.status === 404 ? 'Modèle indisponible (404)' : `Quota épuisé (${geminiResponse.status})`;
+      console.warn(`⚠️ [${label}/${model}] ${reason}, rotation…`);
+      const err: any = new Error(`${reason}: ${label}/${model}`);
+      err.isQuota = true; // flag générique pour déclencher la rotation
       throw err;
     }
     console.error(`❌ [${label}/${model}] Erreur ${geminiResponse.status}:`, errorBody.slice(0, 200));
