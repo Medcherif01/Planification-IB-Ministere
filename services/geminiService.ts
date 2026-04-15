@@ -150,60 +150,105 @@ const fixJsonString = (str: string): string => {
   return result;
 };
 
-// Robust JSON extractor with better error handling
+// ─────────────────────────────────────────────────────────────────────────────
+// Robust JSON extractor — handles truncated, malformed and markdown-wrapped JSON
+// Strategy:
+//   1. Strip markdown fences and leading/trailing noise
+//   2. Try to parse the raw extracted text directly (fastest path)
+//   3. Apply fixJsonString (escaping fixes) and retry
+//   4. If still failing (truncated response), attempt structural repair:
+//      a. Remove trailing commas
+//      b. Close every unclosed string with "
+//      c. Close every unclosed bracket/brace in reverse order
+//   5. Return "{}" only as absolute last resort
+// ─────────────────────────────────────────────────────────────────────────────
 const cleanJsonText = (text: string): string => {
   if (!text) return "{}";
-  
+
+  // ── Step 1: strip markdown fences and surrounding noise ──────────────────
+  let clean = text
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+
+  // Find the outermost JSON start
+  const firstCurly  = clean.indexOf('{');
+  const firstSquare = clean.indexOf('[');
+  let start = -1;
+  let isArray = false;
+
+  if (firstCurly !== -1 && (firstSquare === -1 || firstCurly < firstSquare)) {
+    start = firstCurly;
+    isArray = false;
+  } else if (firstSquare !== -1) {
+    start = firstSquare;
+    isArray = true;
+  }
+
+  if (start === -1) return "{}"; // no JSON structure found at all
+
+  const closeChar = isArray ? ']' : '}';
+  const end = clean.lastIndexOf(closeChar);
+
+  let extracted = (end !== -1 && end > start)
+    ? clean.substring(start, end + 1)
+    : clean.substring(start); // truncated — take everything from start
+
+  // ── Step 2: try raw parse first (happy path) ─────────────────────────────
   try {
-    // Remove markdown blocks first to clean up obvious noise
-    let clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    
-    // Remove any leading/trailing text that's not JSON
-    clean = clean.replace(/^[^{\[]*/, '').replace(/[^}\]]*$/, '');
-    
-    // Find the index of the first '{' or '['
-    const firstCurly = clean.indexOf('{');
-    const firstSquare = clean.indexOf('[');
-    
-    let start = -1;
-    let end = -1;
+    JSON.parse(extracted);
+    return extracted;
+  } catch { /* continue */ }
 
-    // Determine if it's an Object or Array based on which comes first
-    if (firstCurly !== -1 && (firstSquare === -1 || firstCurly < firstSquare)) {
-        start = firstCurly;
-        end = clean.lastIndexOf('}');
-    } else if (firstSquare !== -1) {
-        start = firstSquare;
-        end = clean.lastIndexOf(']');
+  // ── Step 3: apply string-level fixes and retry ───────────────────────────
+  let fixed = fixJsonString(extracted);
+  fixed = fixed.replace(/,(\s*[}\]])/g, '$1'); // trailing commas
+  try {
+    JSON.parse(fixed);
+    return fixed;
+  } catch { /* continue */ }
+
+  // ── Step 4: structural repair for truncated responses ────────────────────
+  // This handles the common case where Gemini's response was cut at maxOutputTokens
+  try {
+    let repaired = fixed;
+
+    // Remove any trailing comma or incomplete token after the last full value
+    repaired = repaired.replace(/,\s*$/, '');
+
+    // Close any unclosed string (odd number of unescaped quotes at the end)
+    const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
+    if (quoteCount % 2 !== 0) {
+      repaired += '"';
     }
 
-    if (start !== -1 && end !== -1 && end > start) {
-        let extracted = clean.substring(start, end + 1);
-        
-        // Apply aggressive JSON string fixing
-        extracted = fixJsonString(extracted);
-        
-        // Remove trailing commas before closing brackets
-        extracted = extracted.replace(/,(\s*[}\]])/g, '$1');
-        
-        // Try to parse
-        try {
-          JSON.parse(extracted);
-          return extracted;
-        } catch (parseError: any) {
-          console.warn("First parse attempt failed, trying additional fixes...");
-          
-          // Additional fallback: try to fix common issues
-          // Remove any remaining control characters
-          extracted = extracted.replace(/[\x00-\x1F\x7F]/g, '');
-          
-          // Validate it's parseable
-          JSON.parse(extracted);
-          return extracted;
-        }
+    // Walk through and track open brackets/braces to close them
+    const stack: string[] = [];
+    let inStr = false;
+    let esc = false;
+    for (const ch of repaired) {
+      if (esc) { esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (!inStr) {
+        if (ch === '{') stack.push('}');
+        else if (ch === '[') stack.push(']');
+        else if (ch === '}' || ch === ']') stack.pop();
+      }
     }
+    // Append missing closing brackets in reverse order
+    while (stack.length > 0) {
+      repaired += stack.pop();
+    }
+
+    // One final trailing-comma cleanup after the repairs
+    repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
+
+    JSON.parse(repaired);
+    console.warn('⚠️ JSON was truncated — repaired successfully');
+    return repaired;
   } catch (e) {
-    console.warn("JSON cleaning failed:", e);
+    console.warn('JSON cleaning failed after all repair attempts:', e);
   }
 
   return "{}";
@@ -1333,7 +1378,7 @@ export const generateFullUnitPlan = async (
     const text = await callGeminiViaProxy(
       userPrompt,
       getSystemInstruction(subject),
-      { responseMimeType: 'application/json', temperature: 0.7 }
+      { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 65536 }
     );
 
     if (!text || text.trim() === "") {
@@ -1509,7 +1554,7 @@ export const generateCourseFromChapters = async (
       const text = await callGeminiViaProxy(
         userPrompt,
         systemInstruction,
-        { responseMimeType: 'application/json', temperature: 0.7 }
+        { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 65536 }
       );
   
       if (!text || text.trim() === "") {

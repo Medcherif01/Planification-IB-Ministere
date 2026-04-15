@@ -90,7 +90,7 @@ async function tryGeminiKeyWithModel(
 
   const geminiConfig: Record<string, any> = {
     temperature: generationConfig?.temperature ?? 0.7,
-    maxOutputTokens: generationConfig?.maxOutputTokens ?? 8192,
+    maxOutputTokens: generationConfig?.maxOutputTokens ?? 65536,
   };
   if (generationConfig?.responseMimeType) {
     geminiConfig.responseMimeType = generationConfig.responseMimeType;
