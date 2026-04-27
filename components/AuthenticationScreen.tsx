@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Lock, User, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
 interface AuthenticationScreenProps {
@@ -34,13 +34,9 @@ const AuthenticationScreen: React.FC<AuthenticationScreenProps> = ({ onAuthentic
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Si l'utilisateur est déjà authentifié (localStorage), on le redirige immédiatement
-  // sans afficher le formulaire de connexion
-  useEffect(() => {
-    if (localStorage.getItem('isAuthenticated') === 'true') {
-      onAuthenticated();
-    }
-  }, []);
+  // Note : la vérification de la session persistée est gérée directement
+  // dans App.tsx (initialisation synchrone depuis localStorage).
+  // Ce composant s'affiche uniquement quand l'utilisateur n'est PAS connecté.
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
