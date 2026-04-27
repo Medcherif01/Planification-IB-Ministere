@@ -1,43 +1,54 @@
-import { GoogleGenAI } from "@google/genai";
-import Groq from "groq-sdk";
 import { Exam, ExamQuestion, ExamResource, ExamGenerationConfig, QuestionType, ExamGrade } from "../types";
 
-// Déterminer quel service IA utiliser (GROQ en priorité, puis Gemini)
-const getAIProvider = (): 'groq' | 'gemini' => {
-  const groqKey = process.env.GROQ_API_KEY;
-  const geminiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-  
-  if (groqKey) {
-    console.log('🚀 Utilisation de GROQ AI (quotas élevés)');
-    return 'groq';
-  }
-  
-  if (geminiKey) {
-    console.log('🤖 Utilisation de Gemini AI (fallback)');
-    return 'gemini';
-  }
-  
-  throw new Error("⚠️ Aucune clé API disponible. Configurez GROQ_API_KEY ou GEMINI_API_KEY.");
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// Proxy API helper — tous les appels Gemini passent par /api/generate (Vercel
+// serverless function) afin de ne jamais exposer les clés API côté client.
+// La rotation multi-clés × multi-modèles est gérée ENTIÈREMENT côté serveur.
+// ─────────────────────────────────────────────────────────────────────────────
+const callGeminiViaProxy = async (
+  contents: string,
+  systemInstruction?: string,
+  generationConfig?: Record<string, any>
+): Promise<string> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 270_000); // 270s timeout
 
-const getClient = () => {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-  
-  if (!apiKey) {
-    throw new Error("⚠️ GEMINI_API_KEY non définie. Veuillez configurer la clé API dans les variables d'environnement.");
-  }
-  
-  return new GoogleGenAI({ apiKey });
-};
+  try {
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents, systemInstruction, generationConfig }),
+      signal: controller.signal,
+    });
 
-const getGroqClient = () => {
-  const apiKey = process.env.GROQ_API_KEY;
-  
-  if (!apiKey) {
-    throw new Error("⚠️ GROQ_API_KEY non définie.");
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+
+      if (response.status === 429) {
+        throw new Error("⏳ Limite d'utilisation de l'IA atteinte. Réessayez dans quelques minutes.");
+      }
+
+      const msg = errData?.message
+        ? errData.message
+        : errData?.details
+        ? (() => {
+            try { return JSON.parse(errData.details)?.error?.message || 'Erreur API'; }
+            catch { return errData.details || 'Erreur API'; }
+          })()
+        : `HTTP ${response.status}`;
+      throw new Error(msg);
+    }
+
+    const data = await response.json();
+    return data.text || '';
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error("La génération a pris trop de temps. Réessayez avec moins de chapitres.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  
-  return new Groq({ apiKey });
 };
 
 // Nettoyer le JSON retourné par l'IA
@@ -46,7 +57,6 @@ const cleanJsonText = (text: string): string => {
   
   try {
     let clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    clean = clean.replace(/^[^{\[]*/, '').replace(/[^}\]]*$/, '');
     
     const firstCurly = clean.indexOf('{');
     const firstSquare = clean.indexOf('[');
@@ -68,6 +78,33 @@ const cleanJsonText = (text: string): string => {
         return extracted;
     }
   } catch (e) {
+    // Tentative de réparation structurelle
+    try {
+      let clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
+      const firstCurly = clean.indexOf('{');
+      if (firstCurly !== -1) {
+        let fragment = clean.substring(firstCurly);
+        // Supprimer les virgules traînantes
+        fragment = fragment.replace(/,(\s*[}\]])/g, '$1');
+        // Fermer les structures ouvertes
+        const stack: string[] = [];
+        let inStr = false;
+        let esc = false;
+        for (const ch of fragment) {
+          if (esc) { esc = false; continue; }
+          if (ch === '\\') { esc = true; continue; }
+          if (ch === '"') { inStr = !inStr; continue; }
+          if (!inStr) {
+            if (ch === '{') stack.push('}');
+            else if (ch === '[') stack.push(']');
+            else if (ch === '}' || ch === ']') stack.pop();
+          }
+        }
+        while (stack.length > 0) fragment += stack.pop();
+        JSON.parse(fragment);
+        return fragment;
+      }
+    } catch { /* ignore */ }
     console.warn("JSON cleaning failed:", e);
   }
 
@@ -81,23 +118,15 @@ const cleanJsonText = (text: string): string => {
 
 /**
  * Convertit toute notation LaTeX en notation mathématique standard lisible.
- * Ex: \frac{4z}{3}  →  4z/3
- *     frac{4z}{3}   →  4z/3
- *     x^{2}         →  x^2
- *     \sqrt{16}     →  sqrt(16)
- *     x²            →  x^2  (exposant Unicode → caret)
  */
 const sanitizeMathText = (text: string): string => {
   if (!text) return text;
   let s = text;
 
   // --- Fractions LaTeX: \frac{num}{den} ou frac{num}{den} ---
-  // Formes imbriquées : on itère jusqu'à stabilisation
   for (let i = 0; i < 5; i++) {
-    // \frac{A}{B} ou frac{A}{B}  (sans backslash aussi)
     s = s.replace(/\\?frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1)/($2)');
   }
-  // Simplifier les parenthèses inutiles autour d'un seul terme
   s = s.replace(/\(([a-zA-Z0-9.]+)\)\/\(([a-zA-Z0-9.]+)\)/g, '$1/$2');
 
   // --- Racines carrées: \sqrt{x} ou sqrt{x} ---
@@ -112,7 +141,6 @@ const sanitizeMathText = (text: string): string => {
     '⁰':'0','¹':'1','²':'2','³':'3','⁴':'4',
     '⁵':'5','⁶':'6','⁷':'7','⁸':'8','⁹':'9'
   };
-  // Remplacer une séquence d'exposants Unicode collée à un caractère
   s = s.replace(/([a-zA-Z0-9)])([\u2070\u00B9\u00B2\u00B3\u2074-\u2079]+)/g, (match, base, exps) => {
     const digits = exps.split('').map((c: string) => superscriptMap[c] || c).join('');
     return `${base}^${digits}`;
@@ -122,7 +150,7 @@ const sanitizeMathText = (text: string): string => {
   s = s.replace(/√(\d+)/g, 'sqrt($1)');
   s = s.replace(/√\(([^)]+)\)/g, 'sqrt($1)');
 
-  // --- Backslashes LaTeX orphelins: \cdot → ×, \times → ×, etc. ---
+  // --- Backslashes LaTeX orphelins ---
   s = s.replace(/\\cdot/g, '×');
   s = s.replace(/\\times/g, '×');
   s = s.replace(/\\div/g, '÷');
@@ -153,45 +181,35 @@ const sanitizeMathText = (text: string): string => {
 
 /**
  * Convertit les tableaux Markdown (pipes |) en tableaux HTML avec bordures.
- * Ex:  | Col A | Col B |        <table border="1" ...>
- *      |-------|-------|   →      <tr><th>Col A</th><th>Col B</th></tr>
- *      | val 1 | val 2 |          <tr><td>val 1</td><td>val 2</td></tr>
- *                                </table>
  */
 const convertMarkdownTableToHTML = (text: string): string => {
   if (!text) return text;
 
-  // Détecte un bloc de lignes contenant des pipes
   const lines = text.split('\n');
   const result: string[] = [];
   let i = 0;
 
   while (i < lines.length) {
     const line = lines[i];
-    // Vérifie si c'est une ligne de tableau Markdown (contient au moins un |)
     if (/^\s*\|.+\|\s*$/.test(line)) {
-      // Collecter toutes les lignes consécutives faisant partie du tableau
       const tableLines: string[] = [];
       while (i < lines.length && /^\s*\|.+\|\s*$/.test(lines[i])) {
         tableLines.push(lines[i]);
         i++;
       }
 
-      // Construire le HTML
       let html = '<table border="1" style="border-collapse: collapse; width: 100%;">\n';
       let isHeader = true;
 
       for (const tl of tableLines) {
-        // Ligne de séparateur (|---|---|) → skip
         if (/^\s*\|[\s\-|:]+\|\s*$/.test(tl)) {
-          isHeader = false; // les lignes suivantes sont des données
+          isHeader = false;
           continue;
         }
-        // Découper les cellules
         const cells = tl.split('|').map(c => c.trim()).filter(c => c !== '');
         const tag = isHeader ? 'th' : 'td';
         html += '  <tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>\n';
-        if (isHeader) isHeader = false; // seulement la 1ère ligne est header
+        if (isHeader) isHeader = false;
       }
 
       html += '</table>';
@@ -268,7 +286,7 @@ const needsGraphResource = (subject: string): boolean => {
          normalized.includes('sciences');
 };
 
-// Vérifier si c'est un examen d'anglais ou d'acquisition de langues (qui doit être en anglais)
+// Vérifier si c'est un examen d'anglais ou d'acquisition de langues
 const isEnglishExam = (subject: string): boolean => {
   const normalized = subject.toLowerCase();
   return normalized.includes('anglais') || 
@@ -577,12 +595,11 @@ FORMAT JSON ATTENDU :
 
 export const generateExam = async (config: ExamGenerationConfig): Promise<Exam> => {
   try {
-    const provider = getAIProvider();
     const style = getExamStyle(config.grade);
     const needsText = needsComprehensionText(config.subject);
     const needsGraph = needsGraphResource(config.subject);
     const isEnglish = isEnglishExam(config.subject);
-    const examType = config.examType || 'Examen'; // Par défaut: Examen
+    const examType = config.examType || 'Examen';
     const isEvaluation = examType === 'Évaluation';
     
     // Vérifier si la matière est Français ou Langue pour éviter les définitions
@@ -715,83 +732,43 @@ export const generateExam = async (config: ExamGenerationConfig): Promise<Exam> 
     ${isEvaluation ? '- Garder les exercices COURTS et CONCIS (contrainte de 40 minutes)' : ''}
     `;
 
-    let text: string;
-    
-    if (provider === 'groq') {
-      // Utiliser GROQ AI (quotas élevés)
-      const groq = getGroqClient();
-      const completion = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile', // Modèle puissant et rapide
-        messages: [
-          {
-            role: 'system',
-            content: SYSTEM_INSTRUCTION_EXAM
-          },
-          {
-            role: 'user',
-            content: userPrompt
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 8000,
-        response_format: { type: 'json_object' }
-      });
-      
-      text = completion.choices[0]?.message?.content || '';
-      if (!text) throw new Error("Pas de réponse de GROQ AI");
-      
-    } else {
-      // Utiliser Gemini AI (fallback)
-      const ai = getClient();
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: userPrompt,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION_EXAM,
-          responseMimeType: "application/json",
-          temperature: 0.7
-        }
-      });
-      
-      text = response.text;
-      if (!text) throw new Error("Pas de réponse de Gemini");
+    // ── Appel via le proxy /api/generate (rotation multi-clés × multi-modèles côté serveur) ──
+    const text = await callGeminiViaProxy(
+      userPrompt,
+      SYSTEM_INSTRUCTION_EXAM,
+      { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 32768 }
+    );
+
+    if (!text || text.trim() === '') {
+      throw new Error("L'IA n'a retourné aucune réponse. Veuillez réessayer.");
     }
-    
+
     const cleanedJson = cleanJsonText(text);
     if (!cleanedJson || cleanedJson === "{}") {
-      throw new Error("JSON invalide retourné par l'IA");
+      throw new Error("JSON invalide retourné par l'IA. Veuillez réessayer.");
     }
     
     let parsed = JSON.parse(cleanedJson);
 
-    // ============================================================
-    // POST-PROCESSING: Sanitiser toute notation LaTeX/Markdown
-    // résiduelle avant de construire l'objet Exam final
-    // ============================================================
+    // ── POST-PROCESSING: Sanitiser toute notation LaTeX/Markdown résiduelle ──
     parsed = sanitizeExamContent(parsed);
     
-    // Vérification CRITIQUE: config.subject doit être défini
     if (!config.subject) {
-      console.error(`❌ [${provider.toUpperCase()}] config.subject est undefined ou vide!`);
       throw new Error('Le paramètre subject est obligatoire pour générer un examen');
     }
-    
-    console.log(`✅ [${provider.toUpperCase()}] config.subject =`, config.subject);
     
     // Déterminer le total de points selon le type
     let expectedTotal: number;
     if (isEvaluation) {
-      // Évaluations: 20 pour PEI1, 30 pour les autres
       expectedTotal = config.grade === ExamGrade.SIXIEME ? 20 : 30;
     } else {
-      // Examens: 30 pour toutes les classes
       expectedTotal = 30;
     }
     
-    // Créer l'objet Exam complet (sans resources - tout est intégré dans les questions)
+    // Créer l'objet Exam complet
     const exam: Exam = {
       id: Date.now().toString(),
-      subject: config.subject, // IMPORTANT: Utiliser directement config.subject sans fallback
+      subject: config.subject,
       grade: config.grade,
       semester: config.semester,
       teacherName: config.teacherName || "",
@@ -800,16 +777,13 @@ export const generateExam = async (config: ExamGenerationConfig): Promise<Exam> 
       totalPoints: expectedTotal,
       title: parsed.title || `${examType} de ${config.subject}`,
       questions: parsed.questions || [],
-      resources: [], // Tableau vide - tout est dans le content des questions
+      resources: [],
       difficulty: parsed.difficulty || "Difficile",
       style: style,
       chapters: config.chapters,
       createdAt: new Date(),
       updatedAt: new Date()
     };
-    
-    // LOG de vérification finale
-    console.log(`✅ [${provider.toUpperCase()}] Examen créé avec subject =`, exam.subject);
     
     // Vérifier et corriger les questions avec 0 points
     exam.questions = exam.questions.map((q, idx) => {
@@ -826,7 +800,6 @@ export const generateExam = async (config: ExamGenerationConfig): Promise<Exam> 
     if (totalPoints !== expectedTotal) {
       console.warn(`⚠️ Total des points (${totalPoints}) ne fait pas ${expectedTotal}. Ajustement...`);
       
-      // Ajustement intelligent : répartir la différence sur toutes les questions
       const diff = expectedTotal - totalPoints;
       const adjustment = Math.floor(diff / exam.questions.length);
       const remainder = diff % exam.questions.length;
@@ -836,16 +809,23 @@ export const generateExam = async (config: ExamGenerationConfig): Promise<Exam> 
         points: q.points + adjustment + (idx < remainder ? 1 : 0)
       }));
       
-      // Vérification finale
       totalPoints = exam.questions.reduce((sum, q) => sum + q.points, 0);
       console.log(`✅ Total ajusté : ${totalPoints} points`);
     }
     
+    console.log(`✅ Examen généré avec succès: "${exam.title}" (${exam.questions.length} questions, ${totalPoints} pts)`);
     return exam;
     
   } catch (error: any) {
     console.error("Erreur lors de la génération de l'examen:", error);
-    throw new Error(`Échec de génération: ${error?.message || "Erreur inconnue"}`);
+    const msg = error?.message || "Erreur inconnue";
+    
+    // Messages d'erreur clairs
+    if (msg.toLowerCase().includes("limite") || msg.toLowerCase().includes("quota") || msg.includes("429")) {
+      throw new Error(`Échec de génération: ⏳ Limite d'utilisation de l'IA atteinte. Réessayez dans quelques minutes.`);
+    }
+    
+    throw new Error(`Échec de génération: ${msg}`);
   }
 };
 

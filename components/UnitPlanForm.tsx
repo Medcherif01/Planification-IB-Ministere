@@ -116,7 +116,14 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
       return;
     }
     setIsGeneratingSOI(true);
-    const suggestions = await generateStatementOfInquiry(plan.keyConcept, plan.relatedConcepts, plan.globalContext);
+    const suggestions = await generateStatementOfInquiry(
+      plan.keyConcept,
+      plan.relatedConcepts,
+      plan.globalContext,
+      plan.subject,
+      plan.gradeLevel,
+      plan.title
+    );
     setSoiSuggestions(suggestions);
     setIsGeneratingSOI(false);
   };
@@ -127,7 +134,12 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
       return;
     }
     setIsGeneratingQuestions(true);
-    const questions = await generateInquiryQuestions(plan.statementOfInquiry);
+    const questions = await generateInquiryQuestions(
+      plan.statementOfInquiry,
+      plan.subject,
+      plan.keyConcept,
+      plan.relatedConcepts
+    );
     setPlan(prev => ({ ...prev, inquiryQuestions: questions }));
     setIsGeneratingQuestions(false);
   };

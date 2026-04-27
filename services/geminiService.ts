@@ -484,7 +484,9 @@ export const generateStatementOfInquiry = async (
   keyConcept: string,
   relatedConcepts: string[],
   globalContext: string,
-  subject?: string
+  subject?: string,
+  gradeLevel?: string,
+  unitTitle?: string
 ): Promise<string[]> => {
   const lang = subject ? getGenerationLanguage(subject) : 'fr';
   try {
@@ -492,30 +494,123 @@ export const generateStatementOfInquiry = async (
     
     const prompt = lang === 'en'
       ? `
-        Act as an expert IB MYP coordinator.
-        Create 3 distinct options for a "Statement of Inquiry" based on the following elements:
-        
+        You are an expert IB MYP (Middle Years Programme) curriculum coordinator with extensive experience writing Statements of Inquiry.
+
+        Generate 3 DISTINCT and HIGH-QUALITY "Statements of Inquiry" for the following MYP unit:
+
+        Subject: ${subject || 'Language Acquisition'}
+        ${gradeLevel ? `Grade Level: ${gradeLevel}` : ''}
+        ${unitTitle ? `Unit Title: ${unitTitle}` : ''}
         Key Concept: ${keyConcept}
         Related Concepts: ${relatedStr}
         Global Context: ${globalContext}
-        
-        The statement of inquiry should be a meaningful and transferable statement that combines these elements without directly mentioning the specific content of the subject.
-        Return ONLY the 3 statements as plain text list, separated by line breaks. Do not number or add introductory text.
+
+        ══════════════════════════════════════════════════════
+        IB MYP RULES FOR A VALID STATEMENT OF INQUIRY:
+        ══════════════════════════════════════════════════════
+        1. STRUCTURE: A valid SOI MUST explicitly integrate ALL THREE elements:
+           • The KEY CONCEPT (abstract, transferable idea)
+           • At least ONE RELATED CONCEPT (more specific to the discipline)
+           • The GLOBAL CONTEXT (real-world relevance lens)
+
+        2. FORM: Write a COMPLETE, GRAMMATICALLY CORRECT SENTENCE (not a question, not a fragment).
+           • Typically 15–30 words
+           • Can use a subordinate clause to link the elements naturally
+           • Avoid generic or vague language — be specific and thought-provoking
+
+        3. TRANSFERABILITY: The statement must be transferable BEYOND the specific topic.
+           • Do NOT mention specific chapter titles, textbook names, or narrow content
+           • The statement should provoke genuine intellectual inquiry
+           • A student should be able to explore it across different contexts
+
+        4. GRAMMATICAL PATTERNS (choose from these proven IB structures):
+           • "How [related concept] shapes/influences [key concept] within [global context]..."
+           • "The [key concept] of [related concept] reflects/reveals [global context]..."
+           • "[Key concept] expressed through [related concept] can transform our understanding of [global context]..."
+           • "Understanding [key concept] through [related concept] enables us to [global context goal]..."
+
+        5. QUALITY CHECKS (each SOI must pass ALL):
+           ✓ Contains the key concept (or its clear synonym)
+           ✓ References the related concept(s)
+           ✓ Connects to the global context theme
+           ✓ Is a declarative statement (not a question)
+           ✓ Is meaningful and academically rigorous
+           ✓ Is DIFFERENT from the other 2 options (vary structure and emphasis)
+
+        ══════════════════════════════════════════════════════
+        OUTPUT FORMAT:
+        Return ONLY 3 statements, one per line, NO numbering, NO bullet points, NO extra text.
+        Each statement on its own line. Nothing else.
+        ══════════════════════════════════════════════════════
       `
       : `
-        Agis comme un coordonnateur expert du PEI de l'IB.
-        Crée 3 options distinctes pour un "Énoncé de recherche" (Statement of Inquiry) basé sur les éléments suivants :
-        
+        Tu es un coordonnateur expert du Programme d'Éducation Intermédiaire (PEI) de l'IB, spécialisé dans la rédaction d'Énoncés de recherche conformes aux exigences du PEI.
+
+        Génère 3 ÉNONCÉS DE RECHERCHE DISTINCTS et DE HAUTE QUALITÉ pour l'unité PEI suivante :
+
+        Matière : ${subject || 'Général'}
+        ${gradeLevel ? `Niveau : ${gradeLevel}` : ''}
+        ${unitTitle ? `Titre de l'unité : ${unitTitle}` : ''}
         Concept clé : ${keyConcept}
         Concepts connexes : ${relatedStr}
         Contexte mondial : ${globalContext}
-        
-        L'énoncé de recherche doit être une déclaration significative et transférable qui combine ces éléments sans mentionner directement le contenu spécifique de la matière.
-        Retourne UNIQUEMENT les 3 énoncés sous forme de liste de texte brut, séparés par des retours à la ligne. Ne pas numéroter ni ajouter de texte d'introduction.
+
+        ══════════════════════════════════════════════════════
+        RÈGLES IB PEI POUR UN ÉNONCÉ DE RECHERCHE VALIDE :
+        ══════════════════════════════════════════════════════
+        1. STRUCTURE OBLIGATOIRE : Chaque énoncé DOIT intégrer explicitement LES TROIS éléments :
+           • Le CONCEPT CLÉ (idée abstraite et transférable)
+           • Au moins UN CONCEPT CONNEXE (plus spécifique à la discipline)
+           • Le CONTEXTE MONDIAL (ancrage dans la réalité contemporaine)
+
+        2. FORME : Rédiger une PHRASE COMPLÈTE ET GRAMMATICALEMENT CORRECTE (pas une question, pas un fragment).
+           • Typiquement 15 à 30 mots
+           • Peut utiliser une proposition subordonnée pour relier naturellement les éléments
+           • Éviter le langage générique — être spécifique et stimulant intellectuellement
+
+        3. TRANSFÉRABILITÉ : L'énoncé doit être transférable AU-DELÀ du sujet spécifique.
+           • NE PAS mentionner des titres de chapitres spécifiques, des noms de manuels ou du contenu étroit
+           • L'énoncé doit provoquer une véritable réflexion intellectuelle
+           • Un élève doit pouvoir l'explorer dans différents contextes
+
+        4. STRUCTURES GRAMMATICALES RECOMMANDÉES (choisir parmi ces modèles IB éprouvés) :
+           • "La [concept connexe] du/de la [concept clé] révèle/façonne [contexte mondial]..."
+           • "Comprendre [concept clé] à travers [concept connexe] permet de [objectif contexte mondial]..."
+           • "Le [concept clé], exprimé par [concept connexe], transforme notre rapport au [contexte mondial]..."
+           • "La façon dont [concept connexe] influence [concept clé] détermine [contexte mondial]..."
+           • "[Concept clé] et [concept connexe] se renforcent mutuellement pour [contexte mondial]..."
+
+        5. VÉRIFICATIONS QUALITÉ (chaque énoncé doit satisfaire TOUTES ces conditions) :
+           ✓ Contient le concept clé (ou son synonyme clair)
+           ✓ Fait référence aux concepts connexes
+           ✓ Est ancré dans le contexte mondial
+           ✓ Est une phrase déclarative (pas une question)
+           ✓ Est significatif et académiquement rigoureux
+           ✓ Est DIFFÉRENT des 2 autres options (varier la structure et l'accentuation)
+           ✓ EST FORMULÉ SPÉCIFIQUEMENT POUR CETTE UNITÉ (pas générique)
+
+        ══════════════════════════════════════════════════════
+        FORMAT DE SORTIE :
+        Retourner UNIQUEMENT 3 énoncés, un par ligne, SANS numérotation, SANS puces, SANS texte supplémentaire.
+        Chaque énoncé sur sa propre ligne. Rien d'autre.
+        ══════════════════════════════════════════════════════
       `;
 
     const text = await callGeminiViaProxy(prompt);
-    return text.split('\n').filter(line => line.trim().length > 0).map(l => l.replace(/^- /, '').trim());
+    const lines = text.split('\n')
+      .filter(line => line.trim().length > 0)
+      .map(l => l.replace(/^[\d\.\-\*•]+\s*/, '').trim())
+      .filter(l => l.length > 10); // Filtrer les lignes trop courtes
+    
+    // S'assurer qu'on a au moins 1 résultat
+    if (lines.length === 0) {
+      const defaultMsg = lang === 'en'
+        ? "Understanding develops through inquiry and reflection within a global context."
+        : "La compréhension se développe à travers la recherche et la réflexion dans un contexte mondial.";
+      return [defaultMsg];
+    }
+    
+    return lines.slice(0, 3); // Maximum 3 options
   } catch (error) {
     console.error("Error generating SOI:", error);
     const errorMsg = lang === 'en' 
@@ -527,47 +622,109 @@ export const generateStatementOfInquiry = async (
 
 export const generateInquiryQuestions = async (
   soi: string, 
-  subject?: string
+  subject?: string,
+  keyConcept?: string,
+  relatedConcepts?: string[]
 ): Promise<{ factual: string[], conceptual: string[], debatable: string[] }> => {
   try {
     const lang = subject ? getGenerationLanguage(subject) : 'fr';
+    const relatedStr = relatedConcepts ? relatedConcepts.join(", ") : '';
     
     const prompt = lang === 'en'
       ? `
-        Based on this MYP Statement of Inquiry: "${soi}",
-        generate inquiry questions in English:
-        - 2 Factual Questions (What/Who... ?)
-        - 2 Conceptual Questions (How... ? Why... ?)
-        - 2 Debatable Questions (To what extent... ?)
-        
-        Return the result in valid JSON format with these EXACT KEYS (in English):
+        You are an expert IB MYP curriculum coordinator.
+
+        Generate IB MYP INQUIRY QUESTIONS for the following unit:
+        Statement of Inquiry: "${soi}"
+        ${keyConcept ? `Key Concept: ${keyConcept}` : ''}
+        ${relatedStr ? `Related Concepts: ${relatedStr}` : ''}
+        ${subject ? `Subject: ${subject}` : ''}
+
+        ══════════════════════════════════════════════════════
+        IB MYP INQUIRY QUESTION REQUIREMENTS:
+        ══════════════════════════════════════════════════════
+
+        Generate EXACTLY:
+        • 2 FACTUAL QUESTIONS — Questions with clear, definite answers based on facts or definitions
+          Examples: "What is...?", "Who...?", "When did...?", "What are the characteristics of...?"
+          These questions assess knowledge and understanding of specific content.
+
+        • 2 CONCEPTUAL QUESTIONS — Questions that explore deeper understanding and relationships
+          Examples: "How does...?", "Why does...?", "In what ways...?", "How are ... and ... related?"
+          These questions connect concepts and promote analytical thinking.
+
+        • 2 DEBATABLE QUESTIONS — Open-ended questions with no single correct answer
+          Examples: "To what extent...?", "Is it ever justified to...?", "Should...?"
+          These questions promote critical thinking, multiple perspectives, and argumentation.
+
+        QUALITY RULES:
+        ✓ Questions must directly relate to the Statement of Inquiry
+        ✓ Each category must have questions of DIFFERENT difficulty levels
+        ✓ Questions must be age-appropriate and academically rigorous
+        ✓ Debatable questions must genuinely allow for MULTIPLE valid perspectives
+        ✓ Questions should promote inquiry and deep thinking (not mere recall)
+
+        Return ONLY valid JSON with these EXACT KEYS:
         {
-          "factual": ["q1", "q2"],
-          "conceptual": ["q1", "q2"],
-          "debatable": ["q1", "q2"]
+          "factual": ["question 1?", "question 2?"],
+          "conceptual": ["question 1?", "question 2?"],
+          "debatable": ["question 1?", "question 2?"]
         }
-        Return ONLY the JSON.
+        Return ONLY the JSON. No extra text.
       `
       : `
-        Basé sur cet Énoncé de recherche du PEI : "${soi}",
-        génère des questions de recherche en Français :
-        - 2 Questions Factuelles (Quoi/Qui... ?)
-        - 2 Questions Conceptuelles (Comment... ? Pourquoi... ?)
-        - 2 Questions Invitant au débat (Dans quelle mesure... ?)
-        
-        Retourne le résultat au format JSON valide avec ces CLÉS EXACTES (en anglais) :
+        Tu es un coordonnateur expert du PEI (Programme d'Éducation Intermédiaire) de l'IB.
+
+        Génère des QUESTIONS DE RECHERCHE IB PEI pour l'unité suivante :
+        Énoncé de recherche : "${soi}"
+        ${keyConcept ? `Concept clé : ${keyConcept}` : ''}
+        ${relatedStr ? `Concepts connexes : ${relatedStr}` : ''}
+        ${subject ? `Matière : ${subject}` : ''}
+
+        ══════════════════════════════════════════════════════
+        EXIGENCES IB PEI POUR LES QUESTIONS DE RECHERCHE :
+        ══════════════════════════════════════════════════════
+
+        Génère EXACTEMENT :
+        • 2 QUESTIONS FACTUELLES — Questions avec des réponses claires et définies, basées sur des faits ou des définitions
+          Exemples : "Qu'est-ce que...?", "Qui...?", "Quand...?", "Quelles sont les caractéristiques de...?"
+          Ces questions évaluent les connaissances et la compréhension du contenu spécifique.
+
+        • 2 QUESTIONS CONCEPTUELLES — Questions qui explorent une compréhension plus profonde et les relations
+          Exemples : "Comment...?", "Pourquoi...?", "De quelle manière...?", "Quel est le rapport entre... et...?"
+          Ces questions relient les concepts et favorisent la réflexion analytique.
+
+        • 2 QUESTIONS INVITANT AU DÉBAT — Questions ouvertes sans réponse unique correcte
+          Exemples : "Dans quelle mesure...?", "Est-il jamais justifié de...?", "Devrait-on...?"
+          Ces questions favorisent la pensée critique, les perspectives multiples et l'argumentation.
+
+        RÈGLES DE QUALITÉ :
+        ✓ Les questions doivent être directement liées à l'Énoncé de recherche
+        ✓ Chaque catégorie doit avoir des questions de NIVEAUX DE DIFFICULTÉ DIFFÉRENTS
+        ✓ Les questions doivent être adaptées à l'âge et académiquement rigoureuses
+        ✓ Les questions invitant au débat doivent permettre PLUSIEURS perspectives valides
+        ✓ Les questions doivent favoriser l'enquête et la réflexion profonde (pas la simple mémorisation)
+        ✓ Formuler les questions EN LIEN DIRECT avec cette unité spécifique (pas des questions génériques)
+
+        Retourne UNIQUEMENT un JSON valide avec ces CLÉS EXACTES (en anglais) :
         {
-          "factual": ["q1", "q2"],
-          "conceptual": ["q1", "q2"],
-          "debatable": ["q1", "q2"]
+          "factual": ["question 1 ?", "question 2 ?"],
+          "conceptual": ["question 1 ?", "question 2 ?"],
+          "debatable": ["question 1 ?", "question 2 ?"]
         }
-        Retourne UNIQUEMENT le JSON.
+        Retourne UNIQUEMENT le JSON. Pas de texte supplémentaire.
       `;
 
     const rawText = await callGeminiViaProxy(prompt, undefined, { responseMimeType: 'application/json' });
     const jsonText = cleanJsonText(rawText);
     const parsed = JSON.parse(jsonText);
-    return parsed;
+    
+    // Validation: ensure all three arrays are present
+    return {
+      factual: Array.isArray(parsed.factual) ? parsed.factual : [],
+      conceptual: Array.isArray(parsed.conceptual) ? parsed.conceptual : [],
+      debatable: Array.isArray(parsed.debatable) ? parsed.debatable : []
+    };
   } catch (error) {
     console.error("Error generating questions:", error);
     return { factual: [], conceptual: [], debatable: [] };
@@ -605,6 +762,40 @@ export const generateLearningExperiences = async (plan: UnitPlan): Promise<strin
 const SYSTEM_INSTRUCTION_FULL_PLAN_FR = `
 Tu es un expert pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB.
 Tu dois générer un Plan d'Unité complet ET une série d'Évaluations Critériées détaillées en Français.
+
+❗❗❗ LOI ABSOLUE N°0 — ÉNONCÉ DE RECHERCHE IB PEI (NON NÉGOCIABLE) ❗❗❗
+Le champ "statementOfInquiry" est L'ÉLÉMENT LE PLUS IMPORTANT du plan d'unité PEI.
+Il DOIT respecter TOUTES ces règles IB :
+
+RÈGLES DE L'ÉNONCÉ DE RECHERCHE :
+1. STRUCTURE OBLIGATOIRE : L'énoncé DOIT intégrer explicitement LES TROIS éléments suivants :
+   • Le CONCEPT CLÉ (ex: système, relation, transformation, perspective...)
+   • Au moins UN CONCEPT CONNEXE (ex: représentation, modèle, expression...)
+   • Le CONTEXTE MONDIAL (ex: Orientation dans l'espace et le temps, Mondialisation et durabilité...)
+
+2. FORME : Phrase déclarative COMPLÈTE (pas une question, pas un fragment)
+   • 15 à 35 mots typiquement
+   • Utilise une structure qui relie naturellement les trois éléments
+
+3. TRANSFÉRABILITÉ : L'énoncé doit être transférable au-delà du contenu spécifique
+   • Ne PAS mentionner des noms de chapitres spécifiques, de formules ou de notions trop précises
+   • Doit pouvoir être exploré dans plusieurs contextes disciplinaires
+
+4. STRUCTURES GRAMMATICALES RECOMMANDÉES (modèles IB) :
+   • "La [concept connexe] du/de la [concept clé] révèle [contexte mondial]..."
+   • "Comprendre [concept clé] à travers [concept connexe] permet de [objectif du contexte mondial]..."
+   • "Le [concept clé], exprimé par [concept connexe], transforme notre rapport au [contexte mondial]..."
+   • "La manière dont [concept connexe] façonne [concept clé] détermine [contexte mondial]..."
+
+5. EXEMPLES VALIDES :
+   ✅ "La représentation des systèmes naturels révèle comment les transformations façonnent notre compréhension de la durabilité mondiale."
+   ✅ "La relation entre expression et contexte permet de comprendre comment les identités se construisent et évoluent dans le temps."
+   ✅ "Comprendre les modèles de changement à travers leurs représentations aide à analyser les défis de la mondialisation."
+
+6. EXEMPLES INVALIDES :
+   ❌ "Les équations du premier degré sont importantes en mathématiques." (trop spécifique, pas transférable)
+   ❌ "La photosynthèse est un processus biologique." (pas d'intégration des trois éléments)
+   ❌ "Pourquoi les systèmes changent-ils ?" (c'est une question, pas une déclaration)
 
 ❗❗❗ LOI ABSOLUE N°1 — CRITÈRES OBLIGATOIRES (NON NÉGOCIABLE) ❗❗❗
 CHAQUE UNITÉ DOIT CONTENIR EXACTEMENT 2 CRITÈRES D'ÉVALUATION dans le tableau "assessments".
@@ -749,6 +940,17 @@ Structure JSON attendue :
 const SYSTEM_INSTRUCTION_FULL_PLAN_BILINGUAL = `
 Tu es un expert coordinateur pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB, spécialisé en Arts visuels et en Éducation Physique.
 Tu dois générer un plan d'unité complet BILINGUE (FRANÇAIS + ARABE) ET une série d'évaluations détaillées basées sur les critères.
+
+❗❗❗ LOI ABSOLUE N°0 — ÉNONCÉ DE RECHERCHE IB PEI (NON NÉGOCIABLE) ❗❗❗
+Le champ "statementOfInquiry" est L'ÉLÉMENT LE PLUS IMPORTANT du plan d'unité PEI.
+Il DOIT intégrer OBLIGATOIREMENT les trois éléments : CONCEPT CLÉ + CONCEPT CONNEXE + CONTEXTE MONDIAL.
+Format : Phrase déclarative COMPLÈTE (15–35 mots), transférable, stimulante intellectuellement.
+Le champ "statementOfInquiry_ar" doit être la traduction arabe fidèle et naturelle de cet énoncé.
+
+STRUCTURES RECOMMANDÉES :
+• "La [concept connexe] du [concept clé] révèle comment [contexte mondial]..."
+• "Comprendre [concept clé] à travers [concept connexe] permet de [objectif contexte mondial]..."
+• "La façon dont [concept connexe] façonne [concept clé] détermine [contexte mondial]..."
 
 ❗❗❗ LOI ABSOLUE N°1 — CRITÈRES OBLIGATOIRES (NON NÉGOCIABLE) ❗❗❗
 CHAQUE UNITÉ DOIT CONTENIR EXACTEMENT 2 CRITÈRES D'ÉVALUATION dans le tableau "assessments".
@@ -930,6 +1132,40 @@ You must generate a complete Unit Plan AND a series of detailed Criterion-based 
 - ALL criterion references must be in ENGLISH
 - This ensures students practice the target language throughout the assessment
 
+‼️‼️‼️ ABSOLUTE LAW #0 — STATEMENT OF INQUIRY (NON-NEGOTIABLE) ‼️‼️‼️
+The "statementOfInquiry" field is the MOST IMPORTANT element of any MYP Unit Plan.
+It MUST follow ALL IB MYP rules:
+
+STATEMENT OF INQUIRY RULES:
+1. MANDATORY STRUCTURE: Must explicitly integrate ALL THREE elements:
+   • The KEY CONCEPT (e.g., communication, connection, relationships, systems...)
+   • At least ONE RELATED CONCEPT (e.g., message, purpose, audience, style...)
+   • The GLOBAL CONTEXT (e.g., Identities and relationships, Globalization and sustainability...)
+
+2. FORM: A complete DECLARATIVE SENTENCE (not a question, not a fragment)
+   • Typically 15–35 words
+   • Uses a structure that naturally connects the three elements
+
+3. TRANSFERABILITY: Must be transferable beyond the specific unit content
+   • Do NOT mention specific grammar rules, book titles, or narrow content terms
+   • Must provoke genuine intellectual inquiry beyond the immediate topic
+
+4. RECOMMENDED GRAMMATICAL PATTERNS (IB-proven models):
+   • "How [related concept] shapes/reflects [key concept] within [global context]..."
+   • "Understanding [key concept] through [related concept] helps us [global context goal]..."
+   • "The [key concept] of [related concept] reveals how [global context]..."
+   • "[Related concept] as an expression of [key concept] shapes our understanding of [global context]..."
+
+5. VALID EXAMPLES:
+   ✅ "The way communication styles reflect cultural identity shapes how we connect with others in a globalized world."
+   ✅ "Understanding how purpose and audience influence language empowers individuals to navigate complex social contexts."
+   ✅ "The relationship between personal narrative and cultural context reveals how identity is constructed through language."
+
+6. INVALID EXAMPLES:
+   ❌ "Present simple tense is used for habits and routines." (too specific, not transferable)
+   ❌ "Grammar is important in English." (no integration of three elements)
+   ❌ "Why do we communicate?" (a question, not a declarative statement)
+
 ‼️‼️‼️ ABSOLUTE LAW #1 — MANDATORY CRITERIA (NON-NEGOTIABLE) ‼️‼️‼️
 EACH UNIT MUST CONTAIN EXACTLY 2 ASSESSMENT CRITERIA in the "assessments" array.
 - Select the 2 MOST RELEVANT criteria based on unit content
@@ -1049,6 +1285,15 @@ Expected JSON Structure:
 const SYSTEM_INSTRUCTION_FULL_PLAN_DESIGN = `
 Tu es un expert pédagogique IB PEI spécialisé en Design.
 Tu dois générer un Plan d'Unité complet ET un DOSSIER DE CONCEPTION détaillé en Français.
+
+❗❗❗ LOI ABSOLUE N°0 — ÉNONCÉ DE RECHERCHE DESIGN IB PEI (NON NÉGOCIABLE) ❗❗❗
+Le champ "statementOfInquiry" DOIT intégrer les trois éléments IB :
+CONCEPT CLÉ (ex: systèmes, ingéniosité, développement...) +
+CONCEPT CONNEXE (ex: évaluation, adaptation, ressources...) +
+CONTEXTE MONDIAL (ex: Innovation scientifique et technique, Mondialisation et durabilité...)
+
+Format : Phrase déclarative COMPLÈTE (15–35 mots), centrée sur le processus de design et l'innovation.
+Exemple valide : "La façon dont l'ingéniosité humaine répond aux besoins à travers des processus de conception systématiques révèle comment l'innovation technique façonne les sociétés contemporaines."
 
 ❗❗❗ LOI ABSOLUE N°1 — DOSSIER DE CONCEPTION : LES 4 CRITÈRES (NON NÉGOCIABLE) ❗❗❗
 En Design IB, CHAQUE UNITÉ doit être évaluée sur les 4 CRITÈRES A, B, C et D OBLIGATOIREMENT.
@@ -1255,6 +1500,11 @@ export const generateFullUnitPlan = async (
         Niveau: ${gradeLevel}
         Sujets à couvrir: ${topics}
         
+        ❗ OBLIGATOIRE — RÈGLE IB SUR L'ÉNONCÉ DE RECHERCHE DESIGN :
+        Le "statementOfInquiry" DOIT intégrer CONCEPT CLÉ IB + CONCEPT CONNEXE + CONTEXTE MONDIAL.
+        Format : Phrase déclarative 15–35 mots, centrée sur le processus de design et l'innovation.
+        Exemple valide : "La façon dont l'ingéniosité humaine répond aux besoins à travers des processus de conception systématiques révèle comment l'innovation technique façonne les sociétés contemporaines."
+        
         ❗❗❗ OBLIGATOIRE — RÈGLE DESIGN IB ❗❗❗
         1. Le champ "assessments" doit contenir EXACTEMENT 4 critères : A, B, C et D
         2. L'évaluation est un DOSSIER DE CONCEPTION cohérent (projet unique fil conducteur)
@@ -1264,12 +1514,13 @@ export const generateFullUnitPlan = async (
         
         Génère le plan d'unité complet et le dossier de conception avec les 4 critères.
         Assure-toi de:
-        1. Définir UN projet de conception clair comme fil conducteur (ex: concevoir un objet utilitaire)
-        2. Relier toutes les questions des 4 critères au MÊME projet
-        3. Respecter l'ordre logique A (Recherche) → B (Idéation) → C (Création) → D (Évaluation)
-        4. Inclure un champ "chapters" listant les chapitres/leçons de design couverts
-        5. Retourner UNIQUEMENT un JSON valide et complet - pas de texte avant ou après
-        6. S'assurer que le JSON est parfaitement valide: pas de virgules traînantes
+        1. Générer un "statementOfInquiry" IB PEI VALIDE (voir règle ci-dessus)
+        2. Définir UN projet de conception clair comme fil conducteur (ex: concevoir un objet utilitaire)
+        3. Relier toutes les questions des 4 critères au MÊME projet
+        4. Respecter l'ordre logique A (Recherche) → B (Idéation) → C (Création) → D (Évaluation)
+        5. Inclure un champ "chapters" listant les chapitres/leçons de design couverts
+        6. Retourner UNIQUEMENT un JSON valide et complet - pas de texte avant ou après
+        7. S'assurer que le JSON est parfaitement valide: pas de virgules traînantes
       `;
     } else if (lang === 'en') {
       userPrompt = `
@@ -1282,21 +1533,29 @@ export const generateFullUnitPlan = async (
         
         Generate the complete plan and criterion-based assessments.
         
-        ❗ MANDATORY — STRICT IB RULE:
+        ❗ MANDATORY — STRICT IB RULE ON STATEMENT OF INQUIRY:
+        The "statementOfInquiry" MUST:
+        • Integrate the KEY CONCEPT + at least one RELATED CONCEPT + the GLOBAL CONTEXT in one sentence
+        • Be a declarative statement (15–35 words), transferable, intellectually stimulating
+        • NOT mention grammar rules or narrow content topics directly
+        Valid example: "The way communication styles reflect cultural identity shapes how we connect with others in a globalized world."
+        
+        ❗ MANDATORY — STRICT IB RULE ON CRITERIA:
         1. The "assessments" field must contain EXACTLY 2 criteria (not 1, not 3, not 4)
         2. Each criterion must have AT LEAST 3 sub-aspects in "strands" (e.g., i, iii, iv)
         3. Sub-aspects can be non-consecutive — choose the most relevant ones
         4. Over 2 units (semester), all 4 criteria A, B, C, D must be covered
         
         Make sure to:
-        1. Fill in ALL sections including 'Activities/Strategies', 'Formative Assessment' and 'Differentiation'
-        2. Include a "chapters" field listing the chapters/lessons covered in this unit (bullet points format)
-        3. Generate EXACTLY 2 criteria in "assessments", each with ≥ 3 sub-aspects in "strands"
-        4. Adapt sub-aspects to unit content (can combine multiple in one exercise)
-        5. Design assessments for 30-minute duration
-        6. Generate ALL content in ENGLISH (this is a language acquisition subject)
-        7. Return ONLY a valid, complete JSON structure - no additional text before or after
-        8. Ensure JSON is perfectly valid: no trailing commas, properly escaped quotes and newlines
+        1. Generate a VALID IB MYP "statementOfInquiry" (see rule above)
+        2. Fill in ALL sections including 'Activities/Strategies', 'Formative Assessment' and 'Differentiation'
+        3. Include a "chapters" field listing the chapters/lessons covered in this unit (bullet points format)
+        4. Generate EXACTLY 2 criteria in "assessments", each with ≥ 3 sub-aspects in "strands"
+        5. Adapt sub-aspects to unit content (can combine multiple in one exercise)
+        6. Design assessments for 30-minute duration
+        7. Generate ALL content in ENGLISH (this is a language acquisition subject)
+        8. Return ONLY a valid, complete JSON structure - no additional text before or after
+        9. Ensure JSON is perfectly valid: no trailing commas, properly escaped quotes and newlines
       `;
     } else if (lang === 'bilingual') {
       const isArt = subject.toLowerCase().includes('art');
@@ -1321,6 +1580,11 @@ export const generateFullUnitPlan = async (
         Chaque tâche doit préciser les matériaux nécessaires, les étapes de réalisation et les critères d'observation visuels.
         ` : ''}
         
+        ❗ OBLIGATOIRE — RÈGLE IB STRICTE SUR L'ÉNONCÉ DE RECHERCHE :
+        Le "statementOfInquiry" DOIT intégrer CONCEPT CLÉ + CONCEPT CONNEXE + CONTEXTE MONDIAL en une phrase déclarative (15–35 mots).
+        Le "statementOfInquiry_ar" est la traduction arabe fidèle et naturelle.
+        Exemple valide : "La façon dont l'expression artistique reflète l'identité culturelle révèle comment les sociétés transmettent leur patrimoine à travers le temps."
+        
         ⚠️ CRITIQUE - SÉLECTION DES CRITÈRES: 
         - STANDARD : Sélectionne 2 critères LES PLUS CONVENABLES selon le contenu de l'unité
         - EXCEPTIONNEL : 3 critères SEULEMENT si l'unité DOIT OBLIGATOIREMENT être évaluée par ces 3 critères (pire des cas)
@@ -1338,15 +1602,16 @@ export const generateFullUnitPlan = async (
         2. VERSION ARABE (tous les champs avec suffixe _ar)
         
         Assure-toi de:
-        1. Générer TOUTES les sections en français ET en arabe (ex: "title" ET "title_ar")
-        2. Bien remplir 'Activités/Stratégies', 'Évaluation formative' et 'Différenciation' (versions française et arabe)
-        3. Inclure un champ "chapters" et "chapters_ar" listant les chapitres/leçons en français et en arabe
-        4. Sélectionner STANDARD: 2 critères (les plus convenables), EXCEPTIONNEL: 3 critères (si vraiment nécessaire)
-        5. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans une tâche)
-        6. ${isArt ? 'Concevoir chaque évaluation comme un TRAVAIL PRATIQUE pour une durée de 45 à 60 minutes' : 'Concevoir chaque évaluation pour une durée de 30 minutes'}
-        7. Pour chaque tâche pratique, fournir: title, title_ar, content, content_ar, criterionReference, criterionReference_ar
-        8. Retourner UNIQUEMENT une structure JSON valide et complète avec TOUS les champs bilingues - pas de texte avant ou après
-        9. S'assurer que le JSON est parfaitement valide: pas de virgules trainantes, guillemets et retours à la ligne échappés correctement
+        1. Générer un "statementOfInquiry" IB PEI VALIDE (voir règle ci-dessus) + sa version arabe "statementOfInquiry_ar"
+        2. Générer TOUTES les sections en français ET en arabe (ex: "title" ET "title_ar")
+        3. Bien remplir 'Activités/Stratégies', 'Évaluation formative' et 'Différenciation' (versions française et arabe)
+        4. Inclure un champ "chapters" et "chapters_ar" listant les chapitres/leçons en français et en arabe
+        5. Sélectionner STANDARD: 2 critères (les plus convenables), EXCEPTIONNEL: 3 critères (si vraiment nécessaire)
+        6. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans une tâche)
+        7. ${isArt ? 'Concevoir chaque évaluation comme un TRAVAIL PRATIQUE pour une durée de 45 à 60 minutes' : 'Concevoir chaque évaluation pour une durée de 30 minutes'}
+        8. Pour chaque tâche pratique, fournir: title, title_ar, content, content_ar, criterionReference, criterionReference_ar
+        9. Retourner UNIQUEMENT une structure JSON valide et complète avec TOUS les champs bilingues - pas de texte avant ou après
+        10. S'assurer que le JSON est parfaitement valide: pas de virgules trainantes, guillemets et retours à la ligne échappés correctement
         
         La traduction arabe doit être pédagogiquement appropriée et naturelle.
       `;
@@ -1357,7 +1622,14 @@ export const generateFullUnitPlan = async (
         Niveau: ${gradeLevel}
         Sujets à couvrir: ${topics}
         
-        ❗ OBLIGATOIRE — RÈGLE IB STRICTE :
+        ❗ OBLIGATOIRE — RÈGLE IB STRICTE SUR L'ÉNONCÉ DE RECHERCHE :
+        Le "statementOfInquiry" DOIT :
+        • Intégrer le CONCEPT CLÉ + au moins un CONCEPT CONNEXE + le CONTEXTE MONDIAL en une seule phrase
+        • Être une phrase déclarative (15–35 mots), transférable, stimulante intellectuellement
+        • NE PAS mentionner des notions trop spécifiques au chapitre
+        Exemple valide : "La représentation des relations entre quantités révèle comment les modèles mathématiques permettent de comprendre et de prédire des phénomènes du monde réel."
+        
+        ❗ OBLIGATOIRE — RÈGLE IB STRICTE SUR LES CRITÈRES :
         1. Le champ "assessments" doit contenir EXACTEMENT 2 critères (ni 1, ni 3, ni 4)
         2. Chaque critère doit avoir AU MINIMUM 3 sous-aspects dans "strands" (ex: i, iii, iv)
         3. Les sous-aspects peuvent être non-consécutifs — choisis les plus pertinents
@@ -1365,13 +1637,14 @@ export const generateFullUnitPlan = async (
         
         Génère le plan complet et les évaluations critériées.
         Assure-toi de:
-        1. Bien remplir TOUTES les sections incluant 'Activités/Stratégies', 'Évaluation formative' et 'Différenciation'
-        2. Inclure un champ "chapters" listant les chapitres/leçons couverts dans cette unité (format tirets)
-        3. Générer EXACTEMENT 2 critères dans "assessments" avec chacun ≥ 3 sous-aspects dans "strands"
-        4. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans un exercice)
-        5. Concevoir chaque évaluation pour une durée de 30 minutes
-        6. Retourner UNIQUEMENT une structure JSON valide et complète - pas de texte avant ou après
-        7. S'assurer que le JSON est parfaitement valide: pas de virgules traînantes, guillemets et retours à la ligne échappés correctement
+        1. Générer un "statementOfInquiry" IB PEI VALIDE (voir règle ci-dessus)
+        2. Bien remplir TOUTES les sections incluant 'Activités/Stratégies', 'Évaluation formative' et 'Différenciation'
+        3. Inclure un champ "chapters" listant les chapitres/leçons couverts dans cette unité (format tirets)
+        4. Générer EXACTEMENT 2 critères dans "assessments" avec chacun ≥ 3 sous-aspects dans "strands"
+        5. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans un exercice)
+        6. Concevoir chaque évaluation pour une durée de 30 minutes
+        7. Retourner UNIQUEMENT une structure JSON valide et complète - pas de texte avant ou après
+        8. S'assurer que le JSON est parfaitement valide: pas de virgules traînantes, guillemets et retours à la ligne échappés correctement
       `;
     }
 
@@ -1545,6 +1818,13 @@ export const generateCourseFromChapters = async (
           Niveau: ${gradeLevel}
           Programme complet:
           ${allChapters}
+          
+          ❗ OBLIGATOIRE — ÉNONCÉ DE RECHERCHE IB PEI POUR CHAQUE UNITÉ :
+          Le "statementOfInquiry" de CHAQUE unité DOIT :
+          • Intégrer le CONCEPT CLÉ + CONCEPT CONNEXE + CONTEXTE MONDIAL en une phrase déclarative (15–35 mots)
+          • Être DIFFÉRENT pour chaque unité (adapté au contenu spécifique de l'unité)
+          • Être transférable et stimulant intellectuellement
+          Exemple valide : "La représentation des relations entre grandeurs révèle comment les modèles mathématiques permettent de comprendre et de prédire des phénomènes du monde réel."
           
           ❗ Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 4-5 unités pour couvrir l'année complète).
           ❗ JAMAIS moins de 4 unités.
