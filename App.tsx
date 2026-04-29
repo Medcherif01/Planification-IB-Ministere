@@ -95,7 +95,7 @@ const App: React.FC = () => {
 
   // Charger les plans quand la session change (depuis MongoDB)
   useEffect(() => {
-    if (session) {
+    if (session && session.subject && session.grade) {
       const loadPlans = async () => {
         try {
           console.log(`🔄 Chargement des plans depuis MongoDB pour ${session.subject} - ${session.grade}`);
@@ -117,7 +117,7 @@ const App: React.FC = () => {
 
   // Sauvegarder automatiquement quand les plans changent (vers MongoDB)
   useEffect(() => {
-    if (session && currentPlans.length > 0) {
+    if (session && session.subject && session.grade && currentPlans.length > 0) {
       const savePlans = async () => {
         try {
           console.log(`💾 Sauvegarde de ${currentPlans.length} plan(s) dans MongoDB...`);
@@ -178,6 +178,21 @@ const App: React.FC = () => {
       localStorage.setItem('userSession', JSON.stringify(sessionData));
       localStorage.setItem('currentView', AppView.DASHBOARD);
     }
+  };
+
+  /**
+   * Retour à l'écran de sélection matière/classe SANS déconnecter l'utilisateur.
+   * La session d'authentification (identifiants) est conservée dans localStorage —
+   * seule la session de travail (matière/classe) est effacée.
+   * L'utilisateur n'a PAS à ressaisir son mot de passe.
+   */
+  const handleBackToModuleSelect = () => {
+    setSession(null);
+    setCurrentPlans([]);
+    setView(AppView.LOGIN); // LOGIN = écran de sélection module/matière/classe
+    localStorage.removeItem('userSession');
+    localStorage.setItem('currentView', AppView.LOGIN);
+    // isAuthenticated et les clés auth restent dans localStorage → pas de re-login
   };
 
   /** Déconnexion complète — efface tout localStorage lié à la session */
@@ -265,19 +280,20 @@ const App: React.FC = () => {
 
   // ── Rendu ─────────────────────────────────────────────────────────────────
 
-  // Pas authentifié → écran de connexion
+  // Pas authentifié → écran de connexion avec identifiants
   if (!isAuthenticated) {
     return <AuthenticationScreen onAuthenticated={handleAuthenticated} />;
   }
 
   // Authentifié mais pas encore de session (choix matière/classe/mode)
+  // Le bouton Déconnexion ici effectue une vraie déconnexion complète
   if (view === AppView.LOGIN) {
     return <LoginScreen onLogin={handleLogin} onLogout={handleLogout} />;
   }
 
-  // Mode Examens
+  // Mode Examens — le bouton Retour revient à la sélection de module SANS déconnecter
   if (view === AppView.EXAMS_WIZARD) {
-    return <ExamsWizard onBack={handleLogout} />;
+    return <ExamsWizard onBack={handleBackToModuleSelect} />;
   }
 
   // Mode PEI Planner
@@ -292,7 +308,7 @@ const App: React.FC = () => {
           onEdit={handleEdit}
           onDelete={handleDelete}
           onAddPlans={handleAddPlans}
-          onLogout={handleLogout}
+          onLogout={handleBackToModuleSelect}
         />
       ) : (
         <div className="p-4 md:p-8">

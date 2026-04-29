@@ -2101,3 +2101,421 @@ export const generateOverviewForSubject = async (
 
   return rows;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERDISCIPLINARY UNIT PLANS
+// Génère des unités interdisciplinaires IB PEI conformes :
+//  - Structure en 3 phases : Recherche / Action / Réflexion
+//  - Collaboration entre ≥ 2 disciplines
+//  - Critères A, B, C chacun sur 8 points
+//  - Énoncé de recherche déclaratif (15-35 mots, pas de nom de matière)
+//  - Questions de recherche (factuelles, conceptuelles, débattables)
+//  - Minimum 2 unités par classe
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface InterdisciplinaryUnit {
+  id: string;
+  grade: string;                  // PEI 1 … PEI 5
+  title: string;                  // Titre de l'unité interdisciplinaire
+  duration: string;               // Ex: "30 heures"
+  disciplines: string[];          // Disciplines impliquées (≥ 2)
+  teachers: string[];             // Noms des enseignants (un par discipline)
+  keyConcept: string;
+  relatedConcepts: string[];
+  globalContext: string;
+  statementOfInquiry: string;     // Déclaratif 15-35 mots, sans nom de matière
+  inquiryQuestions: {
+    factual: string[];
+    conceptual: string[];
+    debatable: string[];
+  };
+  // Structure en 3 phases IB
+  phases: {
+    recherche: string;   // Ce que les élèves explorent / recherchent
+    action: string;      // Ce que les élèves font / produisent
+    reflexion: string;   // Comment les élèves réfléchissent sur leurs apprentissages
+  };
+  // Critères d'évaluation (A, B, C chacun sur 8)
+  criteria: {
+    criterion: 'A' | 'B' | 'C';
+    name: string;
+    maxPoints: 8;
+    discipline: string;   // Quelle discipline évalue ce critère
+    strands: string[];
+    description: string;
+  }[];
+  atlSkills: string[];
+  content: string;
+  summativeTask: string;   // Tâche sommative finale
+  resources: string;
+  createdAt: string;
+}
+
+/** Prompt système pour la génération interdisciplinaire */
+const INTERDISCIPLINARY_SYSTEM_PROMPT = `Tu es un expert en conception pédagogique IB MYP (Middle Years Programme).
+Tu dois générer des unités interdisciplinaires conformes aux normes IB PEI.
+
+RÈGLES ABSOLUES :
+1. Chaque unité implique OBLIGATOIREMENT au moins 2 disciplines différentes (ex: Mathématiques + Sciences, Français + Arts, etc.).
+2. L'énoncé de recherche (statementOfInquiry) doit être une phrase déclarative de 15 à 35 mots.
+   - Il NE DOIT PAS nommer les matières directement (dire "La structure influence la fonction" plutôt que "En mathématiques et sciences…").
+   - Il doit relier le concept clé, un concept connexe, et le contexte mondial.
+   - Il doit être mémorable, transférable, et inviter la réflexion.
+3. Structure obligatoire en 3 phases :
+   - RECHERCHE : exploration, investigation, questionnement (les élèves cherchent)
+   - ACTION : production, création, réalisation (les élèves font)
+   - RÉFLEXION : évaluation, métacognition, transfert (les élèves réfléchissent)
+4. Critères d'évaluation : exactement 3 critères (A, B, C), chacun noté sur 8 points.
+   Chaque critère est ancré dans une des disciplines collaboratrices.
+   Chaque critère comporte au moins 3 sous-aspects (strands) non consécutifs.
+5. Les questions de recherche doivent inclure :
+   - Au moins 2 questions factuelles (réponses précises)
+   - Au moins 2 questions conceptuelles (réponses plus larges)
+   - Au moins 1 question débattable (pas de réponse unique)
+6. Génère EXACTEMENT le nombre d'unités demandé (minimum 2).
+7. JSON uniquement, clés en anglais, valeurs en français, aucun texte avant/après.`;
+
+/**
+ * Génère des unités interdisciplinaires IB PEI pour une classe donnée.
+ * @param grade       Niveau de classe (ex: "PEI 3")
+ * @param discipline1 Première discipline (ex: "Mathématiques")
+ * @param discipline2 Deuxième discipline (ex: "Sciences")
+ * @param additionalDisciplines Disciplines supplémentaires optionnelles
+ * @param theme       Thème optionnel pour guider la génération
+ * @param count       Nombre d'unités à générer (min 2, défaut 2)
+ */
+export const generateInterdisciplinaryUnits = async (
+  grade: string,
+  discipline1: string,
+  discipline2: string,
+  additionalDisciplines: string[] = [],
+  theme: string = '',
+  count: number = 2
+): Promise<InterdisciplinaryUnit[]> => {
+  const allDisciplines = [discipline1, discipline2, ...additionalDisciplines].filter(Boolean);
+  const numUnits = Math.max(2, count);
+
+  const userPrompt = `Génère ${numUnits} unités interdisciplinaires IB PEI pour la classe ${grade}.
+
+Disciplines impliquées : ${allDisciplines.join(', ')}
+${theme ? `Thème directeur suggéré : ${theme}` : ''}
+
+Pour chaque unité, génère un objet JSON avec exactement ces champs :
+{
+  "title": "Titre de l'unité interdisciplinaire",
+  "duration": "Durée en heures (ex: 30 heures)",
+  "disciplines": ["${allDisciplines.join('", "')}"],
+  "teachers": ${JSON.stringify(allDisciplines.map(d => `Enseignant(e) de ${d}`))},
+  "keyConcept": "Un seul concept clé IB (ex: Systèmes, Changement, Communication…)",
+  "relatedConcepts": ["concept1", "concept2"],
+  "globalContext": "Un des 6 contextes mondiaux IB",
+  "statementOfInquiry": "Phrase déclarative 15-35 mots sans nommer les matières",
+  "inquiryQuestions": {
+    "factual": ["Question factuelle 1 ?", "Question factuelle 2 ?"],
+    "conceptual": ["Question conceptuelle 1 ?", "Question conceptuelle 2 ?"],
+    "debatable": ["Question débattable 1 ?"]
+  },
+  "phases": {
+    "recherche": "Description détaillée de la phase Recherche (investigation, exploration)",
+    "action": "Description détaillée de la phase Action (production, réalisation concrète)",
+    "reflexion": "Description détaillée de la phase Réflexion (métacognition, transfert)"
+  },
+  "criteria": [
+    {
+      "criterion": "A",
+      "name": "Nom du critère A en lien avec ${discipline1}",
+      "maxPoints": 8,
+      "discipline": "${discipline1}",
+      "strands": ["i. strand 1", "ii. strand 2", "iii. strand 3"],
+      "description": "Description de ce que le critère A évalue"
+    },
+    {
+      "criterion": "B",
+      "name": "Nom du critère B en lien avec ${discipline2}",
+      "maxPoints": 8,
+      "discipline": "${discipline2}",
+      "strands": ["i. strand 1", "ii. strand 2", "iii. strand 3"],
+      "description": "Description de ce que le critère B évalue"
+    },
+    {
+      "criterion": "C",
+      "name": "Nom du critère C (compétence transversale)",
+      "maxPoints": 8,
+      "discipline": "Interdisciplinaire",
+      "strands": ["i. strand 1", "ii. strand 2", "iii. strand 3"],
+      "description": "Description de ce que le critère C évalue"
+    }
+  ],
+  "atlSkills": ["Compétence ATL 1", "Compétence ATL 2", "Compétence ATL 3"],
+  "content": "Contenu détaillé : chapitres, thèmes et savoirs couverts par l'unité",
+  "summativeTask": "Description de la tâche sommative finale qui intègre les deux disciplines",
+  "resources": "Ressources et matériaux nécessaires"
+}
+
+Retourne un tableau JSON de ${numUnits} objets. Aucun texte avant ou après le JSON.`;
+
+  try {
+    const rawText = await callGeminiViaProxy(userPrompt, INTERDISCIPLINARY_SYSTEM_PROMPT, {
+      temperature: 0.7,
+      maxOutputTokens: 32768,
+      responseMimeType: 'application/json',
+    });
+
+    if (!rawText || rawText.trim() === '') {
+      throw new Error("L'IA n'a pas retourné de réponse. Réessayez.");
+    }
+
+    // Extraire le JSON
+    let jsonText = rawText.trim();
+    const startArr = jsonText.indexOf('[');
+    const startObj = jsonText.indexOf('{');
+    if (startArr !== -1 && (startObj === -1 || startArr < startObj)) {
+      jsonText = jsonText.substring(startArr);
+      const lastBracket = jsonText.lastIndexOf(']');
+      if (lastBracket !== -1) jsonText = jsonText.substring(0, lastBracket + 1);
+    } else if (startObj !== -1) {
+      jsonText = '[' + jsonText.substring(startObj);
+      const lastBrace = jsonText.lastIndexOf('}');
+      if (lastBrace !== -1) jsonText = jsonText.substring(0, lastBrace + 1) + ']';
+    }
+
+    let parsed: any[];
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      const fixed = fixJsonString(jsonText);
+      parsed = JSON.parse(fixed);
+    }
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error("La réponse de l'IA ne contient pas d'unités valides.");
+    }
+
+    // Normaliser et ajouter les IDs
+    return parsed.map((unit: any, idx: number) => ({
+      id: `interdisciplinary_${Date.now()}_${idx}`,
+      grade,
+      title: unit.title || `Unité interdisciplinaire ${idx + 1}`,
+      duration: unit.duration || '30 heures',
+      disciplines: Array.isArray(unit.disciplines) ? unit.disciplines : allDisciplines,
+      teachers: Array.isArray(unit.teachers) ? unit.teachers : allDisciplines.map(d => `Enseignant(e) de ${d}`),
+      keyConcept: unit.keyConcept || '',
+      relatedConcepts: Array.isArray(unit.relatedConcepts) ? unit.relatedConcepts : [],
+      globalContext: unit.globalContext || '',
+      statementOfInquiry: unit.statementOfInquiry || '',
+      inquiryQuestions: {
+        factual: Array.isArray(unit.inquiryQuestions?.factual) ? unit.inquiryQuestions.factual : [],
+        conceptual: Array.isArray(unit.inquiryQuestions?.conceptual) ? unit.inquiryQuestions.conceptual : [],
+        debatable: Array.isArray(unit.inquiryQuestions?.debatable) ? unit.inquiryQuestions.debatable : [],
+      },
+      phases: {
+        recherche: unit.phases?.recherche || '',
+        action: unit.phases?.action || '',
+        reflexion: unit.phases?.reflexion || '',
+      },
+      criteria: Array.isArray(unit.criteria)
+        ? unit.criteria.map((c: any) => ({
+            criterion: c.criterion || 'A',
+            name: c.name || '',
+            maxPoints: 8 as const,
+            discipline: c.discipline || '',
+            strands: Array.isArray(c.strands) ? c.strands : [],
+            description: c.description || '',
+          }))
+        : [],
+      atlSkills: Array.isArray(unit.atlSkills) ? unit.atlSkills : [],
+      content: unit.content || '',
+      summativeTask: unit.summativeTask || '',
+      resources: unit.resources || '',
+      createdAt: new Date().toISOString(),
+    }));
+  } catch (error: any) {
+    const errorMsg = error?.message || String(error);
+    if (errorMsg.includes('quota') || errorMsg.includes('429') || errorMsg.includes('Limite')) {
+      throw new Error("Limite d'utilisation de l'IA atteinte. Réessayez dans quelques minutes.");
+    }
+    if (errorMsg.includes('API') || errorMsg.includes('connexion')) {
+      throw new Error("Erreur de connexion à l'IA. Vérifiez votre clé API.");
+    }
+    throw new Error(`❌ Erreur lors de la génération interdisciplinaire: ${errorMsg}`);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRIVE-FORM TAG PARSER
+// Convertit un texte balisé (type formulaire Google Drive) en configuration
+// de génération d'unité. Tags requis et optionnels définis ci-dessous.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Tags reconnus dans le formulaire Drive :
+ *
+ * OBLIGATOIRES :
+ *   [MATIERE]       Nom de la matière (ex: Mathématiques)
+ *   [CLASSE]        Niveau de classe (ex: PEI 3)
+ *   [CHAPITRES]     Liste des chapitres / thèmes du programme
+ *
+ * OPTIONNELS :
+ *   [ENSEIGNANT]    Nom de l'enseignant
+ *   [RESSOURCES]    Ressources disponibles
+ *   [CONCEPT_CLE]   Concept clé imposé (ex: Changement)
+ *   [CONTEXTE]      Contexte mondial imposé
+ *   [DUREE]         Durée de l'unité (ex: 30h)
+ *   [ENONCE]        Énoncé de recherche proposé (l'IA peut l'affiner)
+ *   [DISCIPLINE2]   Deuxième discipline pour une unité interdisciplinaire
+ *   [THEME]         Thème directeur libre
+ *   [NOMBRE_UNITES] Nombre d'unités à générer (défaut: auto selon chapitres)
+ */
+export const DRIVE_FORM_TAGS = {
+  required: ['[MATIERE]', '[CLASSE]', '[CHAPITRES]'],
+  optional: [
+    '[ENSEIGNANT]',
+    '[RESSOURCES]',
+    '[CONCEPT_CLE]',
+    '[CONTEXTE]',
+    '[DUREE]',
+    '[ENONCE]',
+    '[DISCIPLINE2]',
+    '[THEME]',
+    '[NOMBRE_UNITES]',
+  ],
+  all: [
+    '[MATIERE]', '[CLASSE]', '[CHAPITRES]',
+    '[ENSEIGNANT]', '[RESSOURCES]', '[CONCEPT_CLE]',
+    '[CONTEXTE]', '[DUREE]', '[ENONCE]',
+    '[DISCIPLINE2]', '[THEME]', '[NOMBRE_UNITES]',
+  ],
+};
+
+export interface DriveFormConfig {
+  subject: string;
+  grade: string;
+  chapters: string;
+  teacherName?: string;
+  resources?: string;
+  keyConcept?: string;
+  globalContext?: string;
+  duration?: string;
+  statementOfInquiry?: string;
+  discipline2?: string;
+  theme?: string;
+  numberOfUnits?: number;
+  isInterdisciplinary: boolean;
+  missingRequired: string[];
+  warnings: string[];
+}
+
+/**
+ * Parse un texte balisé au format Drive-form et retourne une configuration
+ * prête à être passée à generateCourseFromChapters ou generateInterdisciplinaryUnits.
+ *
+ * @param formText  Texte complet du formulaire avec balises [TAG] valeur
+ * @returns DriveFormConfig avec les champs extraits et les erreurs détectées
+ */
+export const parseDriveFormTags = (formText: string): DriveFormConfig => {
+  const warnings: string[] = [];
+
+  /**
+   * Extrait la valeur qui suit un tag jusqu'au prochain tag ou fin de texte.
+   * Format attendu : "[TAG] valeur sur une ou plusieurs lignes"
+   */
+  const extractTag = (tag: string): string => {
+    // Échapper les crochets pour la regex
+    const escaped = tag.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+    // Capturer tout ce qui suit le tag jusqu'au prochain tag ou fin
+    const pattern = new RegExp(`${escaped}\\s*([\\s\\S]*?)(?=\\[[A-Z_]+\\]|$)`, 'i');
+    const match = formText.match(pattern);
+    if (!match) return '';
+    return match[1].trim();
+  };
+
+  const subject     = extractTag('[MATIERE]');
+  const grade       = extractTag('[CLASSE]');
+  const chapters    = extractTag('[CHAPITRES]');
+  const teacherName = extractTag('[ENSEIGNANT]') || undefined;
+  const resources   = extractTag('[RESSOURCES]') || undefined;
+  const keyConcept  = extractTag('[CONCEPT_CLE]') || undefined;
+  const globalContext = extractTag('[CONTEXTE]') || undefined;
+  const duration    = extractTag('[DUREE]') || undefined;
+  const statementOfInquiry = extractTag('[ENONCE]') || undefined;
+  const discipline2 = extractTag('[DISCIPLINE2]') || undefined;
+  const theme       = extractTag('[THEME]') || undefined;
+
+  const numUnitsRaw = extractTag('[NOMBRE_UNITES]');
+  const numberOfUnits = numUnitsRaw ? parseInt(numUnitsRaw, 10) || undefined : undefined;
+
+  // Vérifier les tags obligatoires
+  const missingRequired: string[] = [];
+  if (!subject)   missingRequired.push('[MATIERE]');
+  if (!grade)     missingRequired.push('[CLASSE]');
+  if (!chapters)  missingRequired.push('[CHAPITRES]');
+
+  // Vérifications supplémentaires
+  if (statementOfInquiry && statementOfInquiry.split(' ').length < 10) {
+    warnings.push("L'énoncé de recherche proposé semble trop court (moins de 10 mots). L'IA le reformulera.");
+  }
+  if (discipline2 && discipline2.toLowerCase() === subject.toLowerCase()) {
+    warnings.push("[DISCIPLINE2] est identique à [MATIERE]. Pour une unité interdisciplinaire, choisissez une discipline différente.");
+  }
+
+  const isInterdisciplinary = Boolean(discipline2 && discipline2.trim() !== '');
+
+  return {
+    subject,
+    grade,
+    chapters,
+    teacherName,
+    resources,
+    keyConcept,
+    globalContext,
+    duration,
+    statementOfInquiry,
+    discipline2,
+    theme,
+    numberOfUnits,
+    isInterdisciplinary,
+    missingRequired,
+    warnings,
+  };
+};
+
+/**
+ * Génère des unités à partir d'une configuration Drive-form.
+ * Détecte automatiquement si c'est interdisciplinaire et appelle la bonne fonction.
+ */
+export const generateFromDriveForm = async (config: DriveFormConfig): Promise<UnitPlan[] | InterdisciplinaryUnit[]> => {
+  if (config.missingRequired.length > 0) {
+    throw new Error(
+      `Formulaire incomplet — tags obligatoires manquants : ${config.missingRequired.join(', ')}\n\n` +
+      `Tags requis : [MATIERE], [CLASSE], [CHAPITRES]`
+    );
+  }
+
+  if (config.isInterdisciplinary && config.discipline2) {
+    return generateInterdisciplinaryUnits(
+      config.grade,
+      config.subject,
+      config.discipline2,
+      [],
+      config.theme,
+      config.numberOfUnits ?? 2,
+    );
+  }
+
+  // Construire le texte de chapitres enrichi avec les options du formulaire
+  let enrichedChapters = config.chapters;
+  if (config.keyConcept) enrichedChapters += `\n\nConcept clé imposé: ${config.keyConcept}`;
+  if (config.globalContext) enrichedChapters += `\nContexte mondial imposé: ${config.globalContext}`;
+  if (config.statementOfInquiry) enrichedChapters += `\nÉnoncé de recherche suggéré: ${config.statementOfInquiry}`;
+  if (config.theme) enrichedChapters += `\nThème directeur: ${config.theme}`;
+
+  const plans = await generateCourseFromChapters(enrichedChapters, config.subject, config.grade);
+
+  // Enrichir avec les métadonnées du formulaire
+  return plans.map(plan => ({
+    ...plan,
+    teacherName: config.teacherName || plan.teacherName,
+    resources: config.resources || plan.resources,
+    duration: config.duration || plan.duration,
+  }));
+};
