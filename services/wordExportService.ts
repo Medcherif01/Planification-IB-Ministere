@@ -4,7 +4,8 @@ import FileSaver from "file-saver";
 import JSZip from "jszip";
 import { UnitPlan, AssessmentData } from "../types";
 import { PLAN_TEMPLATE_URL, EVAL_TEMPLATE_URL } from "../constants";
-import { loadAllPlansForGrade } from "./databaseService";
+import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
+import { generateOverviewForSubject, OverviewUnitRow } from "./geminiService";
 
 // Helper function to fetch the template with retries and different proxies
 const loadFile = async (url: string): Promise<ArrayBuffer> => {
@@ -631,5 +632,227 @@ export const exportConsolidatedPlanByGrade = async (grade: string) => {
   } catch (error: any) {
     console.error("Error generating consolidated document:", error);
     alert("Erreur lors de la génération du document consolidé: " + error.message);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// exportOverviewToWord
+// Génère un document Word (HTML simulé) "Description générale du programme"
+// pour une matière donnée — toutes les années PEI 1 à 5 dans un seul document,
+// sous la même forme que le modèle joint (tableau IB officiel).
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportOverviewToWord = async (subject: string): Promise<void> => {
+  try {
+    // 1. Charger tous les plans pour toutes les années
+    const plansByGrade = await loadAllPlansForSubjectAllGrades(subject);
+    const grades = ['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'];
+
+    // 2. Générer les lignes du tableau via l'AI helper
+    const overviewRows = await generateOverviewForSubject(subject, plansByGrade);
+
+    if (overviewRows.length === 0) {
+      alert("Aucune unité trouvée pour " + subject + ". Veuillez d'abord générer les planifications pour toutes les années.");
+      return;
+    }
+
+    // 3. Grouper les lignes par année PEI
+    const rowsByGrade: Record<string, OverviewUnitRow[]> = {};
+    for (const grade of grades) {
+      rowsByGrade[grade] = overviewRows.filter(r => r.grade === grade);
+    }
+
+    // 4. Construire le HTML du document
+    let htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    @page { size: A4 landscape; margin: 15mm 12mm; }
+    body {
+      font-family: 'Calibri', Arial, sans-serif;
+      font-size: 9pt;
+      color: #222;
+      margin: 0;
+      padding: 0;
+      line-height: 1.3;
+    }
+    .doc-title {
+      font-size: 14pt;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 4px;
+      color: #1e3a5f;
+    }
+    .doc-subtitle {
+      font-size: 11pt;
+      font-style: italic;
+      text-align: center;
+      margin-bottom: 14px;
+      color: #1e3a5f;
+    }
+    .grade-section {
+      page-break-before: always;
+      margin-bottom: 20px;
+    }
+    .grade-section:first-of-type { page-break-before: avoid; }
+    .grade-label {
+      font-size: 12pt;
+      font-weight: bold;
+      color: #1e3a5f;
+      background: #dce6f1;
+      padding: 5px 10px;
+      border: 1px solid #9bbcd6;
+      border-radius: 3px;
+      margin-bottom: 6px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    th {
+      background-color: #bdd7ee;
+      color: #1e3a5f;
+      font-weight: bold;
+      font-size: 8.5pt;
+      text-align: center;
+      padding: 5px 4px;
+      border: 1px solid #4472c4;
+      vertical-align: middle;
+      word-wrap: break-word;
+    }
+    td {
+      border: 1px solid #4472c4;
+      padding: 4px 5px;
+      vertical-align: top;
+      font-size: 8pt;
+      word-wrap: break-word;
+      line-height: 1.35;
+    }
+    td.unit-title {
+      font-weight: bold;
+      color: #1e3a5f;
+      text-decoration: underline;
+      text-align: center;
+      font-size: 8.5pt;
+    }
+    td.hours {
+      font-weight: bold;
+      text-align: center;
+      font-size: 8.5pt;
+    }
+    td.concept-key { font-weight: bold; text-align: center; }
+    td.statement { font-style: italic; color: #1a1a2e; }
+    td.objectives { text-align: center; font-weight: bold; }
+    .content-list { margin: 0; padding: 0 0 0 12px; }
+    .content-list li { margin-bottom: 2px; }
+    /* Column widths for landscape A4 */
+    col.c1 { width: 11%; }
+    col.c2 { width: 6%; }
+    col.c3 { width: 9%; }
+    col.c4 { width: 11%; }
+    col.c5 { width: 18%; }
+    col.c6 { width: 6%; }
+    col.c7 { width: 14%; }
+    col.c8 { width: 25%; }
+  </style>
+</head>
+<body>
+  <div class="doc-title">Description générale du programme de &laquo;&nbsp;<em>${clean(subject)}</em>&nbsp;&raquo;</div>
+`;
+
+    for (const grade of grades) {
+      const gradeRows = rowsByGrade[grade] || [];
+      if (gradeRows.length === 0) continue;
+
+      htmlContent += `
+  <div class="grade-section">
+    <div class="grade-label">${clean(grade)}</div>
+    <table>
+      <colgroup>
+        <col class="c1"/><col class="c2"/><col class="c3"/><col class="c4"/>
+        <col class="c5"/><col class="c6"/><col class="c7"/><col class="c8"/>
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Titre de l'unité<br/>et heures d'enseignement</th>
+          <th>Concept clé</th>
+          <th>Concepts connexes</th>
+          <th>Contexte mondial</th>
+          <th><u>Énoncé de recherche</u></th>
+          <th><u>Objectifs spécifiques</u></th>
+          <th>Compétences spécifiques aux approches de l'apprentissage</th>
+          <th><u>Contenu</u></th>
+        </tr>
+      </thead>
+      <tbody>
+`;
+
+      for (const row of gradeRows) {
+        // Formater le contenu en liste à puces
+        const contentLines = row.content
+          ? row.content.split('\n')
+              .filter(l => l.trim())
+              .map(l => l.trim().replace(/^[-•]\s*/, ''))
+          : [];
+        const contentHtml = contentLines.length > 0
+          ? `<ul class="content-list">${contentLines.map(l => `<li>${clean(l)}</li>`).join('')}</ul>`
+          : clean(row.content);
+
+        // Formater les ATL skills
+        const atlLines = row.atlSkills
+          ? row.atlSkills.split('\n').filter(l => l.trim()).map(l => l.trim().replace(/^[-•]\s*/, ''))
+          : [];
+        const atlHtml = atlLines.length > 0
+          ? atlLines.join('<br/>')
+          : clean(row.atlSkills);
+
+        // Formater les objectifs
+        const objLines = row.objectives
+          ? row.objectives.split('\n').filter(l => l.trim())
+          : [];
+        const objHtml = objLines.length > 0
+          ? objLines.join('<br/>')
+          : clean(row.objectives);
+
+        htmlContent += `
+        <tr>
+          <td>
+            <span class="unit-title" style="display:block;text-align:center;font-weight:bold;text-decoration:underline;">${clean(row.unitTitle)}</span>
+            <div style="text-align:center;font-weight:bold;margin-top:3px;">${clean(row.hoursTotal)}</div>
+          </td>
+          <td class="concept-key">${clean(row.keyConcept)}</td>
+          <td>${clean(row.relatedConcepts)}</td>
+          <td>${clean(row.globalContext)}</td>
+          <td class="statement">${clean(row.statementOfInquiry)}</td>
+          <td class="objectives">${objHtml}</td>
+          <td>${atlHtml}</td>
+          <td>${contentHtml}</td>
+        </tr>
+`;
+      }
+
+      htmlContent += `
+      </tbody>
+    </table>
+  </div>
+`;
+    }
+
+    htmlContent += `
+</body>
+</html>`;
+
+    // 5. Télécharger en tant que .doc (Word HTML)
+    const blob = new Blob([htmlContent], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    });
+    const saveAs = (FileSaver as any).saveAs || FileSaver;
+    saveAs(blob, `Overview_${clean(subject).replace(/[^a-z0-9]/gi, '_')}_PEI1-5.doc`);
+
+  } catch (error: any) {
+    console.error("Error generating overview document:", error);
+    alert("Erreur lors de la génération de l'aperçu: " + error.message);
   }
 };

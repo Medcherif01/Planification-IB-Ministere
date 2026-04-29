@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UnitPlan } from '../types';
-import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer } from 'lucide-react';
+import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { generateCourseFromChapters } from '../services/geminiService';
-import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade } from '../services/wordExportService';
+import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord } from '../services/wordExportService';
+import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS } from '../constants';
 
 interface DashboardProps {
@@ -27,9 +28,33 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   const [bulkResources, setBulkResources] = useState('');
   const [isBulkGenerating, setIsBulkGenerating] = useState(false);
   const [exportingId, setExportingId] = useState<string | null>(null);
+  const [isOverviewExporting, setIsOverviewExporting] = useState(false);
+  const [overviewCompletionStatus, setOverviewCompletionStatus] = useState<{
+    complete: boolean;
+    gradesWithPlans: string[];
+    gradesMissing: string[];
+  } | null>(null);
+  const [isCheckingCompletion, setIsCheckingCompletion] = useState(false);
 
   // Filter States (only subject needed since grade is filtered by App)
   const [filterSubject, setFilterSubject] = useState('');
+
+  // Vérifier la complétude de la matière sur tous les PEI au montage
+  useEffect(() => {
+    if (!currentSubject) return;
+    const checkCompletion = async () => {
+      setIsCheckingCompletion(true);
+      try {
+        const status = await checkSubjectCompletionAllGrades(currentSubject);
+        setOverviewCompletionStatus(status);
+      } catch (e) {
+        console.warn('Could not check subject completion:', e);
+      } finally {
+        setIsCheckingCompletion(false);
+      }
+    };
+    checkCompletion();
+  }, [currentSubject]);
 
   // Prepare data for charts
   const subjectData = plans.reduce((acc: Record<string, number>, plan) => {
@@ -259,6 +284,28 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     setExportingId('consolidated');
     await exportConsolidatedPlanByGrade(currentGrade);
     setExportingId(null);
+  };
+
+  const handleExportOverview = async () => {
+    setIsOverviewExporting(true);
+    try {
+      await exportOverviewToWord(currentSubject);
+    } catch (e: any) {
+      alert('Erreur lors de la génération de l\'Overview: ' + (e?.message || e));
+    } finally {
+      setIsOverviewExporting(false);
+    }
+  };
+
+  // Re-check completion when plans change (after new generation)
+  const refreshCompletionStatus = async () => {
+    if (!currentSubject) return;
+    try {
+      const status = await checkSubjectCompletionAllGrades(currentSubject);
+      setOverviewCompletionStatus(status);
+    } catch (e) {
+      console.warn('Could not refresh subject completion:', e);
+    }
   };
 
   const handlePrintSubjectUnits = () => {
@@ -491,6 +538,42 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
               <ArrowLeft size={20} />
               Retour
             </button>
+             {/* ── Bouton Overview (toutes les années) ─────────────────────── */}
+             {overviewCompletionStatus && (
+               <div className="relative group">
+                 <button
+                   onClick={overviewCompletionStatus.complete ? handleExportOverview : undefined}
+                   disabled={isOverviewExporting || isCheckingCompletion || !overviewCompletionStatus.complete}
+                   className={`flex items-center gap-2 px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5 ${
+                     overviewCompletionStatus.complete
+                       ? 'bg-orange-500 hover:bg-orange-600 text-white cursor-pointer'
+                       : 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-60'
+                   } disabled:cursor-not-allowed`}
+                   title={
+                     overviewCompletionStatus.complete
+                       ? 'Générer le document Overview complet (toutes les années PEI)'
+                       : `Overview indisponible — années manquantes : ${overviewCompletionStatus.gradesMissing.join(', ')}`
+                   }
+                 >
+                   {isOverviewExporting ? (
+                     <><Loader2 className="animate-spin" size={20} />Overview...</>
+                   ) : (
+                     <><Globe size={20} />Overview</>  
+                   )}
+                 </button>
+                 {/* Tooltip avec le statut de complétude */}
+                 {!overviewCompletionStatus.complete && (
+                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 hidden group-hover:block w-64">
+                     <div className="bg-slate-800 text-white text-xs rounded-lg p-3 shadow-xl">
+                       <p className="font-bold mb-1">📊 Progression de la matière</p>
+                       <p className="text-green-300">✅ Complétés : {overviewCompletionStatus.gradesWithPlans.join(', ') || 'Aucun'}</p>
+                       <p className="text-red-300">❌ Manquants : {overviewCompletionStatus.gradesMissing.join(', ')}</p>
+                       <p className="mt-2 text-slate-300 italic">Complétez toutes les années pour activer l'Overview.</p>
+                     </div>
+                   </div>
+                 )}
+               </div>
+             )}
              {filteredPlans.length > 0 && (
                <button 
                  onClick={handlePrintSubjectUnits}

@@ -137,6 +137,58 @@ export async function savePlansToDatabase(
 }
 
 /**
+ * Récupère TOUTES les planifications d'une matière pour toutes les années PEI (PEI 1 → PEI 5)
+ */
+export async function loadAllPlansForSubjectAllGrades(
+  subject: string
+): Promise<Record<string, UnitPlan[]>> {
+  const grades = ['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'];
+  const result: Record<string, UnitPlan[]> = {};
+
+  for (const grade of grades) {
+    try {
+      const plans = await loadPlansFromDatabase(subject, grade);
+      result[grade] = plans;
+    } catch (error) {
+      console.warn(`⚠️ Impossible de charger ${subject} - ${grade}:`, error);
+      result[grade] = [];
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Vérifie si une matière a des plans pour toutes les 5 années PEI
+ */
+export async function checkSubjectCompletionAllGrades(
+  subject: string
+): Promise<{ complete: boolean; gradesWithPlans: string[]; gradesMissing: string[] }> {
+  const grades = ['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'];
+  const gradesWithPlans: string[] = [];
+  const gradesMissing: string[] = [];
+
+  for (const grade of grades) {
+    try {
+      const plans = await loadPlansFromDatabase(subject, grade);
+      if (plans && plans.length > 0) {
+        gradesWithPlans.push(grade);
+      } else {
+        gradesMissing.push(grade);
+      }
+    } catch {
+      gradesMissing.push(grade);
+    }
+  }
+
+  return {
+    complete: gradesMissing.length === 0,
+    gradesWithPlans,
+    gradesMissing,
+  };
+}
+
+/**
  * Supprime les planifications de MongoDB
  */
 export async function deletePlansFromDatabase(

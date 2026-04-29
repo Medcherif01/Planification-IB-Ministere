@@ -758,6 +758,90 @@ export const generateLearningExperiences = async (plan: UnitPlan): Promise<strin
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CONCEPTS IB PAR MATIÈRE — Référentiel officiel PEI
+// ─────────────────────────────────────────────────────────────────────────────
+const IB_CONCEPTS_BY_SUBJECT: Record<string, { keyConcepts: string[]; relatedConcepts: string[] }> = {
+  'mathématiques': {
+    keyConcepts: ['Forme', 'Logique', 'Relations'],
+    relatedConcepts: ['Approximation', 'Changement', 'Équivalence', 'Espace', 'Généralisation', 'Modèles', 'Quantité', 'Représentation', 'Séries', 'Simplification', 'Systèmes', 'Validité']
+  },
+  'sciences': {
+    keyConcepts: ['Changement', 'Relations', 'Systèmes'],
+    relatedConcepts: ['Conséquences', 'Énergie', 'Environnement', 'Équilibre', 'Fonction', 'Forme', 'Interaction', 'Modèles', 'Mouvement', 'Preuves', 'Schémas', 'Transformation']
+  },
+  'individus et sociétés': {
+    keyConcepts: ['Changement', 'Interactions mondiales', 'Systèmes', 'Temps, lieu et espace'],
+    relatedConcepts: ['Causalité', 'Choix', 'Culture', 'Diversité', 'Durabilité', 'Équité', 'Échelle', 'Gestion', 'Mondialisation', 'Pouvoir', 'Processus', 'Réseaux', 'Schémas']
+  },
+  'langue et littérature': {
+    keyConcepts: ['Communication', 'Créativité', 'Liens', 'Perspective'],
+    relatedConcepts: ['But', 'Cadre', 'Contexte', 'Expression personnelle', 'Genre', 'Interpellation du destinataire', 'Intertextualité', 'Personnage', 'Point de vue', 'Structure', 'Style', 'Thème']
+  },
+  'acquisition de langues': {
+    keyConcepts: ['Communication', 'Connexions', 'Créativité', 'Culture'],
+    relatedConcepts: ['But', 'Contexte', 'Conventions', 'Forme', 'Fonction', 'Sens', 'Message', 'Schémas', 'Choix des mots', 'Public', 'Empathie', 'Idiome', 'Point de vue', 'Argument', 'Déduction', 'Biais', 'Thème', 'Voix']
+  },
+  'arts': {
+    keyConcepts: ['Changement', 'Communication', 'Esthétique', 'Identité'],
+    relatedConcepts: ['Composition', 'Culture visuelle', 'Expression', 'Genre', 'Innovation', 'Interprétation', 'Jeu', 'Limites', 'Narration', 'Présentation', 'Public', 'Représentation', 'Rôle', 'Structure', 'Style']
+  },
+  'design': {
+    keyConcepts: ['Communautés', 'Communication', 'Développement', 'Systèmes'],
+    relatedConcepts: ['Adaptation', 'Collaboration', 'Durabilité', 'Ergonomie', 'Évaluation', 'Fonction', 'Forme', 'Innovation', 'Invention', 'Marchés', 'Perspective', 'Ressources']
+  },
+  'éducation physique': {
+    keyConcepts: ['Changement', 'Communication', 'Relations', 'Systèmes'],
+    relatedConcepts: ['Adaptation', 'Équilibre', 'Énergie', 'Environnement', 'Fonction', 'Interaction', 'Mouvement', 'Schémas', 'Perspective', 'Réflexion', 'Stratégie', 'Technique']
+  },
+};
+
+/**
+ * Retourne les concepts IB autorisés pour une matière donnée
+ */
+const getIBConceptsForSubject = (subject: string): { keyConcepts: string[]; relatedConcepts: string[] } => {
+  const norm = subject.toLowerCase().trim();
+  if (norm.includes('math')) return IB_CONCEPTS_BY_SUBJECT['mathématiques'];
+  if (norm.includes('science') || norm.includes('bio') || norm.includes('chimie') || norm.includes('physique')) return IB_CONCEPTS_BY_SUBJECT['sciences'];
+  if (norm.includes('individu') || norm.includes('société') || norm.includes('histoire') || norm.includes('géo')) return IB_CONCEPTS_BY_SUBJECT['individus et sociétés'];
+  if (norm.includes('langue et littérature') || norm.includes('français') && !norm.includes('acquisition')) return IB_CONCEPTS_BY_SUBJECT['langue et littérature'];
+  if (norm.includes('acquisition') || norm.includes('anglais') || norm.includes('english')) return IB_CONCEPTS_BY_SUBJECT['acquisition de langues'];
+  if (norm.includes('art') && !norm.includes('design')) return IB_CONCEPTS_BY_SUBJECT['arts'];
+  if (norm === 'design' || norm.startsWith('design')) return IB_CONCEPTS_BY_SUBJECT['design'];
+  if (norm.includes('physique') && norm.includes('santé') || norm.includes('eps')) return IB_CONCEPTS_BY_SUBJECT['éducation physique'];
+  // Fallback: retourne les concepts les plus génériques
+  return {
+    keyConcepts: ['Changement', 'Relations', 'Systèmes', 'Communication'],
+    relatedConcepts: ['Adaptation', 'Équilibre', 'Interaction', 'Modèles', 'Représentation', 'Transformation']
+  };
+};
+
+/**
+ * Génère la règle de concepts spécifique à inclure dans le prompt selon la matière
+ */
+const getConceptsRuleForSubject = (subject: string): string => {
+  const concepts = getIBConceptsForSubject(subject);
+  return `
+⚠️ LOI ABSOLUE — CONCEPTS IB OFFICIELS POUR "${subject.toUpperCase()}" (NON NÉGOCIABLE) ⚠️
+Tu DOIS choisir les concepts UNIQUEMENT parmi les listes officielles IB ci-dessous.
+INTERDIT d'inventer d'autres concepts ou d'utiliser des concepts d'une autre matière.
+
+CONCEPTS CLÉS autorisés pour cette matière (choix obligatoire parmi cette liste) :
+${concepts.keyConcepts.map(c => `  • ${c}`).join('\n')}
+
+CONCEPTS CONNEXES autorisés pour cette matière (choix obligatoire parmi cette liste) :
+${concepts.relatedConcepts.map(c => `  • ${c}`).join('\n')}
+
+RÈGLE DE L'ÉNONCÉ DE RECHERCHE :
+• Formule : [Concept Clé] + [Concepts Connexes] + [Contexte Mondial]
+• L'énoncé DOIT être une phrase déclarative mémorable qui NE CITE PAS le sujet spécifique
+• Exemple valide pour Maths : "La logique appliquée à la simplification des quantités révèle comment les modèles mathématiques nous aident à comprendre les relations entre les êtres au sein des communautés."
+• Exemple valide pour Sciences : "Les relations entre systèmes naturels, révélées par les modèles scientifiques, permettent de comprendre les conséquences des transformations environnementales."
+• Exemple INVALIDE : "Les fractions sont des nombres importants en mathématiques." (trop spécifique, cite le sujet)
+• Exemple INVALIDE : "Pourquoi les systèmes changent-ils ?" (c'est une question, pas une déclaration)
+`;
+};
+
 // Shared System Prompt for consistent generation (French)
 const SYSTEM_INSTRUCTION_FULL_PLAN_FR = `
 Tu es un expert pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB.
@@ -769,13 +853,14 @@ Il DOIT respecter TOUTES ces règles IB :
 
 RÈGLES DE L'ÉNONCÉ DE RECHERCHE :
 1. STRUCTURE OBLIGATOIRE : L'énoncé DOIT intégrer explicitement LES TROIS éléments suivants :
-   • Le CONCEPT CLÉ (ex: système, relation, transformation, perspective...)
-   • Au moins UN CONCEPT CONNEXE (ex: représentation, modèle, expression...)
-   • Le CONTEXTE MONDIAL (ex: Orientation dans l'espace et le temps, Mondialisation et durabilité...)
+   • Le CONCEPT CLÉ choisi parmi la liste officielle de la matière
+   • Au moins UN CONCEPT CONNEXE choisi parmi la liste officielle de la matière
+   • Le CONTEXTE MONDIAL (ex: Identités et relations, Orientation dans l'espace et le temps, Expression personnelle et culturelle, Innovation scientifique et technique, Mondialisation et durabilité, Équité et développement)
 
-2. FORME : Phrase déclarative COMPLÈTE (pas une question, pas un fragment)
-   • 15 à 35 mots typiquement
-   • Utilise une structure qui relie naturellement les trois éléments
+2. FORMULE OBLIGATOIRE : [Concept Clé] + [Concepts Connexes] + [Piste d'exploration du Contexte Mondial]
+   • Phrase déclarative COMPLÈTE (pas une question, pas un fragment) — 15 à 35 mots
+   • Mémorable et transférable — NE CITE PAS le sujet spécifique (ex: ne pas mentionner "fractions", "équations", "cellules", etc.)
+   • Exemple : "La structure influence la fonction" est valide — "Le squelette aide à bouger" ne l'est pas
 
 3. TRANSFÉRABILITÉ : L'énoncé doit être transférable au-delà du contenu spécifique
    • Ne PAS mentionner des noms de chapitres spécifiques, de formules ou de notions trop précises
@@ -793,7 +878,7 @@ RÈGLES DE L'ÉNONCÉ DE RECHERCHE :
    ✅ "Comprendre les modèles de changement à travers leurs représentations aide à analyser les défis de la mondialisation."
 
 6. EXEMPLES INVALIDES :
-   ❌ "Les équations du premier degré sont importantes en mathématiques." (trop spécifique, pas transférable)
+   ❌ "Les équations du premier degré sont importantes en mathématiques." (trop spécifique, cite le sujet)
    ❌ "La photosynthèse est un processus biologique." (pas d'intégration des trois éléments)
    ❌ "Pourquoi les systèmes changent-ils ?" (c'est une question, pas une déclaration)
 
@@ -1617,17 +1702,23 @@ export const generateFullUnitPlan = async (
       `;
     } else {
       // Français standard (toutes les matières sauf Design, EN, Bilingue)
+      const subjectConceptsSingle = getIBConceptsForSubject(subject);
       userPrompt = `
         Matière: ${subject}
         Niveau: ${gradeLevel}
         Sujets à couvrir: ${topics}
         
+        ❗ CONCEPTS IB OFFICIELS OBLIGATOIRES pour ${subject} :
+        ▶ Concepts clés autorisés (choisir parmi) : ${subjectConceptsSingle.keyConcepts.join(', ')}
+        ▶ Concepts connexes autorisés (choisir parmi) : ${subjectConceptsSingle.relatedConcepts.join(', ')}
+        INTERDIT d'utiliser un concept n'appartenant pas à ces listes officielles IB.
+        
         ❗ OBLIGATOIRE — RÈGLE IB STRICTE SUR L'ÉNONCÉ DE RECHERCHE :
         Le "statementOfInquiry" DOIT :
-        • Intégrer le CONCEPT CLÉ + au moins un CONCEPT CONNEXE + le CONTEXTE MONDIAL en une seule phrase
-        • Être une phrase déclarative (15–35 mots), transférable, stimulante intellectuellement
-        • NE PAS mentionner des notions trop spécifiques au chapitre
-        Exemple valide : "La représentation des relations entre quantités révèle comment les modèles mathématiques permettent de comprendre et de prédire des phénomènes du monde réel."
+        • Formule : [Concept Clé officiel] + [Concept Connexe officiel] + [Contexte Mondial]
+        • Être une phrase déclarative mémorable (15–35 mots), NE PAS citer le sujet spécifique
+        • Être transférable et stimulante intellectuellement
+        Exemple valide : "La logique de la simplification des quantités révèle comment les relations entre les nombres modélisent les phénomènes du monde réel."
         
         ❗ OBLIGATOIRE — RÈGLE IB STRICTE SUR LES CRITÈRES :
         1. Le champ "assessments" doit contenir EXACTEMENT 2 critères (ni 1, ni 3, ni 4)
@@ -1637,7 +1728,7 @@ export const generateFullUnitPlan = async (
         
         Génère le plan complet et les évaluations critériées.
         Assure-toi de:
-        1. Générer un "statementOfInquiry" IB PEI VALIDE (voir règle ci-dessus)
+        1. Générer un "statementOfInquiry" IB PEI VALIDE avec les concepts officiels de la matière
         2. Bien remplir TOUTES les sections incluant 'Activités/Stratégies', 'Évaluation formative' et 'Différenciation'
         3. Inclure un champ "chapters" listant les chapitres/leçons couverts dans cette unité (format tirets)
         4. Générer EXACTEMENT 2 critères dans "assessments" avec chacun ≥ 3 sous-aspects dans "strands"
@@ -1759,8 +1850,11 @@ export const generateCourseFromChapters = async (
         `;
       }
       
+      const conceptsRule = (!isDesign && lang !== 'en') ? getConceptsRuleForSubject(subject) : '';
+      
       const systemInstruction = `
       ${getSystemInstruction(subject)}
+      ${conceptsRule}
       ${taskInstruction}
       `;
   
@@ -1795,6 +1889,7 @@ export const generateCourseFromChapters = async (
         `;
       } else if (lang === 'bilingual') {
         const isArtCourse = subject.toLowerCase().includes('art');
+        const artConcepts = getIBConceptsForSubject(subject);
         userPrompt = `
           Matière: ${subject}
           Niveau: ${gradeLevel}
@@ -1803,6 +1898,12 @@ export const generateCourseFromChapters = async (
           
           ⚠️ RAPPEL: Génération BILINGUE requise (français + arabe avec suffixe _ar pour tous les champs).
           ❗ Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 4-5).
+          
+          ⚠️ CONCEPTS IB OBLIGATOIRES pour ${subject} :
+          Concepts clés autorisés : ${artConcepts.keyConcepts.join(', ')}
+          Concepts connexes autorisés : ${artConcepts.relatedConcepts.join(', ')}
+          Utilise UNIQUEMENT ces concepts — ne pas en inventer d'autres.
+          
           ${isArtCourse ? `
           ⚠️⚠️ RÈGLE ABSOLUE ARTS : TRAVAUX PRATIQUES UNIQUEMENT ⚠️⚠️
           Les évaluations critériées doivent être EXCLUSIVEMENT des TRAVAUX PRATIQUES artistiques :
@@ -1813,18 +1914,25 @@ export const generateCourseFromChapters = async (
           ` : ''}
         `;
       } else {
+        const subjectConcepts = getIBConceptsForSubject(subject);
         userPrompt = `
           Matière: ${subject}
           Niveau: ${gradeLevel}
           Programme complet:
           ${allChapters}
           
+          ❗ CONCEPTS IB OFFICIELS OBLIGATOIRES pour ${subject} :
+          ▶ Concepts clés autorisés (choisir parmi) : ${subjectConcepts.keyConcepts.join(', ')}
+          ▶ Concepts connexes autorisés (choisir parmi) : ${subjectConcepts.relatedConcepts.join(', ')}
+          INTERDIT d'utiliser un concept n'appartenant pas à ces listes officielles IB.
+          
           ❗ OBLIGATOIRE — ÉNONCÉ DE RECHERCHE IB PEI POUR CHAQUE UNITÉ :
           Le "statementOfInquiry" de CHAQUE unité DOIT :
-          • Intégrer le CONCEPT CLÉ + CONCEPT CONNEXE + CONTEXTE MONDIAL en une phrase déclarative (15–35 mots)
+          • Formule : [Concept Clé officiel] + [Concept Connexe officiel] + [Contexte Mondial]
+          • Être une phrase déclarative mémorable (15–35 mots) qui NE CITE PAS le sujet spécifique
           • Être DIFFÉRENT pour chaque unité (adapté au contenu spécifique de l'unité)
           • Être transférable et stimulant intellectuellement
-          Exemple valide : "La représentation des relations entre grandeurs révèle comment les modèles mathématiques permettent de comprendre et de prédire des phénomènes du monde réel."
+          Exemple valide pour Maths : "La logique de la simplification des quantités révèle comment les relations entre les nombres modélisent des phénomènes du monde réel."
           
           ❗ Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 4-5 unités pour couvrir l'année complète).
           ❗ JAMAIS moins de 4 unités.
@@ -1932,3 +2040,64 @@ export const generateCourseFromChapters = async (
       throw new Error(`❌ Erreur lors de la génération de la planification: ${errorMsg}`);
     }
   };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateOverviewForSubject — Génère un résumé enrichi de toutes les unités
+// d'une matière sur les 5 années PEI pour l'export Overview Word
+// ─────────────────────────────────────────────────────────────────────────────
+export interface OverviewUnitRow {
+  grade: string;           // PEI 1, PEI 2, ...
+  unitTitle: string;       // Titre de l'unité
+  hoursTotal: string;      // Durée totale
+  keyConcept: string;      // Concept clé
+  relatedConcepts: string; // Concepts connexes (joined)
+  globalContext: string;   // Contexte mondial
+  statementOfInquiry: string; // Énoncé de recherche
+  objectives: string;      // Objectifs spécifiques (critères)
+  atlSkills: string;       // Compétences ATL
+  content: string;         // Contenu / chapitres
+}
+
+export const generateOverviewForSubject = async (
+  subject: string,
+  allPlansByGrade: Record<string, UnitPlan[]>
+): Promise<OverviewUnitRow[]> => {
+  const rows: OverviewUnitRow[] = [];
+  const grades = ['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'];
+
+  for (const grade of grades) {
+    const plans = allPlansByGrade[grade] || [];
+    for (const plan of plans) {
+      // Objectifs spécifiques : liste des critères évalués
+      let objectives = '';
+      if (plan.assessments && plan.assessments.length > 0) {
+        objectives = plan.assessments.map(a => `Critère ${a.criterion}: ${a.criterionName}`).join('\n');
+      } else if (plan.objectives && plan.objectives.length > 0) {
+        objectives = Array.isArray(plan.objectives) ? plan.objectives.join('\n') : plan.objectives;
+      }
+
+      // Compétences ATL
+      const atlSkills = Array.isArray(plan.atlSkills) ? plan.atlSkills.join('\n') : (plan.atlSkills || '');
+
+      // Contenu
+      const content = plan.chapters || plan.content || '';
+
+      rows.push({
+        grade,
+        unitTitle: plan.title || '',
+        hoursTotal: plan.duration || '',
+        keyConcept: plan.keyConcept || '',
+        relatedConcepts: Array.isArray(plan.relatedConcepts)
+          ? plan.relatedConcepts.join(', ')
+          : (plan.relatedConcepts || ''),
+        globalContext: plan.globalContext || '',
+        statementOfInquiry: plan.statementOfInquiry || '',
+        objectives,
+        atlSkills,
+        content,
+      });
+    }
+  }
+
+  return rows;
+};
