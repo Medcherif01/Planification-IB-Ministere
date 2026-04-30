@@ -64,7 +64,7 @@ const isLanguageAcquisition = (subject: string): boolean => {
          normalized.includes('english');
 };
 
-// Helper function to detect if subject is ART or EPS (need Arabic version)
+// Helper function to detect if subject is ART or EPS (special practical-arts mode)
 const isArtOrEPS = (subject: string): boolean => {
   const normalized = subject.toLowerCase().trim();
   return (normalized.includes('arts') || 
@@ -82,10 +82,11 @@ const isDesignSubject = (subject: string): boolean => {
 };
 
 // Get language code based on subject
-const getGenerationLanguage = (subject: string): 'fr' | 'en' | 'bilingual' | 'design' => {
+// Arts/EPS use 'arts' mode (French only with practical-tasks rules)
+const getGenerationLanguage = (subject: string): 'fr' | 'en' | 'arts' | 'design' => {
   if (isLanguageAcquisition(subject)) return 'en';
   if (isDesignSubject(subject)) return 'design'; // Design : 4 critères + dossier de conception
-  if (isArtOrEPS(subject)) return 'bilingual'; // Arts/EPS : Français + Arabe
+  if (isArtOrEPS(subject)) return 'arts';        // Arts/EPS : Français + tâches pratiques
   return 'fr';
 };
 
@@ -301,17 +302,58 @@ const getDefaultCriteria = (subject: string) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RÈGLE OBLIGATOIRE IB : Au minimum 2 critères avec au moins 3 sous-aspects chacun
+// RÈGLE OBLIGATOIRE IB : Critères avec au moins 3 sous-aspects chacun
+// Modes :
+//   • Design        → exactement 4 critères (A, B, C, D)
+//   • Interdisciplinary → exactement 3 critères (A, B, C)
+//   • Standard      → minimum 2, maximum 3 critères
 // Cette fonction corrige automatiquement ce que l'IA aurait pu oublier.
 // ─────────────────────────────────────────────────────────────────────────────
-const enforceAssessmentsRules = (assessments: AssessmentData[], subject: string): AssessmentData[] => {
-  const defaults = getDefaultCriteria(subject);
+
+// Critères interdisciplinaires par défaut (A, B, C — chacun /8)
+const DEFAULT_CRITERIA_INTERDISCIPLINARY = [
+  {
+    criterion: 'A',
+    criterionName: 'Intégration disciplinaire',
+    strands: [
+      'i. Mobiliser les savoirs de plusieurs disciplines pour analyser le thème commun',
+      'ii. Établir des liens explicites entre les concepts disciplinaires et le thème interdisciplinaire',
+      'iii. Justifier la pertinence de chaque discipline dans l\'approche du problème',
+    ],
+  },
+  {
+    criterion: 'B',
+    criterionName: 'Communication interdisciplinaire',
+    strands: [
+      'i. Communiquer de façon cohérente en intégrant les apports de toutes les disciplines',
+      'ii. Utiliser un vocabulaire approprié à chaque discipline dans un contexte commun',
+      'iii. Structurer et présenter la démarche interdisciplinaire de façon claire et argumentée',
+    ],
+  },
+  {
+    criterion: 'C',
+    criterionName: 'Synthèse et transfert',
+    strands: [
+      'i. Synthétiser les apprentissages issus de toutes les disciplines en une vision cohérente',
+      'ii. Évaluer l\'apport spécifique de chaque discipline à la compréhension du thème',
+      'iii. Transférer la démarche interdisciplinaire à de nouveaux contextes ou problèmes',
+    ],
+  },
+];
+
+const enforceAssessmentsRules = (
+  assessments: AssessmentData[],
+  subject: string,
+  isInterdisciplinary = false
+): AssessmentData[] => {
+  const defaults = isInterdisciplinary
+    ? DEFAULT_CRITERIA_INTERDISCIPLINARY
+    : getDefaultCriteria(subject);
   let result = [...assessments];
 
   // ── Règle 1 : chaque critère doit avoir ≥ 3 sous-aspects (strands) ─────────
   result = result.map(a => {
     if (a.strands.length >= 3) return a;
-    // Compléter avec les sous-aspects par défaut pour ce critère
     const defCrit = defaults.find(d => d.criterion === a.criterion);
     const extraStrands = defCrit ? defCrit.strands : [
       `i. Comprendre les concepts fondamentaux de ${a.criterionName}`,
@@ -343,11 +385,15 @@ const enforceAssessmentsRules = (assessments: AssessmentData[], subject: string)
     };
   });
 
-  // ── Règle 3 : minimum 2 critères (4 pour Design) ──────────────────────────
-  const minCriteria = isDesignSubject(subject) ? 4 : 2;
+  // ── Règle 3 : nombre de critères selon le mode ────────────────────────────
+  // Design        → exactement 4 (A, B, C, D)
+  // Interdisciplinary → exactement 3 (A, B, C)
+  // Standard      → min 2, max 3
+  const minCriteria = isDesignSubject(subject) ? 4 : isInterdisciplinary ? 3 : 2;
+  const maxCriteria = isDesignSubject(subject) ? 4 : isInterdisciplinary ? 3 : 3;
+
   if (result.length < minCriteria) {
     const existingLetters = result.map(a => a.criterion);
-    // Choisir parmi les critères par défaut ceux qui ne sont pas déjà présents
     const toAdd = defaults.filter(d => !existingLetters.includes(d.criterion));
     const needed = minCriteria - result.length;
     console.warn(`⚠️ Seulement ${result.length} critère(s) → ajout de ${needed} critère(s) obligatoire(s)`);
@@ -374,8 +420,6 @@ const enforceAssessmentsRules = (assessments: AssessmentData[], subject: string)
     }
   }
 
-  // ── Règle 4 : maximum 3 critères (4 pour Design) ──────────────────────────
-  const maxCriteria = isDesignSubject(subject) ? 4 : 3;
   if (result.length > maxCriteria) {
     console.warn(`⚠️ ${result.length} critères → tronqué à ${maxCriteria} (règle IB)`);
     result = result.slice(0, maxCriteria);
@@ -1021,16 +1065,16 @@ Structure JSON attendue :
 - Chaque évaluation doit être faisable en 30 MINUTES
 `;
 
-// Shared System Prompt for Bilingual generation (ART and EPS - French + Arabic)
-const SYSTEM_INSTRUCTION_FULL_PLAN_BILINGUAL = `
-Tu es un expert coordinateur pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB, spécialisé en Arts visuels et en Éducation Physique.
-Tu dois générer un plan d'unité complet BILINGUE (FRANÇAIS + ARABE) ET une série d'évaluations détaillées basées sur les critères.
+// Shared System Prompt for Arts/EPS generation (French only, practical tasks)
+const SYSTEM_INSTRUCTION_FULL_PLAN_ARTS = `
+Tu es un expert coordinateur pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB, spécialisé en Arts visuels et en Éducation Physique et à la Santé.
+Tu dois générer un plan d'unité complet EN FRANÇAIS ET une série d'évaluations détaillées basées sur les critères.
 
 ❗❗❗ LOI ABSOLUE N°0 — ÉNONCÉ DE RECHERCHE IB PEI (NON NÉGOCIABLE) ❗❗❗
 Le champ "statementOfInquiry" est L'ÉLÉMENT LE PLUS IMPORTANT du plan d'unité PEI.
 Il DOIT intégrer OBLIGATOIREMENT les trois éléments : CONCEPT CLÉ + CONCEPT CONNEXE + CONTEXTE MONDIAL.
 Format : Phrase déclarative COMPLÈTE (15–35 mots), transférable, stimulante intellectuellement.
-Le champ "statementOfInquiry_ar" doit être la traduction arabe fidèle et naturelle de cet énoncé.
+L'énoncé doit être une phrase déclarative mémorable, transférable, stimulante intellectuellement.
 
 STRUCTURES RECOMMANDÉES :
 • "La [concept connexe] du [concept clé] révèle comment [contexte mondial]..."
@@ -1056,14 +1100,8 @@ CHAQUE CRITÈRE doit lister AU MINIMUM 3 sous-aspects dans le champ "strands".
 - Les activités pratiques nécessitent plus de temps que les exercices théoriques
 - Adapte le nombre et la complexité des tâches à cette contrainte de temps
 
-⚠️ RÈGLE CRUCIALE POUR ART ET EPS : GÉNÉRATION BILINGUE
-Pour les matières Arts et Éducation Physique et à la santé, TOUTES les sections doivent être générées en DEUX VERSIONS:
-1. VERSION FRANÇAISE (originale)
-2. VERSION ARABE (traduction complète et fidèle)
-
-FORMAT BILINGUE POUR CHAQUE SECTION:
-- Champ français: "nomChamp": "Contenu en français..."
-- Champ arabe: "nomChamp_ar": "المحتوى بالعربية..."
+⚠️ LANGUE : Tout le contenu doit être généré UNIQUEMENT EN FRANÇAIS.
+Aucune traduction arabe n'est requise — une seule version française complète suffit.
 
 ⚠️ RÈGLE ABSOLUE POUR LA MATIÈRE ARTS : ÉVALUATIONS PRATIQUES UNIQUEMENT
 Lorsque la matière est "Arts" ou "Arts visuels" ou similaire, les évaluations critériées doivent être EXCLUSIVEMENT des TRAVAUX PRATIQUES artistiques. 
@@ -1089,11 +1127,10 @@ FORMAT DES TÂCHES PRATIQUES :
   * Des pointillés pour les réponses écrites courtes (observations, justifications)
 
 RÈGLES ABSOLUES - FORMAT JSON:
-1. Utilise UNIQUEMENT les CLÉS JSON EN FRANÇAIS ci-dessous. NE PAS LES TRADUIRE.
-2. Le CONTENU (valeurs) doit être en FRANÇAIS ET EN ARABE (deux champs séparés).
-3. Ne laisse AUCUN champ vide. Remplis TOUTES les sections en français ET en arabe.
-4. La traduction arabe doit être précise, naturelle et pédagogiquement appropriée.
-5. ⚠️ CRITIQUE - VALIDITÉ JSON :
+1. Utilise UNIQUEMENT les CLÉS JSON EN ANGLAIS ci-dessous. NE PAS LES TRADUIRE.
+2. Le CONTENU (valeurs) doit être UNIQUEMENT EN FRANÇAIS — aucune traduction arabe n'est requise.
+3. Ne laisse AUCUN champ vide. Remplis TOUTES les sections.
+4. ⚠️ CRITIQUE - VALIDITÉ JSON :
    - Assure-toi que le JSON est PARFAITEMENT VALIDE
    - Pas de virgules trainantes avant les accolades fermantes
    - Échappe correctement les guillemets dans les chaînes avec \"
@@ -1101,13 +1138,10 @@ RÈGLES ABSOLUES - FORMAT JSON:
    - N'utilise PAS de sauts de ligne réels dans les chaînes JSON
    - Teste mentalement la validité du JSON avant de répondre
 
-CHAMPS OBLIGATOIRES ET DÉTAILLÉS (avec versions arabes):
+CHAMPS OBLIGATOIRES ET DÉTAILLÉS :
 - "learningExperiences": Détailler les ACTIVITÉS PRATIQUES D'APPRENTISSAGE et STRATÉGIES PÉDAGOGIQUES (ateliers pratiques, démonstration de techniques, observation d'artistes...).
-- "learningExperiences_ar": النسخة العربية الكاملة للأنشطة التعليمية العملية والاستراتيجيات
 - "formativeAssessment": Préciser les méthodes d'ÉVALUATION FORMATIVE pratique (portfolio, observation directe, esquisse préparatoire, carnet de croquis...).
-- "formativeAssessment_ar": النسخة العربية الكاملة لطرق التقييم التكويني
 - "differentiation": Préciser les stratégies de DIFFÉRENCIATION (modèles simplifiés pour élèves en difficulté, contraintes supplémentaires pour élèves avancés, choix des matériaux...).
-- "differentiation_ar": النسخة العربية الكاملة لاستراتيجيات التمايز
 
 RÈGLES SPÉCIFIQUES POUR LES TÂCHES PRATIQUES ARTS (CRUCIAL):
 1. CHAQUE CRITÈRE doit évaluer AU MINIMUM 3 sous-aspects différents (i, ii, iii, iv, ou v)
@@ -1116,8 +1150,7 @@ RÈGLES SPÉCIFIQUES POUR LES TÂCHES PRATIQUES ARTS (CRUCIAL):
    - Exemple: "Critère A: i. et iii." (une tâche évalue 2 aspects)
 4. VARIER les types de travaux pratiques pour couvrir différentes compétences artistiques
 5. La clé "criterionReference" doit indiquer TOUS les aspects évalués et les compétences pratiques observées
-6. CHAQUE tâche doit avoir une version arabe complète (title_ar, content_ar, criterionReference_ar)
-7. LAISSER suffisamment d'espace de création (ne pas surcharger la feuille d'instructions)
+6. LAISSER suffisamment d'espace de création (ne pas surcharger la feuille d'instructions)
 
 GESTION DES RESSOURCES DANS LES TÂCHES PRATIQUES:
 - Si la tâche nécessite l'analyse d'une œuvre d'art, écrire EXPLICITEMENT: "[Insérer reproduction de l'œuvre ici : Nom de l'artiste, Titre de l'œuvre, Date, Technique, Dimensions]".
@@ -1127,76 +1160,50 @@ GESTION DES RESSOURCES DANS LES TÂCHES PRATIQUES:
   * Pour les analyses : ajouter des lignes de réponse "\n\nObservations :\n................................................................................................................................................................................................\n................................................................................................................................................................................................"
   * Adapter l'espace selon le type de tâche pratique
 
-Structure JSON attendue (avec champs arabes):
+Structure JSON attendue (FRANÇAIS uniquement, pas de champs _ar) :
 {
   "title": "Titre en français",
-  "title_ar": "العنوان بالعربية",
   "duration": "XX heures",
-  "duration_ar": "XX ساعة",
   "chapters": "- Chapitre 1: ...\n- Chapitre 2: ...\n- Chapitre 3: ...",
-  "chapters_ar": "- الفصل الأول: ...\n- الفصل الثاني: ...\n- الفصل الثالث: ...",
   "keyConcept": "Un concept clé",
-  "keyConcept_ar": "مفهوم رئيسي",
   "relatedConcepts": ["Concept 1", "Concept 2"],
-  "relatedConcepts_ar": ["المفهوم الأول", "المفهوم الثاني"],
   "globalContext": "Un contexte mondial",
-  "globalContext_ar": "سياق عالمي",
   "statementOfInquiry": "Phrase complète...",
-  "statementOfInquiry_ar": "جملة كاملة...",
   "inquiryQuestions": {
     "factual": ["Q1", "Q2"],
-    "factual_ar": ["س1", "س2"],
     "conceptual": ["Q1", "Q2"],
-    "conceptual_ar": ["س1", "س2"],
-    "debatable": ["Q1", "Q2"],
-    "debatable_ar": ["س1", "س2"]
+    "debatable": ["Q1", "Q2"]
   },
   "objectives": ["Critère A: ...", "Critère B: ..."],
-  "objectives_ar": ["المعيار أ: ...", "المعيار ب: ..."],
   "atlSkills": ["Compétence 1...", "Compétence 2..."],
-  "atlSkills_ar": ["المهارة الأولى...", "المهارة الثانية..."],
   "content": "Contenu détaillé...",
-  "content_ar": "المحتوى المفصل...",
   "learningExperiences": "Activités ET stratégies pédagogiques détaillées...",
-  "learningExperiences_ar": "الأنشطة والاستراتيجيات التعليمية المفصلة...",
   "summativeAssessment": "Description de la tâche finale...",
-  "summativeAssessment_ar": "وصف المهمة النهائية...",
   "formativeAssessment": "Description des évaluations formatives...",
-  "formativeAssessment_ar": "وصف التقييمات التكوينية...",
   "differentiation": "Stratégies de différenciation...",
-  "differentiation_ar": "استراتيجيات التمايز...",
   "resources": "Livres, liens...",
-  "resources_ar": "الكتب، الروابط...",
   "reflection": {
      "prior": "Connaissances préalables...",
-     "prior_ar": "المعرفة المسبقة...",
      "during": "Engagement...",
-     "during_ar": "المشاركة...",
-     "after": "Résultats...",
-     "after_ar": "النتائج..."
+     "after": "Résultats..."
   },
   "assessments": [
     {
        "criterion": "A",
        "criterionName": "Connaissance",
-       "criterionName_ar": "المعرفة",
        "maxPoints": 8,
        "strands": ["i. sélectionner...", "ii. appliquer...", "iii. résoudre..."],
-       "strands_ar": ["١. اختيار...", "٢. تطبيق...", "٣. حل..."],
        "rubricRows": [
-          { "level": "1-2", "descriptor": "...", "descriptor_ar": "..." },
-          { "level": "3-4", "descriptor": "...", "descriptor_ar": "..." },
-          { "level": "5-6", "descriptor": "...", "descriptor_ar": "..." },
-          { "level": "7-8", "descriptor": "...", "descriptor_ar": "..." }
+          { "level": "1-2", "descriptor": "..." },
+          { "level": "3-4", "descriptor": "..." },
+          { "level": "5-6", "descriptor": "..." },
+          { "level": "7-8", "descriptor": "..." }
        ],
        "exercises": [
           {
              "title": "Exercice 1 (Aspect i)",
-             "title_ar": "التمرين ١ (الجانب الأول)",
              "content": "Question...",
-             "content_ar": "السؤال...",
-             "criterionReference": "Critère A: i. sélectionner...",
-             "criterionReference_ar": "المعيار أ: ١. اختيار..."
+             "criterionReference": "Critère A: i. sélectionner..."
           }
        ]
     }
@@ -1565,7 +1572,7 @@ const getSystemInstruction = (subject: string): string => {
   const lang = getGenerationLanguage(subject);
   if (lang === 'design') return SYSTEM_INSTRUCTION_FULL_PLAN_DESIGN;
   if (lang === 'en') return SYSTEM_INSTRUCTION_FULL_PLAN_EN;
-  if (lang === 'bilingual') return SYSTEM_INSTRUCTION_FULL_PLAN_BILINGUAL;
+  if (lang === 'arts') return SYSTEM_INSTRUCTION_FULL_PLAN_ARTS;
   return SYSTEM_INSTRUCTION_FULL_PLAN_FR;
 };
 
@@ -1642,14 +1649,14 @@ export const generateFullUnitPlan = async (
         8. Return ONLY a valid, complete JSON structure - no additional text before or after
         9. Ensure JSON is perfectly valid: no trailing commas, properly escaped quotes and newlines
       `;
-    } else if (lang === 'bilingual') {
+    } else if (lang === 'arts') {
       const isArt = subject.toLowerCase().includes('art');
       userPrompt = `
         Matière: ${subject}
         Niveau: ${gradeLevel}
         Sujets à couvrir: ${topics}
         
-        ⚠️ ATTENTION: Cette matière (ART ou EPS) nécessite une GÉNÉRATION BILINGUE (FRANÇAIS + ARABE).
+        ⚠️ LANGUE : Tout le contenu doit être généré UNIQUEMENT EN FRANÇAIS. Aucune traduction arabe n'est requise.
         
         ${isArt ? `⚠️⚠️ RÈGLE ABSOLUE ARTS : TRAVAUX PRATIQUES UNIQUEMENT ⚠️⚠️
         Cette matière est "Arts" — les évaluations critériées doivent être EXCLUSIVEMENT des TRAVAUX PRATIQUES artistiques.
@@ -1667,7 +1674,6 @@ export const generateFullUnitPlan = async (
         
         ❗ OBLIGATOIRE — RÈGLE IB STRICTE SUR L'ÉNONCÉ DE RECHERCHE :
         Le "statementOfInquiry" DOIT intégrer CONCEPT CLÉ + CONCEPT CONNEXE + CONTEXTE MONDIAL en une phrase déclarative (15–35 mots).
-        Le "statementOfInquiry_ar" est la traduction arabe fidèle et naturelle.
         Exemple valide : "La façon dont l'expression artistique reflète l'identité culturelle révèle comment les sociétés transmettent leur patrimoine à travers le temps."
         
         ⚠️ CRITIQUE - SÉLECTION DES CRITÈRES: 
@@ -1682,23 +1688,15 @@ export const generateFullUnitPlan = async (
         - Choisis les sous-aspects les PLUS PERTINENTS selon le contenu et les exigences IB
         - Une tâche PEUT évaluer 2-3 sous-aspects simultanément (ex: "Critère A: i. et iii.")
         
-        Génère le plan complet et les évaluations critériées EN DEUX VERSIONS:
-        1. VERSION FRANÇAISE (tous les champs standards)
-        2. VERSION ARABE (tous les champs avec suffixe _ar)
-        
         Assure-toi de:
-        1. Générer un "statementOfInquiry" IB PEI VALIDE (voir règle ci-dessus) + sa version arabe "statementOfInquiry_ar"
-        2. Générer TOUTES les sections en français ET en arabe (ex: "title" ET "title_ar")
-        3. Bien remplir 'Activités/Stratégies', 'Évaluation formative' et 'Différenciation' (versions française et arabe)
-        4. Inclure un champ "chapters" et "chapters_ar" listant les chapitres/leçons en français et en arabe
-        5. Sélectionner STANDARD: 2 critères (les plus convenables), EXCEPTIONNEL: 3 critères (si vraiment nécessaire)
-        6. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans une tâche)
-        7. ${isArt ? 'Concevoir chaque évaluation comme un TRAVAIL PRATIQUE pour une durée de 45 à 60 minutes' : 'Concevoir chaque évaluation pour une durée de 30 minutes'}
-        8. Pour chaque tâche pratique, fournir: title, title_ar, content, content_ar, criterionReference, criterionReference_ar
-        9. Retourner UNIQUEMENT une structure JSON valide et complète avec TOUS les champs bilingues - pas de texte avant ou après
-        10. S'assurer que le JSON est parfaitement valide: pas de virgules trainantes, guillemets et retours à la ligne échappés correctement
-        
-        La traduction arabe doit être pédagogiquement appropriée et naturelle.
+        1. Générer un "statementOfInquiry" IB PEI VALIDE (voir règle ci-dessus)
+        2. Bien remplir TOUTES les sections (Activités/Stratégies, Évaluation formative, Différenciation)
+        3. Inclure un champ "chapters" listant les chapitres/leçons couverts dans cette unité
+        4. Sélectionner STANDARD: 2 critères (les plus convenables), EXCEPTIONNEL: 3 critères (si vraiment nécessaire)
+        5. Adapter les sous-aspects au contenu (possibilité de combiner plusieurs dans une tâche)
+        6. ${isArt ? 'Concevoir chaque évaluation comme un TRAVAIL PRATIQUE pour une durée de 45 à 60 minutes' : 'Concevoir chaque évaluation pour une durée de 30 minutes'}
+        7. Retourner UNIQUEMENT une structure JSON valide et complète EN FRANÇAIS — pas de texte avant ou après
+        8. S'assurer que le JSON est parfaitement valide: pas de virgules trainantes, guillemets et retours à la ligne échappés correctement
       `;
     } else {
       // Français standard (toutes les matières sauf Design, EN, Bilingue)
@@ -1835,11 +1833,10 @@ export const generateCourseFromChapters = async (
         Return a JSON LIST (Array) of UnitPlan objects.
         ❗ MINIMUM 4 units, MAXIMUM 6 units.
         `;
-      } else if (lang === 'bilingual') {
+      } else if (lang === 'arts') {
         taskInstruction = `
         TÂCHE : Divise le programme fourni en MINIMUM 4 et MAXIMUM 6 unités logiques (idéalement 4-5 unités pour l'année).
-        Retourne une LISTE JSON (Array) d'objets UnitPlan BILINGUES (français + arabe).
-        ⚠️ CHAQUE unité doit avoir TOUS les champs en version française ET arabe (suffixe _ar).
+        Retourne une LISTE JSON (Array) d'objets UnitPlan EN FRANÇAIS UNIQUEMENT.
         ❗ MINIMUM 4 unités, MAXIMUM 6 unités.
         `;
       } else {
@@ -1887,7 +1884,7 @@ export const generateCourseFromChapters = async (
           All plans, assessments, exercises, questions, titles, and instructions MUST be in ENGLISH only.
           ❗ Generate MINIMUM 4 units and MAXIMUM 6 units (aim for 4-5).
         `;
-      } else if (lang === 'bilingual') {
+      } else if (lang === 'arts') {
         const isArtCourse = subject.toLowerCase().includes('art');
         const artConcepts = getIBConceptsForSubject(subject);
         userPrompt = `
@@ -1896,7 +1893,7 @@ export const generateCourseFromChapters = async (
           Programme complet:
           ${allChapters}
           
-          ⚠️ RAPPEL: Génération BILINGUE requise (français + arabe avec suffixe _ar pour tous les champs).
+          ⚠️ LANGUE : Tout le contenu doit être généré UNIQUEMENT EN FRANÇAIS. Aucune traduction arabe requise.
           ❗ Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 4-5).
           
           ⚠️ CONCEPTS IB OBLIGATOIRES pour ${subject} :
@@ -2103,86 +2100,170 @@ export const generateOverviewForSubject = async (
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INTERDISCIPLINARY UNIT PLANS
-// Génère des unités interdisciplinaires IB PEI conformes :
-//  - Structure en 3 phases : Recherche / Action / Réflexion
-//  - Collaboration entre ≥ 2 disciplines
-//  - Critères A, B, C chacun sur 8 points
-//  - Énoncé de recherche déclaratif (15-35 mots, pas de nom de matière)
-//  - Questions de recherche (factuelles, conceptuelles, débattables)
-//  - Minimum 2 unités par classe
+// INTERDISCIPLINARY UNIT PLANS — IB MYP / PEI compliant
+// Rules implemented:
+//  ▸ ≥ 2 disciplines (≥ 3 recommended), each with named teacher
+//  ▸ Shared learning objectives (different from discipline-specific ones)
+//  ▸ Structure in 3 IB phases : Recherche / Action / Réflexion
+//  ▸ Criteria A, B, C each /8 with ≥ 3 strands, aligned to interdisciplinary theme
+//  ▸ Per-unit interdisciplinary criteria (not the same as individual subject criteria)
+//  ▸ Declarative statement of inquiry 15-35 words, no subject names
+//  ▸ Research questions: factual, conceptual, debatable
+//  ▸ Minimum 2 units per class
+//  ▸ Summative task integrates all participating disciplines
 // ─────────────────────────────────────────────────────────────────────────────
+
+export interface InterdisciplinaryDisciplineBase {
+  discipline: string;      // Nom de la discipline
+  teacher: string;         // Nom de l'enseignant
+  ibObjective: string;     // Objectif spécifique IB de cette discipline dans l'unité
+  relatedConcepts: string[]; // Concepts connexes propres à cette discipline
+  content: string;         // Contenus couverts par cette discipline
+  learningActivities: string; // Activités d'apprentissage spécifiques
+  summativeAssessment: string; // Évaluation sommative disciplinaire
+}
 
 export interface InterdisciplinaryUnit {
   id: string;
-  grade: string;                  // PEI 1 … PEI 5
-  title: string;                  // Titre de l'unité interdisciplinaire
-  duration: string;               // Ex: "30 heures"
-  disciplines: string[];          // Disciplines impliquées (≥ 2)
-  teachers: string[];             // Noms des enseignants (un par discipline)
-  keyConcept: string;
-  relatedConcepts: string[];
-  globalContext: string;
-  statementOfInquiry: string;     // Déclaratif 15-35 mots, sans nom de matière
+  grade: string;                   // PEI 1 … PEI 5
+  title: string;                   // Titre de l'unité interdisciplinaire
+  duration: string;                // Ex: "30 heures"
+  disciplines: string[];           // Noms des disciplines (≥ 2, ≥ 3 recommandé)
+  teachers: string[];              // Noms des enseignants (un par discipline, même ordre)
+  // ── SECTION RECHERCHE ────────────────────────────────────────────────────
+  integrationPurpose: string;      // But de l'intégration interdisciplinaire
+  keyConcept: string;              // Concept clé IB
+  relatedConcepts: string[];       // Concepts connexes globaux (communs aux disciplines)
+  globalContext: string;           // Contexte mondial IB
+  statementOfInquiry: string;      // Déclaratif 15-35 mots, sans nom de matière
   inquiryQuestions: {
-    factual: string[];
-    conceptual: string[];
-    debatable: string[];
+    factual: string[];             // ≥ 2 questions factuelles
+    conceptual: string[];          // ≥ 2 questions conceptuelles
+    debatable: string[];           // ≥ 1 question débattable
   };
-  // Structure en 3 phases IB
-  phases: {
-    recherche: string;   // Ce que les élèves explorent / recherchent
-    action: string;      // Ce que les élèves font / produisent
-    reflexion: string;   // Comment les élèves réfléchissent sur leurs apprentissages
-  };
-  // Critères d'évaluation (A, B, C chacun sur 8)
-  criteria: {
+  // Critères d'évaluation sommative interdisciplinaires (A, B, C — chacun /8)
+  // Ces critères sont DIFFÉRENTS des critères spécifiques de chaque matière ;
+  // ils évaluent l'intégration et la synthèse interdisciplinaire.
+  summativeCriteria: {
     criterion: 'A' | 'B' | 'C';
-    name: string;
+    name: string;                  // Nom du critère en lien avec le thème interdisciplinaire
     maxPoints: 8;
-    discipline: string;   // Quelle discipline évalue ce critère
-    strands: string[];
-    description: string;
+    discipline: string;            // Discipline qui évalue ce critère
+    strands: string[];             // ≥ 3 sous-aspects
+    task: string;                  // Description de la tâche liée à ce critère
   }[];
-  atlSkills: string[];
-  content: string;
-  summativeTask: string;   // Tâche sommative finale
-  resources: string;
+  atlSkills: string[];             // Compétences ATL communes
+  // ── SECTION ACTION ───────────────────────────────────────────────────────
+  disciplineBases: InterdisciplinaryDisciplineBase[]; // Une entrée par discipline
+  interdisciplinaryLearningProcess: string; // Processus d'apprentissage interdisciplinaire
+  formativeStrategies: string;     // Stratégies d'évaluation formative
+  summativeTask: string;           // Tâche sommative finale intégrant toutes les disciplines
+  differentiation: string;         // Différenciation
+  resources: string;               // Ressources communes
+  // ── SECTION RÉFLEXION ────────────────────────────────────────────────────
+  phases: {
+    recherche: string;             // Phase Recherche
+    action: string;                // Phase Action
+    reflexion: string;             // Phase Réflexion
+  };
+  reflection: {
+    before: string;                // Avant l'unité
+    during: string;                // Pendant l'unité
+    after: string;                 // Suite à l'unité
+  };
+  // ── MÉTADONNÉES ──────────────────────────────────────────────────────────
+  sharedObjectives: string[];      // Objectifs COMMUNS entre disciplines (≥ 2)
+  content: string;                 // Contenu global résumé
   createdAt: string;
 }
 
-/** Prompt système pour la génération interdisciplinaire */
-const INTERDISCIPLINARY_SYSTEM_PROMPT = `Tu es un expert en conception pédagogique IB MYP (Middle Years Programme).
-Tu dois générer des unités interdisciplinaires conformes aux normes IB PEI.
+/** Prompt système pour la génération interdisciplinaire (IB MYP / PEI conforme) */
+const INTERDISCIPLINARY_SYSTEM_PROMPT = `Tu es un expert en conception pédagogique IB MYP (Programme d'Éducation Intermédiaire).
+Tu dois générer des UNITÉS INTERDISCIPLINAIRES strictement conformes aux normes IB PEI.
 
-RÈGLES ABSOLUES :
-1. Chaque unité implique OBLIGATOIREMENT au moins 2 disciplines différentes (ex: Mathématiques + Sciences, Français + Arts, etc.).
-2. L'énoncé de recherche (statementOfInquiry) doit être une phrase déclarative de 15 à 35 mots.
-   - Il NE DOIT PAS nommer les matières directement (dire "La structure influence la fonction" plutôt que "En mathématiques et sciences…").
-   - Il doit relier le concept clé, un concept connexe, et le contexte mondial.
-   - Il doit être mémorable, transférable, et inviter la réflexion.
-3. Structure obligatoire en 3 phases :
-   - RECHERCHE : exploration, investigation, questionnement (les élèves cherchent)
-   - ACTION : production, création, réalisation (les élèves font)
-   - RÉFLEXION : évaluation, métacognition, transfert (les élèves réfléchissent)
-4. Critères d'évaluation : exactement 3 critères (A, B, C), chacun noté sur 8 points.
-   Chaque critère est ancré dans une des disciplines collaboratrices.
-   Chaque critère comporte au moins 3 sous-aspects (strands) non consécutifs.
-5. Les questions de recherche doivent inclure :
-   - Au moins 2 questions factuelles (réponses précises)
-   - Au moins 2 questions conceptuelles (réponses plus larges)
-   - Au moins 1 question débattable (pas de réponse unique)
-6. Génère EXACTEMENT le nombre d'unités demandé (minimum 2).
-7. JSON uniquement, clés en anglais, valeurs en français, aucun texte avant/après.`;
+════════════════════════════════════════════════════
+RÈGLES ABSOLUES — IB PEI INTERDISCIPLINAIRE
+════════════════════════════════════════════════════
+
+1. DISCIPLINES : chaque unité implique OBLIGATOIREMENT ≥ 2 disciplines (≥ 3 REQUIS pour IB).
+   - Chaque discipline a un enseignant nommé et des objectifs spécifiques IB DIFFÉRENTS des objectifs communs.
+   - Les disciplines apportent des perspectives COMPLÉMENTAIRES au thème commun.
+   - Si seulement 2 disciplines sont fournies, suggère une 3ème discipline cohérente dans le champ "disciplines" du JSON.
+   - INTERDIT : que deux disciplines soient identiques.
+
+2. OBJECTIFS COMMUNS (sharedObjectives) — LOI ABSOLUE :
+   - Liste de 2 à 4 objectifs D'APPRENTISSAGE PARTAGÉS entre TOUTES les disciplines.
+   - Ces objectifs DOIVENT être ENTIÈREMENT DIFFÉRENTS des objectifs spécifiques IB de chaque matière.
+   - Ils portent sur des compétences TRANSVERSALES interdisciplinaires :
+     * Pensée critique et analyse comparative entre disciplines
+     * Communication de démarches complexes intégrant plusieurs angles
+     * Collaboration et co-construction interdisciplinaire
+     * Transfert de connaissances d'une discipline à l'autre
+   - Exemple VALIDE : "Analyser un phénomène complexe en mobilisant simultanément des outils de plusieurs disciplines"
+   - Exemple INVALIDE : "Maîtriser les fractions" (trop spécifique à une seule matière)
+
+3. ÉNONCÉ DE RECHERCHE (statementOfInquiry) — LOI ABSOLUE :
+   - Phrase déclarative MÉMORABLE de 15 à 35 mots.
+   - NE NOMME JAMAIS les matières ("La structure influence la fonction" — PAS "En maths et sciences…").
+   - DOIT relier : [Concept clé officiel IB] + [Concept connexe] + [Contexte mondial IB].
+   - Doit être transférable AU-DELÀ du contenu spécifique de l'unité.
+   - Doit être UNIQUE pour chaque unité générée (pas de copier-coller entre unités).
+
+4. STRUCTURE EN 3 PHASES IB — OBLIGATOIRE :
+   - RECHERCHE : les élèves s'interrogent, explorent, documentent — investigation conceptuelle COMMUNE aux disciplines.
+   - ACTION    : les élèves créent, expérimentent, produisent — réalisation concrète INTÉGRANT les disciplines.
+   - RÉFLEXION : les élèves évaluent leurs apprentissages, réfléchissent au TRANSFERT et à l'impact interdisciplinaire.
+   - Chaque phase doit montrer EXPLICITEMENT comment les disciplines collaborent (pas de silo disciplinaire).
+
+5. CRITÈRES D'ÉVALUATION INTERDISCIPLINAIRES (summativeCriteria) — LOI ABSOLUE :
+   - EXACTEMENT 3 critères : A, B, C — chacun noté sur 8 points.
+   - Ces critères évaluent l'INTÉGRATION INTERDISCIPLINAIRE — JAMAIS les compétences spécifiques à une seule matière.
+   - Les noms des critères doivent être ALIGNÉS SUR LE THÈME de l'unité (pas des noms génériques).
+   - Critère A → ancré dans la discipline 1 mais avec dimension intégrative interdisciplinaire.
+   - Critère B → ancré dans la discipline 2 mais avec dimension intégrative interdisciplinaire.
+   - Critère C → critère TRANSVERSAL évaluant la synthèse, l'intégration et le transfert entre disciplines.
+   - Chaque critère a EXACTEMENT ≥ 3 sous-aspects (strands) numérotés i., ii., iii.…
+   - Chaque critère a une tâche (task) décrivant CONCRÈTEMENT ce que l'élève fait pour INTÉGRER les disciplines.
+   - LOI : ces critères sont DIFFÉRENTS des critères d'évaluation spécifiques à chaque matière (ex: Critère A des Maths ≠ Critère A interdisciplinaire).
+
+6. BASES DISCIPLINAIRES (disciplineBases) — une entrée par discipline :
+   - ibObjective : l'objectif SPÉCIFIQUE IB de cette discipline dans cette unité (DIFFÉRENT des sharedObjectives).
+   - relatedConcepts : concepts connexes propres à cette discipline contribuant à l'unité.
+   - content : contenus disciplinaires spécifiques couverts dans cette unité.
+   - learningActivities : activités montrant comment cette discipline CONTRIBUE À L'INTÉGRATION.
+   - summativeAssessment : évaluation disciplinaire propre à cette matière (DIFFÉRENTE du summativeCriteria interdisciplinaire).
+
+7. RÉFLEXION ENSEIGNANTS (reflection) :
+   - 3 colonnes : avant / pendant / suite à l'unité.
+   - Contient les ajustements pédagogiques, observations collaboratives, et impacts observés.
+
+8. BUT DE L'INTÉGRATION (integrationPurpose) :
+   - Expliquer POURQUOI ces disciplines sont combinées et ce que l'intégration apporte de PLUS que chaque matière seule.
+   - Doit être spécifique au thème de cette unité (pas de formule générique).
+
+9. QUESTIONS DE RECHERCHE :
+   - ≥ 2 questions FACTUELLES (réponses définies, vérifiables)
+   - ≥ 2 questions CONCEPTUELLES (réponses larges, analytiques)
+   - ≥ 1 question DÉBATTABLE (pas de réponse unique — stimule le débat)
+   - Toutes les questions doivent refléter l'aspect INTERDISCIPLINAIRE de l'unité.
+
+10. MINIMUM PAR CLASSE — LOI IB :
+    - Génère EXACTEMENT le nombre d'unités demandé (MINIMUM 2 par classe).
+    - Chaque unité a un THÈME DIFFÉRENT mais utilise les mêmes disciplines.
+    - Les critères d'évaluation (summativeCriteria) de chaque unité doivent être ADAPTÉS AU THÈME de cette unité.
+    - JSON uniquement, clés en anglais, valeurs en français, aucun texte avant/après.`;
 
 /**
  * Génère des unités interdisciplinaires IB PEI pour une classe donnée.
- * @param grade       Niveau de classe (ex: "PEI 3")
- * @param discipline1 Première discipline (ex: "Mathématiques")
- * @param discipline2 Deuxième discipline (ex: "Sciences")
- * @param additionalDisciplines Disciplines supplémentaires optionnelles
- * @param theme       Thème optionnel pour guider la génération
- * @param count       Nombre d'unités à générer (min 2, défaut 2)
+ *
+ * @param grade                  Niveau de classe (ex: "PEI 3")
+ * @param discipline1            Première discipline (ex: "Mathématiques")
+ * @param discipline2            Deuxième discipline (ex: "Sciences")
+ * @param additionalDisciplines  Disciplines supplémentaires (≥ 3 recommandé IB)
+ * @param theme                  Thème directeur optionnel
+ * @param count                  Nombre d'unités à générer (min 2)
+ * @param teachers               Noms des enseignants (même ordre que disciplines)
+ * @param sharedObjectives       Objectifs communs suggérés (facultatif)
  */
 export const generateInterdisciplinaryUnits = async (
   grade: string,
@@ -2190,74 +2271,156 @@ export const generateInterdisciplinaryUnits = async (
   discipline2: string,
   additionalDisciplines: string[] = [],
   theme: string = '',
-  count: number = 2
+  count: number = 2,
+  teachers: string[] = [],
+  sharedObjectives: string[] = []
 ): Promise<InterdisciplinaryUnit[]> => {
   const allDisciplines = [discipline1, discipline2, ...additionalDisciplines].filter(Boolean);
   const numUnits = Math.max(2, count);
 
+  const teachersList = allDisciplines.map((d, i) =>
+    teachers[i] && teachers[i].trim() ? teachers[i].trim() : `Enseignant(e) de ${d}`
+  );
+
+  const sharedObjHint = sharedObjectives.length > 0
+    ? `\nObjectifs communs suggérés : ${sharedObjectives.join(' | ')}`
+    : '';
+
+  const themeNote = theme
+    ? `\n❗ THÈME DIRECTEUR OBLIGATOIRE pour TOUTES les unités : "${theme}"\n   Les critères d'évaluation (summativeCriteria) de CHAQUE unité DOIVENT être alignés sur ce thème.`
+    : '';
+
   const userPrompt = `Génère ${numUnits} unités interdisciplinaires IB PEI pour la classe ${grade}.
 
-Disciplines impliquées : ${allDisciplines.join(', ')}
-${theme ? `Thème directeur suggéré : ${theme}` : ''}
+Disciplines impliquées : ${allDisciplines.join(', ')} (≥ 3 disciplines fortement recommandé par IB)
+Enseignants : ${teachersList.join(', ')}
+${theme ? `Thème directeur : ${theme}` : 'Thème : laissé à l\'IA — chaque unité doit avoir un thème différent et cohérent'}${sharedObjHint}${themeNote}
 
-Pour chaque unité, génère un objet JSON avec exactement ces champs :
+❗❗❗ RÈGLES ABSOLUES À RESPECTER POUR CHAQUE UNITÉ ❗❗❗
+
+RÈGLE 1 — OBJECTIFS COMMUNS (sharedObjectives) :
+Ces objectifs DOIVENT être ENTIÈREMENT DIFFÉRENTS des objectifs spécifiques de chaque matière.
+Exemple VALIDE : "Analyser un phénomène en mobilisant simultanément les outils de ${allDisciplines.join(' et ')}"
+Exemple INVALIDE : Répéter un objectif propre à une seule matière.
+
+RÈGLE 2 — CRITÈRES INTERDISCIPLINAIRES (summativeCriteria) :
+• EXACTEMENT 3 critères A, B, C — chacun sur 8 points — ALIGNÉS SUR LE THÈME de l'unité.
+• Ces critères évaluent l'INTÉGRATION — pas les compétences disciplinaires isolées.
+• Critère A : ancré dans ${discipline1} mais dimension intégrative.
+• Critère B : ancré dans ${discipline2} mais dimension intégrative.
+• Critère C : TRANSVERSAL — synthèse et transfert interdisciplinaire.
+• LOI : ces noms de critères DOIVENT refléter le thème de l'unité, pas des formules génériques.
+• Chaque critère : ≥ 3 strands numérotés i., ii., iii. + une tâche (task) concrète.
+
+RÈGLE 3 — BASES DISCIPLINAIRES (disciplineBases) :
+• ibObjective de chaque discipline = objectif IB SPÉCIFIQUE à cette matière (DIFFÉRENT des sharedObjectives).
+• summativeAssessment de chaque discipline = évaluation propre à la matière (DIFFÉRENTE du summativeCriteria interdisciplinaire).
+
+Pour chaque unité, génère un objet JSON avec EXACTEMENT cette structure :
 {
-  "title": "Titre de l'unité interdisciplinaire",
-  "duration": "Durée en heures (ex: 30 heures)",
-  "disciplines": ["${allDisciplines.join('", "')}"],
-  "teachers": ${JSON.stringify(allDisciplines.map(d => `Enseignant(e) de ${d}`))},
-  "keyConcept": "Un seul concept clé IB (ex: Systèmes, Changement, Communication…)",
-  "relatedConcepts": ["concept1", "concept2"],
-  "globalContext": "Un des 6 contextes mondiaux IB",
-  "statementOfInquiry": "Phrase déclarative 15-35 mots sans nommer les matières",
+  "title": "Titre de l'unité interdisciplinaire — thème DIFFÉRENT pour chaque unité",
+  "duration": "30 heures",
+  "disciplines": ${JSON.stringify(allDisciplines)},
+  "teachers": ${JSON.stringify(teachersList)},
+
+  "integrationPurpose": "Explication spécifique du but de l'intégration pour CETTE unité — pourquoi ces disciplines ensemble apportent plus que séparément sur CE thème",
+
+  "keyConcept": "Un seul concept clé IB officiel parmi : Esthétique, Changement, Communication, Communautés, Connexions, Créativité, Culture, Développement, Forme, Interactions mondiales, Identité, Logique, Perspective, Relations, Systèmes, Temps-lieu-espace",
+  "relatedConcepts": ["concept connexe 1 cohérent avec le thème", "concept connexe 2"],
+  "globalContext": "Un des 6 contextes mondiaux IB : Identités et relations | Orientation dans l'espace et dans le temps | Expression personnelle et culturelle | Innovation scientifique et technique | Mondialisation et durabilité | Équité et développement",
+  "statementOfInquiry": "Phrase déclarative MÉMORABLE 15-35 mots — SANS nommer les matières — reliant concept clé + concept connexe + contexte mondial — UNIQUE pour cette unité",
+
   "inquiryQuestions": {
-    "factual": ["Question factuelle 1 ?", "Question factuelle 2 ?"],
-    "conceptual": ["Question conceptuelle 1 ?", "Question conceptuelle 2 ?"],
-    "debatable": ["Question débattable 1 ?"]
+    "factual": ["Question factuelle 1 liée au thème ?", "Question factuelle 2 ?"],
+    "conceptual": ["Question conceptuelle 1 liée à l'intégration des disciplines ?", "Question conceptuelle 2 ?"],
+    "debatable": ["Question invitant au débat sans réponse unique — dimension interdisciplinaire ?"]
   },
-  "phases": {
-    "recherche": "Description détaillée de la phase Recherche (investigation, exploration)",
-    "action": "Description détaillée de la phase Action (production, réalisation concrète)",
-    "reflexion": "Description détaillée de la phase Réflexion (métacognition, transfert)"
-  },
-  "criteria": [
+
+  "sharedObjectives": [
+    "Objectif commun 1 — compétence TRANSVERSALE entre ${allDisciplines.join(' et ')} (DIFFÉRENT des objectifs IB spécifiques à chaque matière)",
+    "Objectif commun 2 — développement d'une perspective interdisciplinaire spécifique au thème"
+  ],
+
+  "summativeCriteria": [
     {
       "criterion": "A",
-      "name": "Nom du critère A en lien avec ${discipline1}",
+      "name": "Nom du critère A ALIGNÉ SUR LE THÈME — intégration ${discipline1}",
       "maxPoints": 8,
       "discipline": "${discipline1}",
-      "strands": ["i. strand 1", "ii. strand 2", "iii. strand 3"],
-      "description": "Description de ce que le critère A évalue"
+      "strands": [
+        "i. sous-aspect spécifique à ce critère et ce thème",
+        "ii. sous-aspect intégratif liant ${discipline1} au thème commun",
+        "iii. sous-aspect évaluant la dimension interdisciplinaire"
+      ],
+      "task": "Description concrète de la tâche que l'élève accomplit pour démontrer l'intégration — liée au thème"
     },
     {
       "criterion": "B",
-      "name": "Nom du critère B en lien avec ${discipline2}",
+      "name": "Nom du critère B ALIGNÉ SUR LE THÈME — intégration ${discipline2}",
       "maxPoints": 8,
       "discipline": "${discipline2}",
-      "strands": ["i. strand 1", "ii. strand 2", "iii. strand 3"],
-      "description": "Description de ce que le critère B évalue"
+      "strands": [
+        "i. sous-aspect spécifique à ce critère et ce thème",
+        "ii. sous-aspect intégratif liant ${discipline2} au thème commun",
+        "iii. sous-aspect évaluant la dimension interdisciplinaire"
+      ],
+      "task": "Description concrète de la tâche liée au critère B — dimension interdisciplinaire du thème"
     },
     {
       "criterion": "C",
-      "name": "Nom du critère C (compétence transversale)",
+      "name": "Synthèse et transfert — [intitulé lié au THÈME spécifique de cette unité]",
       "maxPoints": 8,
       "discipline": "Interdisciplinaire",
-      "strands": ["i. strand 1", "ii. strand 2", "iii. strand 3"],
-      "description": "Description de ce que le critère C évalue"
+      "strands": [
+        "i. Capacité à intégrer les perspectives de toutes les disciplines sur le thème",
+        "ii. Communication argumentée de la démarche interdisciplinaire",
+        "iii. Transfert des apprentissages à de nouveaux contextes liés au thème"
+      ],
+      "task": "Tâche transversale synthétisant l'apport de toutes les disciplines sur le thème de l'unité"
     }
   ],
-  "atlSkills": ["Compétence ATL 1", "Compétence ATL 2", "Compétence ATL 3"],
-  "content": "Contenu détaillé : chapitres, thèmes et savoirs couverts par l'unité",
-  "summativeTask": "Description de la tâche sommative finale qui intègre les deux disciplines",
-  "resources": "Ressources et matériaux nécessaires"
+
+  "atlSkills": ["Compétence ATL de pensée critique", "Compétence ATL de communication", "Compétence ATL de collaboration interdisciplinaire"],
+
+  "disciplineBases": [
+${allDisciplines.map((d, i) => `    {
+      "discipline": "${d}",
+      "teacher": "${teachersList[i]}",
+      "ibObjective": "Objectif spécifique IB de ${d} dans cette unité — DIFFÉRENT des sharedObjectives",
+      "relatedConcepts": ["concept connexe propre à ${d} pour cette unité"],
+      "content": "Contenus disciplinaires spécifiques de ${d} couverts dans cette unité",
+      "learningActivities": "Activités d'apprentissage de ${d} montrant sa CONTRIBUTION À L'INTÉGRATION interdisciplinaire",
+      "summativeAssessment": "Évaluation sommative propre à ${d} — DIFFÉRENTE du summativeCriteria interdisciplinaire"
+    }`).join(',\n')}
+  ],
+
+  "interdisciplinaryLearningProcess": "Description du processus d'apprentissage interdisciplinaire — comment les élèves naviguent entre les disciplines et construisent une compréhension COMMUNE du thème",
+  "formativeStrategies": "Stratégies d'évaluation formative COMMUNES à toutes les disciplines — permettant de vérifier la progression de l'intégration",
+  "summativeTask": "Description complète de la tâche sommative FINALE qui intègre TOUTES les disciplines — production concrète attendue et critères de réussite",
+  "differentiation": "Stratégies de différenciation pour répondre aux besoins variés des élèves dans le cadre interdisciplinaire",
+  "resources": "Ressources communes à toutes les disciplines pour cette unité",
+
+  "phases": {
+    "recherche": "Phase RECHERCHE (2-3 paragraphes) : investigation conceptuelle COMMUNE — questions posées, sources explorées, outils de chaque discipline mobilisés pour investiguer le thème",
+    "action": "Phase ACTION (2-3 paragraphes) : production concrète INTÉGRANT les disciplines — ce que les élèves créent/réalisent ensemble, rôle de chaque discipline",
+    "reflexion": "Phase RÉFLEXION (2-3 paragraphes) : évaluation des apprentissages, transfert interdisciplinaire, impact observé, auto-évaluation de la collaboration"
+  },
+
+  "reflection": {
+    "before": "Avant l'unité : hypothèses, attentes des enseignants, planification collaborative",
+    "during": "Pendant l'unité : observations, ajustements pédagogiques, difficultés rencontrées dans la collaboration interdisciplinaire",
+    "after": "Suite à l'unité : évaluation de l'impact interdisciplinaire, apprentissages retenus, améliorations futures"
+  },
+
+  "content": "Résumé global du contenu couvert par TOUTES les disciplines dans cette unité"
 }
 
-Retourne un tableau JSON de ${numUnits} objets. Aucun texte avant ou après le JSON.`;
+Retourne un tableau JSON de ${numUnits} objets. Chaque unité a un THÈME DIFFÉRENT. Aucun texte avant ou après le JSON.`;
 
   try {
     const rawText = await callGeminiViaProxy(userPrompt, INTERDISCIPLINARY_SYSTEM_PROMPT, {
       temperature: 0.7,
-      maxOutputTokens: 32768,
+      maxOutputTokens: 65536,
       responseMimeType: 'application/json',
     });
 
@@ -2292,43 +2455,86 @@ Retourne un tableau JSON de ${numUnits} objets. Aucun texte avant ou après le J
     }
 
     // Normaliser et ajouter les IDs
-    return parsed.map((unit: any, idx: number) => ({
-      id: `interdisciplinary_${Date.now()}_${idx}`,
-      grade,
-      title: unit.title || `Unité interdisciplinaire ${idx + 1}`,
-      duration: unit.duration || '30 heures',
-      disciplines: Array.isArray(unit.disciplines) ? unit.disciplines : allDisciplines,
-      teachers: Array.isArray(unit.teachers) ? unit.teachers : allDisciplines.map(d => `Enseignant(e) de ${d}`),
-      keyConcept: unit.keyConcept || '',
-      relatedConcepts: Array.isArray(unit.relatedConcepts) ? unit.relatedConcepts : [],
-      globalContext: unit.globalContext || '',
-      statementOfInquiry: unit.statementOfInquiry || '',
-      inquiryQuestions: {
-        factual: Array.isArray(unit.inquiryQuestions?.factual) ? unit.inquiryQuestions.factual : [],
-        conceptual: Array.isArray(unit.inquiryQuestions?.conceptual) ? unit.inquiryQuestions.conceptual : [],
-        debatable: Array.isArray(unit.inquiryQuestions?.debatable) ? unit.inquiryQuestions.debatable : [],
-      },
-      phases: {
-        recherche: unit.phases?.recherche || '',
-        action: unit.phases?.action || '',
-        reflexion: unit.phases?.reflexion || '',
-      },
-      criteria: Array.isArray(unit.criteria)
-        ? unit.criteria.map((c: any) => ({
-            criterion: c.criterion || 'A',
-            name: c.name || '',
-            maxPoints: 8 as const,
-            discipline: c.discipline || '',
-            strands: Array.isArray(c.strands) ? c.strands : [],
-            description: c.description || '',
-          }))
-        : [],
-      atlSkills: Array.isArray(unit.atlSkills) ? unit.atlSkills : [],
-      content: unit.content || '',
-      summativeTask: unit.summativeTask || '',
-      resources: unit.resources || '',
-      createdAt: new Date().toISOString(),
-    }));
+    return parsed.map((unit: any, idx: number) => {
+      // Normaliser les bases disciplinaires
+      const disciplineBases: InterdisciplinaryDisciplineBase[] = allDisciplines.map((d, di) => {
+        const base = Array.isArray(unit.disciplineBases)
+          ? unit.disciplineBases.find((b: any) => b.discipline === d) || unit.disciplineBases[di] || {}
+          : {};
+        return {
+          discipline: d,
+          teacher: teachersList[di],
+          ibObjective: base.ibObjective || `Objectif spécifique IB de ${d}`,
+          relatedConcepts: Array.isArray(base.relatedConcepts) ? base.relatedConcepts : [],
+          content: base.content || '',
+          learningActivities: base.learningActivities || '',
+          summativeAssessment: base.summativeAssessment || '',
+        };
+      });
+
+      // Normaliser les critères sommatives (garantir exactement A, B, C avec ≥ 3 strands)
+      const rawCriteria = Array.isArray(unit.summativeCriteria) ? unit.summativeCriteria :
+                          Array.isArray(unit.criteria) ? unit.criteria : [];
+      const criteriaLetters: ('A' | 'B' | 'C')[] = ['A', 'B', 'C'];
+      const summativeCriteria = criteriaLetters.map((letter, ci) => {
+        const found = rawCriteria.find((c: any) => c.criterion === letter) || rawCriteria[ci] || {};
+        const strands = Array.isArray(found.strands) && found.strands.length >= 3
+          ? found.strands
+          : [
+              `i. Capacité à mobiliser les savoirs de ${allDisciplines[ci] || 'la discipline'} dans un contexte interdisciplinaire`,
+              `ii. Qualité de l'intégration et de la mise en relation des disciplines`,
+              `iii. Pertinence et rigueur de la démarche interdisciplinaire`,
+            ];
+        return {
+          criterion: letter,
+          name: found.name || (letter === 'C' ? 'Synthèse et transfert interdisciplinaire' : `Intégration — ${allDisciplines[ci] || ''}`),
+          maxPoints: 8 as const,
+          discipline: found.discipline || (letter === 'C' ? 'Interdisciplinaire' : (allDisciplines[ci] || '')),
+          strands,
+          task: found.task || found.description || `Tâche sommative — Critère ${letter}`,
+        };
+      });
+
+      return {
+        id: `interdisciplinary_${Date.now()}_${idx}`,
+        grade,
+        title: unit.title || `Unité interdisciplinaire ${idx + 1}`,
+        duration: unit.duration || '30 heures',
+        disciplines: allDisciplines,
+        teachers: teachersList,
+        integrationPurpose: unit.integrationPurpose || '',
+        keyConcept: unit.keyConcept || '',
+        relatedConcepts: Array.isArray(unit.relatedConcepts) ? unit.relatedConcepts : [],
+        globalContext: unit.globalContext || '',
+        statementOfInquiry: unit.statementOfInquiry || '',
+        inquiryQuestions: {
+          factual:    Array.isArray(unit.inquiryQuestions?.factual)    ? unit.inquiryQuestions.factual    : [],
+          conceptual: Array.isArray(unit.inquiryQuestions?.conceptual) ? unit.inquiryQuestions.conceptual : [],
+          debatable:  Array.isArray(unit.inquiryQuestions?.debatable)  ? unit.inquiryQuestions.debatable  : [],
+        },
+        sharedObjectives: Array.isArray(unit.sharedObjectives) ? unit.sharedObjectives : [],
+        summativeCriteria,
+        atlSkills: Array.isArray(unit.atlSkills) ? unit.atlSkills : [],
+        disciplineBases,
+        interdisciplinaryLearningProcess: unit.interdisciplinaryLearningProcess || '',
+        formativeStrategies: unit.formativeStrategies || '',
+        summativeTask: unit.summativeTask || '',
+        differentiation: unit.differentiation || '',
+        resources: unit.resources || '',
+        phases: {
+          recherche: unit.phases?.recherche || '',
+          action:    unit.phases?.action    || '',
+          reflexion: unit.phases?.reflexion || '',
+        },
+        reflection: {
+          before: unit.reflection?.before || '',
+          during: unit.reflection?.during || '',
+          after:  unit.reflection?.after  || '',
+        },
+        content: unit.content || '',
+        createdAt: new Date().toISOString(),
+      };
+    });
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
     if (errorMsg.includes('quota') || errorMsg.includes('429') || errorMsg.includes('Limite')) {
@@ -2369,21 +2575,24 @@ Retourne un tableau JSON de ${numUnits} objets. Aucun texte avant ou après le J
 export const DRIVE_FORM_TAGS = {
   required: ['[MATIERE]', '[CLASSE]', '[CHAPITRES]'],
   optional: [
+    '[DISCIPLINE2]',
+    '[DISCIPLINE3]',
     '[ENSEIGNANT]',
     '[RESSOURCES]',
     '[CONCEPT_CLE]',
     '[CONTEXTE]',
     '[DUREE]',
     '[ENONCE]',
-    '[DISCIPLINE2]',
     '[THEME]',
     '[NOMBRE_UNITES]',
+    '[OBJECTIFS_COMMUNS]',
   ],
   all: [
     '[MATIERE]', '[CLASSE]', '[CHAPITRES]',
+    '[DISCIPLINE2]', '[DISCIPLINE3]',
     '[ENSEIGNANT]', '[RESSOURCES]', '[CONCEPT_CLE]',
     '[CONTEXTE]', '[DUREE]', '[ENONCE]',
-    '[DISCIPLINE2]', '[THEME]', '[NOMBRE_UNITES]',
+    '[THEME]', '[NOMBRE_UNITES]', '[OBJECTIFS_COMMUNS]',
   ],
 };
 
@@ -2398,8 +2607,10 @@ export interface DriveFormConfig {
   duration?: string;
   statementOfInquiry?: string;
   discipline2?: string;
+  discipline3?: string;
   theme?: string;
   numberOfUnits?: number;
+  sharedObjectives?: string[];
   isInterdisciplinary: boolean;
   missingRequired: string[];
   warnings: string[];
@@ -2429,36 +2640,47 @@ export const parseDriveFormTags = (formText: string): DriveFormConfig => {
     return match[1].trim();
   };
 
-  const subject     = extractTag('[MATIERE]');
-  const grade       = extractTag('[CLASSE]');
-  const chapters    = extractTag('[CHAPITRES]');
-  const teacherName = extractTag('[ENSEIGNANT]') || undefined;
-  const resources   = extractTag('[RESSOURCES]') || undefined;
-  const keyConcept  = extractTag('[CONCEPT_CLE]') || undefined;
+  const subject       = extractTag('[MATIERE]');
+  const grade         = extractTag('[CLASSE]');
+  const chapters      = extractTag('[CHAPITRES]');
+  const teacherName   = extractTag('[ENSEIGNANT]') || undefined;
+  const resources     = extractTag('[RESSOURCES]') || undefined;
+  const keyConcept    = extractTag('[CONCEPT_CLE]') || undefined;
   const globalContext = extractTag('[CONTEXTE]') || undefined;
-  const duration    = extractTag('[DUREE]') || undefined;
+  const duration      = extractTag('[DUREE]') || undefined;
   const statementOfInquiry = extractTag('[ENONCE]') || undefined;
-  const discipline2 = extractTag('[DISCIPLINE2]') || undefined;
-  const theme       = extractTag('[THEME]') || undefined;
+  const discipline2   = extractTag('[DISCIPLINE2]') || undefined;
+  const discipline3   = extractTag('[DISCIPLINE3]') || undefined;
+  const theme         = extractTag('[THEME]') || undefined;
+  const sharedObjRaw  = extractTag('[OBJECTIFS_COMMUNS]');
+  const sharedObjectives = sharedObjRaw
+    ? sharedObjRaw.split(/[|;\n]/).map(s => s.trim()).filter(Boolean)
+    : undefined;
 
-  const numUnitsRaw = extractTag('[NOMBRE_UNITES]');
+  const numUnitsRaw   = extractTag('[NOMBRE_UNITES]');
   const numberOfUnits = numUnitsRaw ? parseInt(numUnitsRaw, 10) || undefined : undefined;
 
   // Vérifier les tags obligatoires
   const missingRequired: string[] = [];
   if (!subject)   missingRequired.push('[MATIERE]');
   if (!grade)     missingRequired.push('[CLASSE]');
-  if (!chapters)  missingRequired.push('[CHAPITRES]');
+  // Pour le mode interdisciplinaire, [CHAPITRES] est facultatif (remplacé par thème)
+  if (!chapters && !discipline2) missingRequired.push('[CHAPITRES]');
 
   // Vérifications supplémentaires
   if (statementOfInquiry && statementOfInquiry.split(' ').length < 10) {
     warnings.push("L'énoncé de recherche proposé semble trop court (moins de 10 mots). L'IA le reformulera.");
   }
-  if (discipline2 && discipline2.toLowerCase() === subject.toLowerCase()) {
+  if (discipline2 && discipline2.trim().toLowerCase() === subject.toLowerCase()) {
     warnings.push("[DISCIPLINE2] est identique à [MATIERE]. Pour une unité interdisciplinaire, choisissez une discipline différente.");
   }
-
+  if (discipline3 && (discipline3.trim().toLowerCase() === subject.toLowerCase() || discipline3.trim().toLowerCase() === discipline2?.toLowerCase())) {
+    warnings.push("[DISCIPLINE3] est identique à une discipline déjà renseignée.");
+  }
   const isInterdisciplinary = Boolean(discipline2 && discipline2.trim() !== '');
+  if (isInterdisciplinary && (!numberOfUnits || numberOfUnits < 2)) {
+    warnings.push("Minimum 2 unités interdisciplinaires par classe (norme IB PEI). [NOMBRE_UNITES] sera mis à 2 au minimum.");
+  }
 
   return {
     subject,
@@ -2471,8 +2693,10 @@ export const parseDriveFormTags = (formText: string): DriveFormConfig => {
     duration,
     statementOfInquiry,
     discipline2,
+    discipline3,
     theme,
     numberOfUnits,
+    sharedObjectives,
     isInterdisciplinary,
     missingRequired,
     warnings,
@@ -2487,27 +2711,38 @@ export const generateFromDriveForm = async (config: DriveFormConfig): Promise<Un
   if (config.missingRequired.length > 0) {
     throw new Error(
       `Formulaire incomplet — tags obligatoires manquants : ${config.missingRequired.join(', ')}\n\n` +
-      `Tags requis : [MATIERE], [CLASSE], [CHAPITRES]`
+      `Tags requis : [MATIERE], [CLASSE], [CHAPITRES] (ou [DISCIPLINE2] pour interdisciplinaire)`
     );
   }
 
   if (config.isInterdisciplinary && config.discipline2) {
+    // Construire la liste des disciplines supplémentaires
+    const additionalDisciplines: string[] = [];
+    if (config.discipline3 && config.discipline3.trim()) additionalDisciplines.push(config.discipline3.trim());
+
+    // Construire la liste des enseignants (séparés par | dans [ENSEIGNANT])
+    const teacherNames = config.teacherName
+      ? config.teacherName.split('|').map(t => t.trim()).filter(Boolean)
+      : [];
+
     return generateInterdisciplinaryUnits(
       config.grade,
       config.subject,
       config.discipline2,
-      [],
+      additionalDisciplines,
       config.theme,
-      config.numberOfUnits ?? 2,
+      Math.max(2, config.numberOfUnits ?? 2),
+      teacherNames,
+      config.sharedObjectives || [],
     );
   }
 
   // Construire le texte de chapitres enrichi avec les options du formulaire
   let enrichedChapters = config.chapters;
-  if (config.keyConcept) enrichedChapters += `\n\nConcept clé imposé: ${config.keyConcept}`;
-  if (config.globalContext) enrichedChapters += `\nContexte mondial imposé: ${config.globalContext}`;
-  if (config.statementOfInquiry) enrichedChapters += `\nÉnoncé de recherche suggéré: ${config.statementOfInquiry}`;
-  if (config.theme) enrichedChapters += `\nThème directeur: ${config.theme}`;
+  if (config.keyConcept)          enrichedChapters += `\n\nConcept clé imposé: ${config.keyConcept}`;
+  if (config.globalContext)       enrichedChapters += `\nContexte mondial imposé: ${config.globalContext}`;
+  if (config.statementOfInquiry)  enrichedChapters += `\nÉnoncé de recherche suggéré: ${config.statementOfInquiry}`;
+  if (config.theme)               enrichedChapters += `\nThème directeur: ${config.theme}`;
 
   const plans = await generateCourseFromChapters(enrichedChapters, config.subject, config.grade);
 
@@ -2515,7 +2750,7 @@ export const generateFromDriveForm = async (config: DriveFormConfig): Promise<Un
   return plans.map(plan => ({
     ...plan,
     teacherName: config.teacherName || plan.teacherName,
-    resources: config.resources || plan.resources,
-    duration: config.duration || plan.duration,
+    resources:   config.resources   || plan.resources,
+    duration:    config.duration    || plan.duration,
   }));
 };

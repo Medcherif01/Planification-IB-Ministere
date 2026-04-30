@@ -3,9 +3,9 @@ import { UnitPlan } from '../types';
 import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig } from '../services/geminiService';
-import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord } from '../services/wordExportService';
+import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord } from '../services/wordExportService';
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
-import { SUBJECTS } from '../constants';
+import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
 
 interface DashboardProps {
   currentSubject: string;
@@ -49,9 +49,14 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   const [interCount, setInterCount] = useState(2);
   const [interTeacher1, setInterTeacher1] = useState('');
   const [interTeacher2, setInterTeacher2] = useState('');
+  const [interTeacher3, setInterTeacher3] = useState('');
+  const [interSharedObjectives, setInterSharedObjectives] = useState('');
   const [isInterGenerating, setIsInterGenerating] = useState(false);
   const [generatedInterUnits, setGeneratedInterUnits] = useState<InterdisciplinaryUnit[]>([]);
   const [interStep, setInterStep] = useState<'form' | 'result'>('form');
+  // Unités interdisciplinaires sauvegardées (depuis localStorage)
+  const [savedInterUnits, setSavedInterUnits] = useState<InterdisciplinaryUnit[]>([]);
+  const [showSavedInter, setShowSavedInter] = useState(false);
 
   // ── État : Formulaire Drive-form avec balises ──────────────────────────────
   const [isDriveFormModalOpen, setIsDriveFormModalOpen] = useState(false);
@@ -329,33 +334,42 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     }
   };
 
+  // ── Charger les unités interdisciplinaires sauvegardées au montage ──────────
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('interdisciplinary_units');
+      if (raw) setSavedInterUnits(JSON.parse(raw));
+    } catch { /* ignore */ }
+  }, []);
+
   // ── Handlers : Unités interdisciplinaires ─────────────────────────────────
   const handleGenerateInterdisciplinary = async () => {
     if (!interDiscipline1 || !interDiscipline2) {
       alert('Veuillez sélectionner au moins 2 disciplines.');
       return;
     }
+    if (interDiscipline1 === interDiscipline2) {
+      alert('⚠️ Les disciplines 1 et 2 doivent être différentes.');
+      return;
+    }
     setIsInterGenerating(true);
     try {
       const additionalDisciplines = interDiscipline3 ? [interDiscipline3] : [];
+      const teachersList = [interTeacher1, interTeacher2, interTeacher3].filter(Boolean);
+      const sharedObjs = interSharedObjectives
+        ? interSharedObjectives.split('\n').map(s => s.trim()).filter(Boolean)
+        : [];
       const units = await generateInterdisciplinaryUnits(
         interGrade,
         interDiscipline1,
         interDiscipline2,
         additionalDisciplines,
         interTheme,
-        interCount,
+        Math.max(2, interCount),
+        teachersList,
+        sharedObjs,
       );
-      // Injecter les noms d'enseignants si renseignés
-      const enriched = units.map((u, i) => ({
-        ...u,
-        teachers: u.teachers.map((t, ti) => {
-          if (ti === 0 && interTeacher1) return interTeacher1;
-          if (ti === 1 && interTeacher2) return interTeacher2;
-          return t;
-        }),
-      }));
-      setGeneratedInterUnits(enriched);
+      setGeneratedInterUnits(units);
       setInterStep('result');
     } catch (e: any) {
       alert('❌ Erreur lors de la génération interdisciplinaire:\n\n' + (e?.message || e));
@@ -365,16 +379,16 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   };
 
   const handleSaveInterdisciplinaryUnits = () => {
-    // Sauvegarder les unités interdisciplinaires dans localStorage pour consultation
     try {
       const existing = JSON.parse(localStorage.getItem('interdisciplinary_units') || '[]');
       const merged = [
-        ...existing.filter((u: InterdisciplinaryUnit) => u.grade !== interGrade ||
+        ...existing.filter((u: InterdisciplinaryUnit) =>
           !generatedInterUnits.some(g => g.id === u.id)),
         ...generatedInterUnits,
       ];
       localStorage.setItem('interdisciplinary_units', JSON.stringify(merged));
-      alert(`✅ ${generatedInterUnits.length} unité(s) interdisciplinaire(s) sauvegardée(s) pour ${interGrade}.\n\nElles sont consultables dans la section "Unités interdisciplinaires" du tableau de bord.`);
+      setSavedInterUnits(merged);
+      alert(`✅ ${generatedInterUnits.length} unité(s) interdisciplinaire(s) sauvegardée(s) pour ${interGrade}.\n\nRetrouvez-les dans le panneau "Unités interdisciplinaires sauvegardées" du tableau de bord.`);
       setIsInterdisciplinaryModalOpen(false);
       setInterStep('form');
       setGeneratedInterUnits([]);
@@ -383,71 +397,16 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     }
   };
 
+  const handleDeleteSavedInterUnit = (id: string) => {
+    if (!window.confirm('Supprimer cette unité interdisciplinaire ?')) return;
+    const updated = savedInterUnits.filter(u => u.id !== id);
+    setSavedInterUnits(updated);
+    localStorage.setItem('interdisciplinary_units', JSON.stringify(updated));
+  };
+
+  // Déléguer l'export Word IB complet au service dédié
   const handleExportInterdisciplinaryWord = (unit: InterdisciplinaryUnit) => {
-    // Générer un document Word HTML pour cette unité interdisciplinaire
-    const clean = (s: string) => (s || '').replace(/[<>&"]/g, c =>
-      ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c] || c));
-
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<style>
-  @page { size: A4; margin: 20mm; }
-  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #1e293b; }
-  h1 { font-size: 16pt; color: #1e3a5f; text-align: center; margin-bottom: 4px; }
-  h2 { font-size: 12pt; color: #1e40af; margin-top: 14px; margin-bottom: 4px; border-bottom: 1px solid #bfdbfe; padding-bottom: 2px; }
-  h3 { font-size: 10pt; font-weight: bold; color: #374151; margin-top: 8px; margin-bottom: 2px; }
-  .badge { display: inline-block; background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 4px; font-size: 9pt; margin: 2px; }
-  .phase { background: #f0f9ff; border-left: 3px solid #3b82f6; padding: 8px 12px; margin: 6px 0; }
-  .criterion { background: #f8fafc; border: 1px solid #e2e8f0; padding: 8px; margin: 6px 0; border-radius: 4px; }
-  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
-  th { background: #bfdbfe; padding: 5px; border: 1px solid #93c5fd; font-size: 9pt; }
-  td { padding: 4px 6px; border: 1px solid #e2e8f0; font-size: 9pt; }
-  .soi { font-style: italic; background: #fffbeb; padding: 8px 12px; border-left: 3px solid #f59e0b; margin: 8px 0; }
-</style></head><body>
-<h1>🔗 Unité Interdisciplinaire</h1>
-<p style="text-align:center;color:#64748b;">${clean(unit.grade)} — ${clean(unit.disciplines.join(' + '))}</p>
-<h2>${clean(unit.title)}</h2>
-<p><strong>Durée :</strong> ${clean(unit.duration)} &nbsp;|&nbsp;
-   <strong>Concept clé :</strong> ${clean(unit.keyConcept)} &nbsp;|&nbsp;
-   <strong>Contexte mondial :</strong> ${clean(unit.globalContext)}</p>
-<p><strong>Concepts connexes :</strong> ${unit.relatedConcepts.map(c => `<span class="badge">${clean(c)}</span>`).join(' ')}</p>
-<p><strong>Enseignants :</strong> ${unit.disciplines.map((d, i) => `${clean(d)}: ${clean(unit.teachers[i] || '')}`).join(' | ')}</p>
-
-<div class="soi">📌 <strong>Énoncé de recherche :</strong> ${clean(unit.statementOfInquiry)}</div>
-
-<h2>Questions de recherche</h2>
-<h3>Factuelles</h3><ul>${unit.inquiryQuestions.factual.map(q => `<li>${clean(q)}</li>`).join('')}</ul>
-<h3>Conceptuelles</h3><ul>${unit.inquiryQuestions.conceptual.map(q => `<li>${clean(q)}</li>`).join('')}</ul>
-<h3>Débattables</h3><ul>${unit.inquiryQuestions.debatable.map(q => `<li>${clean(q)}</li>`).join('')}</ul>
-
-<h2>Structure de l'unité (3 phases)</h2>
-<div class="phase"><strong>🔍 RECHERCHE</strong><br/>${clean(unit.phases.recherche)}</div>
-<div class="phase"><strong>⚡ ACTION</strong><br/>${clean(unit.phases.action)}</div>
-<div class="phase"><strong>💡 RÉFLEXION</strong><br/>${clean(unit.phases.reflexion)}</div>
-
-<h2>Critères d'évaluation</h2>
-<table><thead><tr><th>Critère</th><th>Nom</th><th>Discipline</th><th>Sous-aspects</th><th>Sur</th></tr></thead><tbody>
-${unit.criteria.map(c => `<tr>
-  <td style="font-weight:bold;text-align:center;">${clean(c.criterion)}</td>
-  <td>${clean(c.name)}</td>
-  <td>${clean(c.discipline)}</td>
-  <td>${c.strands.map(s => clean(s)).join('<br/>')}</td>
-  <td style="text-align:center;">8</td>
-</tr>`).join('')}
-</tbody></table>
-
-<h2>Contenu</h2><p>${clean(unit.content)}</p>
-<h2>Tâche sommative</h2><p>${clean(unit.summativeTask)}</p>
-<h2>Compétences ATL</h2><ul>${unit.atlSkills.map(s => `<li>${clean(s)}</li>`).join('')}</ul>
-<h2>Ressources</h2><p>${clean(unit.resources)}</p>
-</body></html>`;
-
-    const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Interdisciplinaire_${unit.title.replace(/[^a-z0-9]/gi, '_').substring(0, 40)}_${unit.grade.replace(' ', '')}.doc`;
-    a.click();
-    URL.revokeObjectURL(url);
+    exportInterdisciplinaryToWord(unit);
   };
 
   // ── Handlers : Formulaire Drive avec balises ───────────────────────────────
@@ -469,12 +428,13 @@ ${unit.criteria.map(c => `<tr>
       if (!result || result.length === 0) throw new Error("L'IA n'a pas retourné de résultat.");
 
       if (driveFormParsed.isInterdisciplinary) {
-        // Unités interdisciplinaires
+        const newUnits = result as InterdisciplinaryUnit[];
         const existing = JSON.parse(localStorage.getItem('interdisciplinary_units') || '[]');
-        localStorage.setItem('interdisciplinary_units', JSON.stringify([...existing, ...(result as InterdisciplinaryUnit[])]));
-        alert(`✅ ${result.length} unité(s) interdisciplinaire(s) générée(s) et sauvegardée(s).`);
+        const merged = [...existing, ...newUnits];
+        localStorage.setItem('interdisciplinary_units', JSON.stringify(merged));
+        setSavedInterUnits(merged);
+        alert(`✅ ${newUnits.length} unité(s) interdisciplinaire(s) générée(s) et sauvegardée(s).\n\nRetrouvez-les dans le panneau "Unités interdisciplinaires sauvegardées".`);
       } else {
-        // Planification standard
         onAddPlans(result as UnitPlan[]);
       }
       setIsDriveFormModalOpen(false);
@@ -487,7 +447,31 @@ ${unit.criteria.map(c => `<tr>
     }
   };
 
-  const getDriveFormTemplate = () => {
+  const getDriveFormTemplate = (interdisciplinary = false) => {
+    if (interdisciplinary) {
+      return `[MATIERE] Mathématiques
+[CLASSE] PEI 3
+[CHAPITRES]
+Chapitre 1 : Fonctions et équations
+Chapitre 2 : Statistiques et probabilités
+
+[DISCIPLINE2] Sciences
+[DISCIPLINE3] Individus et sociétés
+
+[ENSEIGNANT] M. Dupont | Mme Martin | M. Leclerc
+[RESSOURCES] Manuels, laboratoire, ressources numériques
+
+[CONCEPT_CLE] Systèmes
+[CONTEXTE] Innovation scientifique et technique
+
+[THEME] Développement durable et modélisation
+
+[NOMBRE_UNITES] 2
+
+[OBJECTIFS_COMMUNS]
+Développer la pensée critique interdisciplinaire
+Analyser des phénomènes complexes sous plusieurs angles disciplinaires`;
+    }
     return `[MATIERE] Mathématiques
 [CLASSE] PEI 3
 [CHAPITRES]
@@ -508,8 +492,11 @@ Chapitre 4 : Algèbre et équations
 [THEME] (optionnel — thème directeur libre)
 [ENONCE] (optionnel — suggestion d'énoncé de recherche)
 
-[DISCIPLINE2] (laisser vide pour une planification standard
-             — remplir pour une unité interdisciplinaire, ex: Sciences)`;
+[DISCIPLINE2] (laisser vide pour planification standard — remplir pour interdisciplinaire, ex: Sciences)
+[DISCIPLINE3] (optionnel — 3ème discipline, ex: Individus et sociétés)
+
+[OBJECTIFS_COMMUNS]
+(optionnel — objectifs communs aux disciplines, un par ligne)`;
   };
 
   const handlePrintSubjectUnits = () => {
@@ -1052,6 +1039,185 @@ Chapitre 4 : Algèbre et équations
         )}
       </section>
 
+      {/* ═══════════════════════════════════════════════════════════════════
+          PANNEAU : UNITÉS INTERDISCIPLINAIRES SAUVEGARDÉES
+          ═══════════════════════════════════════════════════════════════════ */}
+      {savedInterUnits.length > 0 && (
+        <section className="bg-white rounded-xl border border-fuchsia-200 shadow-sm overflow-hidden">
+          <div
+            className="flex items-center justify-between p-4 cursor-pointer bg-gradient-to-r from-fuchsia-50 to-purple-50 hover:from-fuchsia-100 hover:to-purple-100 transition"
+            onClick={() => setShowSavedInter(v => !v)}
+          >
+            <h2 className="text-base font-bold text-fuchsia-800 flex items-center gap-2">
+              <GitMerge size={18} className="text-fuchsia-600" />
+              Unités interdisciplinaires sauvegardées
+              <span className="ml-2 bg-fuchsia-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                {savedInterUnits.length}
+              </span>
+            </h2>
+            <span className="text-fuchsia-500 text-xs font-medium">
+              {showSavedInter ? '▲ Réduire' : '▼ Voir toutes'}
+            </span>
+          </div>
+
+          {showSavedInter && (
+            <div className="p-4 space-y-4">
+              {/* Grouper par classe */}
+              {['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'].map(grade => {
+                const gradeUnits = savedInterUnits.filter(u => u.grade === grade);
+                if (gradeUnits.length === 0) return null;
+                return (
+                  <div key={grade}>
+                    <h3 className="text-xs font-bold text-fuchsia-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                      <span className="bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5 rounded">{grade}</span>
+                      <span className="text-slate-400 font-normal">— {gradeUnits.length} unité(s)</span>
+                    </h3>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      {gradeUnits.map(unit => (
+                        <div key={unit.id} className="border border-fuchsia-200 rounded-xl p-4 bg-fuchsia-50 space-y-3">
+                          {/* En-tête de l'unité */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-xs text-fuchsia-600 font-semibold uppercase tracking-wide mb-0.5">
+                                {unit.disciplines.join(' + ')}
+                              </p>
+                              <h4 className="text-sm font-bold text-slate-800 leading-snug">{unit.title}</h4>
+                              <p className="text-xs text-slate-500 mt-0.5">{unit.duration}</p>
+                              {unit.teachers && unit.teachers.length > 0 && (
+                                <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
+                                  <User size={10} />
+                                  {unit.disciplines.map((d, i) => unit.teachers[i] ? `${d}: ${unit.teachers[i]}` : null).filter(Boolean).join(' | ')}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex gap-1 flex-shrink-0">
+                              <button
+                                onClick={() => handleExportInterdisciplinaryWord(unit)}
+                                className="flex items-center gap-1 px-2 py-1 bg-white border border-fuchsia-300 text-fuchsia-700 rounded text-xs font-medium hover:bg-fuchsia-50 transition"
+                                title="Exporter en Word IB"
+                              >
+                                <Download size={12} /> Word
+                              </button>
+                              <button
+                                onClick={() => handleDeleteSavedInterUnit(unit.id)}
+                                className="flex items-center gap-1 px-2 py-1 bg-white border border-red-200 text-red-500 rounded text-xs font-medium hover:bg-red-50 transition"
+                                title="Supprimer"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Énoncé de recherche */}
+                          {unit.statementOfInquiry && (
+                            <div className="bg-amber-50 border-l-3 border-amber-400 px-3 py-2 rounded text-xs italic text-slate-700">
+                              📌 {unit.statementOfInquiry}
+                            </div>
+                          )}
+
+                          {/* But de l'intégration */}
+                          {unit.integrationPurpose && (
+                            <div className="bg-blue-50 rounded p-2 border border-blue-100">
+                              <p className="text-xs font-bold text-blue-700 mb-0.5">🔗 But de l'intégration</p>
+                              <p className="text-xs text-slate-600 line-clamp-2">{unit.integrationPurpose}</p>
+                            </div>
+                          )}
+
+                          {/* Critères d'évaluation interdisciplinaires */}
+                          {unit.summativeCriteria && unit.summativeCriteria.length > 0 && (
+                            <div>
+                              <p className="text-xs font-bold text-fuchsia-800 uppercase mb-1">
+                                🎯 Critères interdisciplinaires (alignés sur le thème)
+                              </p>
+                              <div className="space-y-1">
+                                {unit.summativeCriteria.map(c => (
+                                  <div key={c.criterion} className="bg-white border border-fuchsia-200 rounded px-2 py-1.5">
+                                    <div className="flex items-center justify-between mb-0.5">
+                                      <span className="text-xs font-bold text-fuchsia-700">
+                                        Critère {c.criterion} : {c.name}
+                                      </span>
+                                      <span className="text-xs bg-fuchsia-100 text-fuchsia-700 px-1.5 rounded font-bold">/8</span>
+                                    </div>
+                                    <p className="text-xs text-slate-500">{c.discipline}</p>
+                                    {c.strands && c.strands.length > 0 && (
+                                      <ul className="mt-1 space-y-0.5">
+                                        {c.strands.slice(0, 3).map((s, si) => (
+                                          <li key={si} className="text-xs text-slate-600 truncate">• {s}</li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                    {c.task && (
+                                      <p className="text-xs text-slate-500 mt-1 italic line-clamp-2">
+                                        📝 {c.task}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Objectifs communs */}
+                          {unit.sharedObjectives && unit.sharedObjectives.length > 0 && (
+                            <div className="bg-green-50 border border-green-100 rounded p-2">
+                              <p className="text-xs font-bold text-green-700 mb-1">🎓 Objectifs communs aux disciplines</p>
+                              <ul className="space-y-0.5">
+                                {unit.sharedObjectives.map((obj, i) => (
+                                  <li key={i} className="text-xs text-slate-600">• {obj}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* Tâches par discipline */}
+                          {unit.disciplineBases && unit.disciplineBases.length > 0 && (
+                            <div>
+                              <p className="text-xs font-bold text-slate-600 uppercase mb-1">📚 Tâches par discipline</p>
+                              <div className="space-y-1">
+                                {unit.disciplineBases.map((db, dbi) => (
+                                  <div key={dbi} className="bg-white border border-slate-200 rounded px-2 py-1">
+                                    <p className="text-xs font-bold text-slate-700">
+                                      {db.discipline}
+                                      {db.teacher && <span className="font-normal text-slate-400"> — {db.teacher}</span>}
+                                    </p>
+                                    {db.ibObjective && (
+                                      <p className="text-xs text-slate-500 line-clamp-1">🎯 {db.ibObjective}</p>
+                                    )}
+                                    {db.summativeAssessment && (
+                                      <p className="text-xs text-slate-500 line-clamp-1 italic">📋 {db.summativeAssessment}</p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Phases */}
+                          {unit.phases && (
+                            <div className="grid grid-cols-3 gap-1">
+                              {[
+                                { label: '🔍 RECHERCHE', color: 'blue', text: unit.phases.recherche },
+                                { label: '⚡ ACTION', color: 'green', text: unit.phases.action },
+                                { label: '💡 RÉFLEXION', color: 'purple', text: unit.phases.reflexion },
+                              ].map(p => (
+                                <div key={p.label} className={`bg-${p.color}-50 rounded p-1.5 border border-${p.color}-100`}>
+                                  <p className={`text-xs font-bold text-${p.color}-700 mb-0.5`}>{p.label}</p>
+                                  <p className="text-xs text-slate-600 line-clamp-2">{p.text}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Bulk Modal */}
       {isBulkModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -1235,7 +1401,8 @@ Chapitre 4 : Algèbre et équations
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* Enseignants */}
+                  <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">Enseignant(e) discipline 1</label>
                       <input type="text" value={interTeacher1} onChange={e => setInterTeacher1(e.target.value)}
@@ -1248,6 +1415,12 @@ Chapitre 4 : Algèbre et équations
                         placeholder="ex: M. Dupont"
                         className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-fuchsia-500 outline-none" />
                     </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Enseignant(e) discipline 3</label>
+                      <input type="text" value={interTeacher3} onChange={e => setInterTeacher3(e.target.value)}
+                        placeholder="ex: Mme Leclerc"
+                        className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-fuchsia-500 outline-none" />
+                    </div>
                   </div>
 
                   <div>
@@ -1258,12 +1431,24 @@ Chapitre 4 : Algèbre et équations
                     <p className="text-xs text-slate-500 mt-1">Laissez vide pour laisser l'IA choisir librement.</p>
                   </div>
 
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Objectifs communs aux disciplines (optionnel)
+                      <span className="ml-1 text-slate-400 font-normal">— un par ligne</span>
+                    </label>
+                    <textarea value={interSharedObjectives} onChange={e => setInterSharedObjectives(e.target.value)}
+                      rows={3}
+                      placeholder="ex: Développer la pensée critique interdisciplinaire&#10;Analyser des phénomènes complexes sous plusieurs angles"
+                      className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-fuchsia-500 outline-none resize-none" />
+                    <p className="text-xs text-slate-400 mt-1">Ces objectifs seront DIFFÉRENTS des objectifs spécifiques de chaque matière (norme IB).</p>
+                  </div>
+
                   <button onClick={handleGenerateInterdisciplinary} disabled={isInterGenerating || !interDiscipline1 || !interDiscipline2}
                     className="w-full py-3 bg-fuchsia-600 hover:bg-fuchsia-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition disabled:opacity-60 disabled:cursor-not-allowed shadow-lg">
                     {isInterGenerating ? (
-                      <><Loader2 className="animate-spin" size={20} />Génération en cours (30-60s)…</>
+                      <><Loader2 className="animate-spin" size={20} />Génération en cours (30-90s)…</>
                     ) : (
-                      <><GitMerge size={20} />Générer {interCount} unité(s) interdisciplinaire(s)</>
+                      <><GitMerge size={20} />Générer {interCount} unité(s) interdisciplinaire(s) IB</>
                     )}
                   </button>
                 </>
@@ -1289,16 +1474,28 @@ Chapitre 4 : Algèbre et équations
                           </p>
                           <h4 className="text-base font-bold text-slate-800">{unit.title}</h4>
                           <p className="text-xs text-slate-500 mt-1">{unit.duration}</p>
+                          {unit.sharedObjectives && unit.sharedObjectives.length > 0 && (
+                            <p className="text-xs text-fuchsia-700 mt-1">
+                              🎯 Objectifs communs : {unit.sharedObjectives.slice(0, 2).join(' | ')}
+                            </p>
+                          )}
                         </div>
                         <button onClick={() => handleExportInterdisciplinaryWord(unit)}
                           className="flex items-center gap-1 px-3 py-1.5 bg-white border border-fuchsia-300 text-fuchsia-700 rounded-lg text-xs font-medium hover:bg-fuchsia-50 transition">
-                          <Download size={14} /> Word
+                          <Download size={14} /> Word IB
                         </button>
                       </div>
 
                       <div className="bg-amber-50 border-l-4 border-amber-400 px-3 py-2 rounded text-sm italic text-slate-700">
                         📌 {unit.statementOfInquiry}
                       </div>
+
+                      {unit.integrationPurpose && (
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-2">
+                          <p className="text-xs font-bold text-blue-700 mb-1">🔗 But de l'intégration</p>
+                          <p className="text-xs text-slate-600 line-clamp-2">{unit.integrationPurpose}</p>
+                        </div>
+                      )}
 
                       <div className="grid grid-cols-3 gap-2">
                         {unit.phases && (
@@ -1320,7 +1517,7 @@ Chapitre 4 : Algèbre et équations
                       </div>
 
                       <div className="flex flex-wrap gap-2">
-                        {unit.criteria?.map(c => (
+                        {(unit.summativeCriteria || []).map(c => (
                           <span key={c.criterion} className="text-xs bg-white border border-fuchsia-200 text-fuchsia-800 px-2 py-1 rounded-lg font-medium">
                             Critère {c.criterion} : {c.name} ({c.discipline}) /8
                           </span>
