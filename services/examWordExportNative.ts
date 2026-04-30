@@ -165,7 +165,6 @@ const createQuestionParagraphs = (question: any, index: number, isEnglish: boole
         new TextRun({
           text: ` (${question.points} ${pointsLabel})`,
           size: 24,
-                  font: FONT_NAME,
           font: FONT_NAME,
         }),
       ],

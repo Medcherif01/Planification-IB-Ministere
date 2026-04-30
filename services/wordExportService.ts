@@ -5,7 +5,7 @@ import JSZip from "jszip";
 import { UnitPlan, AssessmentData } from "../types";
 import { PLAN_TEMPLATE_URL, EVAL_TEMPLATE_URL } from "../constants";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
-import { generateOverviewForSubject, OverviewUnitRow } from "./geminiService";
+import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit } from "./geminiService";
 
 // Helper function to fetch the template with retries and different proxies
 const loadFile = async (url: string): Promise<ArrayBuffer> => {
@@ -276,7 +276,7 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
   };
   
   // Add Arabic versions if bilingual (ART or EPS)
-  let data = baseData;
+  let data: Record<string, string> = baseData;
   if (isBilingual) {
     const planAny = plan as any; // Pour accéder aux champs _ar
     data = {
@@ -555,9 +555,10 @@ export const exportConsolidatedPlanByGrade = async (grade: string) => {
           criteriaLetters = [plan.assessmentData.criterion?.toUpperCase()].filter(Boolean);
         } else {
           // Last resort: try to extract from objectives text
-          const objectives = Array.isArray(plan.objectives) 
-            ? plan.objectives 
-            : (plan.objectives || "").split(/[,\n]/).filter(Boolean);
+          const rawObjectives: unknown = plan.objectives;
+          const objectives: string[] = Array.isArray(rawObjectives)
+            ? rawObjectives as string[]
+            : (typeof rawObjectives === 'string' ? rawObjectives : "").split(/[,\n]/).filter(Boolean);
           
           criteriaLetters = objectives.map(obj => {
             const match = obj.match(/^([A-D])/i);
@@ -855,4 +856,265 @@ export const exportOverviewToWord = async (subject: string): Promise<void> => {
     console.error("Error generating overview document:", error);
     alert("Erreur lors de la génération de l'aperçu: " + error.message);
   }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// exportInterdisciplinaryToWord
+// Génère un document Word HTML calqué sur le template IB officiel :
+//   Page 1 : En-tête + Section RECHERCHE (concept, contexte, énoncé, questions,
+//             critères d'évaluation, ATL)
+//   Page 2 : Section ACTION (base par discipline, processus, évaluation, différenciation)
+//   Page 3 : Section RÉFLEXION (avant / pendant / suite)
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportInterdisciplinaryToWord = (unit: InterdisciplinaryUnit): void => {
+  const esc = (s: string | undefined | null) =>
+    (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const listItems = (arr: string[]): string =>
+    arr.length ? `<ul>${arr.map(i => `<li>${esc(i)}</li>`).join('')}</ul>` : '<p>—</p>';
+
+  const criteriaRows = (unit.summativeCriteria || []).map(c => `
+    <tr>
+      <td style="text-align:center;font-weight:bold;background:#dce6f1;">${esc(c.criterion)}</td>
+      <td style="font-weight:bold;">${esc(c.name)}</td>
+      <td>${esc(c.discipline)}</td>
+      <td><ul>${(c.strands || []).map(s => `<li>${esc(s)}</li>`).join('')}</ul></td>
+      <td style="text-align:center;font-weight:bold;">8</td>
+    </tr>`).join('');
+
+  const disciplineBaseRows = (unit.disciplineBases || []).map(db => `
+    <tr>
+      <td style="font-weight:bold;background:#f0f4ff;">${esc(db.discipline)}<br/><span style="font-weight:normal;font-size:8pt;">${esc(db.teacher)}</span></td>
+      <td>${esc(db.ibObjective)}</td>
+      <td>${(db.relatedConcepts || []).map(c => esc(c)).join(', ')}</td>
+      <td>${esc(db.content)}</td>
+      <td>${esc(db.learningActivities)}</td>
+    </tr>`).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 18mm 15mm; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #1e293b; line-height: 1.45; }
+
+  /* ── Page header ── */
+  .doc-header { border: 2px solid #1e3a5f; padding: 10px 14px; margin-bottom: 14px; background: #f0f4ff; }
+  .doc-header h1 { font-size: 14pt; color: #1e3a5f; margin: 0 0 4px 0; text-align: center; }
+  .doc-header .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; font-size: 9pt; }
+  .doc-header .meta-row { display: flex; gap: 6px; }
+  .doc-header .meta-label { font-weight: bold; color: #1e3a5f; min-width: 140px; }
+
+  /* ── Section titles ── */
+  .section-title {
+    background: #1e3a5f; color: white; font-size: 11pt; font-weight: bold;
+    padding: 6px 12px; margin: 14px 0 8px 0; border-radius: 2px;
+    page-break-before: always;
+  }
+  .section-title:first-of-type { page-break-before: avoid; }
+  .subsection-title { font-size: 10pt; font-weight: bold; color: #1e3a5f; border-bottom: 1px solid #bfdbfe; margin: 10px 0 5px 0; padding-bottom: 2px; }
+
+  /* ── Statement of Inquiry ── */
+  .soi { font-style: italic; background: #fffbeb; border-left: 4px solid #f59e0b; padding: 8px 14px; margin: 8px 0; font-size: 10.5pt; color: #1a1a2e; }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 10px 0; font-size: 9pt; }
+  th { background: #bfdbfe; color: #1e3a5f; font-weight: bold; padding: 5px 6px; border: 1px solid #4472c4; text-align: center; vertical-align: middle; }
+  td { border: 1px solid #9bbcd6; padding: 4px 6px; vertical-align: top; }
+  td ul { margin: 0; padding-left: 14px; }
+  td li { margin-bottom: 2px; }
+
+  /* ── Phases ── */
+  .phases-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 8px 0; }
+  .phase-box { border: 1px solid #bfdbfe; border-radius: 4px; padding: 8px; }
+  .phase-box .phase-label { font-weight: bold; font-size: 9pt; color: #1e40af; margin-bottom: 4px; }
+
+  /* ── Reflection table ── */
+  .reflection-table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+  .reflection-table th { background: #bfdbfe; color: #1e3a5f; border: 1px solid #4472c4; padding: 6px; font-size: 9pt; }
+  .reflection-table td { border: 1px solid #9bbcd6; padding: 8px; vertical-align: top; min-height: 60px; font-size: 9pt; }
+
+  /* ── Shared objectives / ATL ── */
+  .info-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px 12px; margin: 6px 0; }
+  .badge { display: inline-block; background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 10px; font-size: 8.5pt; margin: 2px; font-weight: bold; }
+
+  /* ── Criterion badges ── */
+  .criterion-badge { display: inline-block; background: #ede9fe; color: #6d28d9; padding: 2px 10px; border-radius: 10px; font-size: 8.5pt; font-weight: bold; margin: 2px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════ EN-TÊTE ═══════════════════════════════════ -->
+<div class="doc-header">
+  <h1>🔗 Plan d'unité interdisciplinaire — IB PEI</h1>
+  <div class="meta-grid">
+    <div class="meta-row"><span class="meta-label">Enseignant(s) :</span>
+      <span>${unit.disciplines.map((d, i) => `${esc(d)}: <strong>${esc(unit.teachers[i] || '—')}</strong>`).join(' | ')}</span>
+    </div>
+    <div class="meta-row"><span class="meta-label">Groupe(s) de matières :</span>
+      <span>${unit.disciplines.map(d => esc(d)).join(', ')}</span>
+    </div>
+    <div class="meta-row"><span class="meta-label">Titre de l'unité :</span>
+      <span><strong>${esc(unit.title)}</strong></span>
+    </div>
+    <div class="meta-row"><span class="meta-label">Année du PEI :</span>
+      <span>${esc(unit.grade)}</span>
+    </div>
+    <div class="meta-row"><span class="meta-label">Durée de l'unité :</span>
+      <span>${esc(unit.duration)}</span>
+    </div>
+    <div class="meta-row"><span class="meta-label">Contexte mondial :</span>
+      <span>${esc(unit.globalContext)}</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SECTION 1 : RECHERCHE ═══════════════════ -->
+<div class="section-title">🔍 RECHERCHE : définition de l'objectif de l'unité interdisciplinaire</div>
+
+<div class="subsection-title">But de l'intégration</div>
+<div class="info-box">${esc(unit.integrationPurpose)}</div>
+
+<div class="subsection-title">Concept(s) clé(s) / Concepts connexes</div>
+<div class="info-box">
+  <strong>Concept clé :</strong> <span class="badge">${esc(unit.keyConcept)}</span>
+  &nbsp;&nbsp;
+  <strong>Concepts connexes :</strong>
+  ${(unit.relatedConcepts || []).map(c => `<span class="badge">${esc(c)}</span>`).join(' ')}
+</div>
+
+<div class="subsection-title">Objectifs communs aux disciplines</div>
+<div class="info-box">${listItems(unit.sharedObjectives || [])}</div>
+
+<div class="subsection-title">Énoncé de recherche</div>
+<div class="soi">📌 ${esc(unit.statementOfInquiry)}</div>
+
+<div class="subsection-title">Questions de recherche</div>
+<table>
+  <thead><tr><th>Type</th><th>Questions</th></tr></thead>
+  <tbody>
+    <tr>
+      <td style="font-weight:bold;color:#1e40af;text-align:center;white-space:nowrap;">Factuelle(s)</td>
+      <td>${listItems(unit.inquiryQuestions?.factual || [])}</td>
+    </tr>
+    <tr>
+      <td style="font-weight:bold;color:#065f46;text-align:center;white-space:nowrap;">Conceptuelle(s)</td>
+      <td>${listItems(unit.inquiryQuestions?.conceptual || [])}</td>
+    </tr>
+    <tr>
+      <td style="font-weight:bold;color:#92400e;text-align:center;white-space:nowrap;">Invitant au débat</td>
+      <td>${listItems(unit.inquiryQuestions?.debatable || [])}</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="subsection-title">Évaluation sommative — Critères interdisciplinaires (A, B, C — chacun /8)</div>
+<table>
+  <thead>
+    <tr>
+      <th style="width:5%;">Critère</th>
+      <th style="width:22%;">Nom du critère</th>
+      <th style="width:15%;">Discipline</th>
+      <th style="width:43%;">Sous-aspects (strands)</th>
+      <th style="width:6%;">Sur</th>
+    </tr>
+  </thead>
+  <tbody>${criteriaRows}</tbody>
+</table>
+
+<div class="subsection-title">Tâches d'évaluation par critère</div>
+<table>
+  <thead><tr><th>Critère</th><th>Description de la tâche</th></tr></thead>
+  <tbody>
+    ${(unit.summativeCriteria || []).map(c => `
+    <tr>
+      <td style="text-align:center;font-weight:bold;width:8%;"><span class="criterion-badge">Critère ${esc(c.criterion)}</span></td>
+      <td>${esc(c.task)}</td>
+    </tr>`).join('')}
+  </tbody>
+</table>
+
+<div class="subsection-title">Approches de l'apprentissage (ATL)</div>
+<div class="info-box">${listItems(unit.atlSkills || [])}</div>
+
+<!-- ═══════════════════ SECTION 2 : ACTION ═══════════════════ -->
+<div class="section-title">⚡ ACTION : enseignement et apprentissage par le biais de la recherche interdisciplinaire</div>
+
+<div class="subsection-title">Bases disciplinaires</div>
+<table>
+  <thead>
+    <tr>
+      <th style="width:16%;">Matière / Enseignant</th>
+      <th style="width:20%;">Objectif spécifique IB</th>
+      <th style="width:15%;">Concepts connexes</th>
+      <th style="width:24%;">Contenu</th>
+      <th style="width:25%;">Activités d'apprentissage et stratégies d'enseignement</th>
+    </tr>
+  </thead>
+  <tbody>${disciplineBaseRows}</tbody>
+</table>
+
+<div class="subsection-title">Processus d'apprentissage interdisciplinaire</div>
+<div class="info-box">${esc(unit.interdisciplinaryLearningProcess)}</div>
+
+<div class="subsection-title">Stratégies d'évaluation formative</div>
+<div class="info-box">${esc(unit.formativeStrategies)}</div>
+
+<div class="subsection-title">Tâche sommative finale (intégrant toutes les disciplines)</div>
+<div class="info-box" style="border-left: 4px solid #1e3a5f; background:#f0f4ff;">${esc(unit.summativeTask)}</div>
+
+<div class="subsection-title">Différenciation</div>
+<div class="info-box">${esc(unit.differentiation)}</div>
+
+<div class="subsection-title">Ressources</div>
+<div class="info-box">${esc(unit.resources)}</div>
+
+<!-- ═══════════════════ SECTION 3 : RÉFLEXION ═══════════════════ -->
+<div class="section-title">💡 RÉFLEXION : examen de la planification, du processus et de l'impact</div>
+
+<div class="subsection-title">Vue d'ensemble des phases de l'unité</div>
+<div class="phases-grid">
+  <div class="phase-box">
+    <div class="phase-label">🔍 RECHERCHE</div>
+    <p style="font-size:9pt;margin:0;">${esc(unit.phases?.recherche)}</p>
+  </div>
+  <div class="phase-box">
+    <div class="phase-label">⚡ ACTION</div>
+    <p style="font-size:9pt;margin:0;">${esc(unit.phases?.action)}</p>
+  </div>
+  <div class="phase-box">
+    <div class="phase-label">💡 RÉFLEXION</div>
+    <p style="font-size:9pt;margin:0;">${esc(unit.phases?.reflexion)}</p>
+  </div>
+</div>
+
+<div class="subsection-title">Réflexion des enseignants</div>
+<table class="reflection-table">
+  <thead>
+    <tr>
+      <th style="width:33%;">Avant l'unité</th>
+      <th style="width:33%;">Pendant l'unité</th>
+      <th style="width:34%;">Suite à l'unité</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>${esc(unit.reflection?.before)}</td>
+      <td>${esc(unit.reflection?.during)}</td>
+      <td>${esc(unit.reflection?.after)}</td>
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>`;
+
+  const blob = new Blob([html], {
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+  const saveAs = (FileSaver as any).saveAs || FileSaver;
+  const safeName = (unit.title || 'interdisciplinaire').replace(/[^a-z0-9]/gi, '_').substring(0, 40);
+  const safeGrade = (unit.grade || '').replace(/\s+/g, '');
+  saveAs(blob, `Interdisciplinaire_${safeName}_${safeGrade}.doc`);
 };
