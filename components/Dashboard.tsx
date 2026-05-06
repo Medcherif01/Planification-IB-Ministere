@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UnitPlan } from '../types';
-import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info } from 'lucide-react';
+import { UnitPlan, ServiceActionPlan } from '../types';
+import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig } from '../services/geminiService';
-import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord } from '../services/wordExportService';
+import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade } from '../services/geminiService';
+import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan } from '../services/wordExportService';
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
 
@@ -57,6 +57,18 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   // Unités interdisciplinaires sauvegardées (depuis localStorage)
   const [savedInterUnits, setSavedInterUnits] = useState<InterdisciplinaryUnit[]>([]);
   const [showSavedInter, setShowSavedInter] = useState(false);
+  const [isExportingInterOverview, setIsExportingInterOverview] = useState(false);
+
+  // ── État : Service et Action (SEA) ────────────────────────────────────────
+  const [isSEAModalOpen, setIsSEAModalOpen] = useState(false);
+  const [seaGrade, setSeaGrade] = useState(currentGrade);
+  const [isGeneratingSEA, setIsGeneratingSEA] = useState(false);
+  const [seaProgress, setSeaProgress] = useState<{ current: number; total: number; unitTitle: string } | null>(null);
+  const [generatedSEAPlans, setGeneratedSEAPlans] = useState<ServiceActionPlan[]>([]);
+  const [savedSEAPlans, setSavedSEAPlans] = useState<ServiceActionPlan[]>([]);
+  const [showSavedSEA, setShowSavedSEA] = useState(false);
+  const [isExportingSEAOverview, setIsExportingSEAOverview] = useState(false);
+  const [seaStep, setSeaStep] = useState<'form' | 'result'>('form');
 
   // ── État : Formulaire Drive-form avec balises ──────────────────────────────
   const [isDriveFormModalOpen, setIsDriveFormModalOpen] = useState(false);
@@ -334,15 +346,38 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     }
   };
 
-  // ── Charger les unités interdisciplinaires sauvegardées au montage ──────────
+  // ── Charger les unités interdisciplinaires + SEA sauvegardées au montage ───
   useEffect(() => {
     try {
       const raw = localStorage.getItem('interdisciplinary_units');
       if (raw) setSavedInterUnits(JSON.parse(raw));
     } catch { /* ignore */ }
+    try {
+      const rawSEA = localStorage.getItem('sea_plans');
+      if (rawSEA) setSavedSEAPlans(JSON.parse(rawSEA));
+    } catch { /* ignore */ }
   }, []);
 
   // ── Handlers : Unités interdisciplinaires ─────────────────────────────────
+  // Helper: extract teacher name for a discipline from already-saved plans for the grade
+  const getTeacherForDiscipline = (discipline: string, grade: string): string => {
+    const match = plans.find(p =>
+      p.gradeLevel === grade &&
+      p.subject?.toLowerCase().includes(discipline.toLowerCase().split(' ')[0])
+    );
+    return match?.teacherName || '';
+  };
+
+  // Helper: extract relevant chapters/content from saved plans for a discipline+grade
+  const getUnitsContextForDiscipline = (discipline: string, grade: string): string => {
+    const matched = plans.filter(p =>
+      p.gradeLevel === grade &&
+      p.subject?.toLowerCase().includes(discipline.toLowerCase().split(' ')[0])
+    );
+    if (matched.length === 0) return '';
+    return matched.map(p => `- ${p.title}${p.keyConcept ? ` (concept: ${p.keyConcept})` : ''}`).join('\n');
+  };
+
   const handleGenerateInterdisciplinary = async () => {
     if (!interDiscipline1 || !interDiscipline2) {
       alert('Veuillez sélectionner au moins 2 disciplines.');
@@ -355,7 +390,24 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     setIsInterGenerating(true);
     try {
       const additionalDisciplines = interDiscipline3 ? [interDiscipline3] : [];
-      const teachersList = [interTeacher1, interTeacher2, interTeacher3].filter(Boolean);
+      const allDisciplines = [interDiscipline1, interDiscipline2, ...additionalDisciplines];
+
+      // Auto-fill teachers from saved plans if not manually set
+      const resolvedTeachers = allDisciplines.map((d, i) => {
+        const manual = [interTeacher1, interTeacher2, interTeacher3][i];
+        return manual?.trim() || getTeacherForDiscipline(d, interGrade);
+      });
+
+      // Build enriched context from already-generated units for this grade
+      const unitsContextParts = allDisciplines.map(d => {
+        const ctx = getUnitsContextForDiscipline(d, interGrade);
+        return ctx ? `Unités existantes pour ${d} en ${interGrade}:\n${ctx}` : '';
+      }).filter(Boolean);
+      const enrichedTheme = [
+        interTheme,
+        unitsContextParts.join('\n\n'),
+      ].filter(Boolean).join('\n\n');
+
       const sharedObjs = interSharedObjectives
         ? interSharedObjectives.split('\n').map(s => s.trim()).filter(Boolean)
         : [];
@@ -364,9 +416,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
         interDiscipline1,
         interDiscipline2,
         additionalDisciplines,
-        interTheme,
+        enrichedTheme,
         Math.max(2, interCount),
-        teachersList,
+        resolvedTeachers,
         sharedObjs,
       );
       setGeneratedInterUnits(units);
@@ -407,6 +459,99 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   // Déléguer l'export Word IB complet au service dédié
   const handleExportInterdisciplinaryWord = (unit: InterdisciplinaryUnit) => {
     exportInterdisciplinaryToWord(unit);
+  };
+
+  // Export overview interdisciplinaire (toutes classes) — tableau synthèse
+  const handleExportInterOverview = async () => {
+    setIsExportingInterOverview(true);
+    try {
+      await exportInterdisciplinaryOverviewToWord(savedInterUnits);
+    } catch (e: any) {
+      alert('Erreur export overview interdisciplinaire: ' + (e?.message || e));
+    } finally {
+      setIsExportingInterOverview(false);
+    }
+  };
+
+  // Export plan complet interdisciplinaire (toutes unités, tous détails)
+  const handleExportCompleteInterPlan = () => {
+    try {
+      exportCompleteInterdisciplinaryThemePlan(savedInterUnits);
+    } catch (e: any) {
+      alert('Erreur export plan complet interdisciplinaire: ' + (e?.message || e));
+    }
+  };
+
+  // ── Handlers : Service et Action (SEA) ───────────────────────────────────
+  const handleGenerateSEA = async (gradeOverride?: string) => {
+    const targetGrade = gradeOverride || seaGrade;
+    if (gradeOverride) setSeaGrade(gradeOverride);
+    const gradePlans = plans.filter(p => p.gradeLevel === targetGrade);
+    if (gradePlans.length === 0) {
+      alert(`❌ Aucune unité générée pour ${targetGrade}.\nVeuillez d'abord générer les unités de cette classe.`);
+      return;
+    }
+    setIsGeneratingSEA(true);
+    setSeaProgress(null);
+    setSeaStep('form');
+    try {
+      const sea = await generateServiceActionForGrade(
+        gradePlans,
+        targetGrade,
+        (current, total, unitTitle) => setSeaProgress({ current, total, unitTitle })
+      );
+      setGeneratedSEAPlans(sea);
+      setSeaStep('result');
+    } catch (e: any) {
+      alert('❌ Erreur génération SEA:\n\n' + (e?.message || e));
+    } finally {
+      setIsGeneratingSEA(false);
+      setSeaProgress(null);
+    }
+  };
+
+  // Open SEA modal pre-set to a specific grade and immediately generate
+  const handleOpenSEAForGrade = (grade: string) => {
+    setSeaGrade(grade);
+    setSeaStep('form');
+    setGeneratedSEAPlans([]);
+    setIsSEAModalOpen(true);
+  };
+
+  const handleSaveSEAPlans = () => {
+    try {
+      const existing: ServiceActionPlan[] = JSON.parse(localStorage.getItem('sea_plans') || '[]');
+      const merged = [
+        ...existing.filter(s => !generatedSEAPlans.some(g => g.id === s.id)),
+        ...generatedSEAPlans,
+      ];
+      localStorage.setItem('sea_plans', JSON.stringify(merged));
+      setSavedSEAPlans(merged);
+      alert(`✅ ${generatedSEAPlans.length} projet(s) SEA sauvegardé(s) pour ${seaGrade}.`);
+      setIsSEAModalOpen(false);
+      setSeaStep('form');
+      setGeneratedSEAPlans([]);
+    } catch {
+      alert('Erreur lors de la sauvegarde SEA.');
+    }
+  };
+
+  const handleDeleteSEAPlan = (id: string) => {
+    if (!window.confirm('Supprimer ce projet SEA ?')) return;
+    const updated = savedSEAPlans.filter(s => s.id !== id);
+    setSavedSEAPlans(updated);
+    localStorage.setItem('sea_plans', JSON.stringify(updated));
+  };
+
+  const handleExportSEAOverview = async () => {
+    setIsExportingSEAOverview(true);
+    try {
+      await exportSEAOverviewToWord(savedSEAPlans);
+    } catch (e: any) {
+      alert('Erreur export SEA: ' + (e?.message || e));
+    } finally {
+      setIsExportingSEAOverview(false);
+    }
   };
 
   // ── Handlers : Formulaire Drive avec balises ───────────────────────────────
@@ -802,6 +947,15 @@ Chapitre 4 : Algèbre et équations
                <Tag size={20} />
                Formulaire Drive
              </button>
+             {/* ── Bouton Service et Action (SEA) ──────────────────────── */}
+             <button
+               onClick={() => { setIsSEAModalOpen(true); setSeaStep('form'); setGeneratedSEAPlans([]); }}
+               className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
+               title="Générer les projets Service et Action (SEA) IB PEI par classe"
+             >
+               <Heart size={20} />
+               Service &amp; Action
+             </button>
              {/* ── Bouton Unités Interdisciplinaires ───────────────────── */}
              <button
                onClick={() => { setIsInterdisciplinaryModalOpen(true); setInterStep('form'); }}
@@ -1031,6 +1185,15 @@ Chapitre 4 : Algèbre et équations
                                     <Printer size={14}/>
                                     Imprimer
                                 </button>
+                                {/* ── Bouton rapide SEA pour cette classe ── */}
+                                <button
+                                    onClick={() => handleOpenSEAForGrade(plan.gradeLevel)}
+                                    className="flex items-center gap-1 bg-rose-50 text-rose-700 px-2 py-1 rounded hover:bg-rose-100 transition"
+                                    title={`Générer les projets Service & Action pour ${plan.gradeLevel}`}
+                                >
+                                    <Heart size={14}/>
+                                    SEA {plan.gradeLevel}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1055,9 +1218,28 @@ Chapitre 4 : Algèbre et équations
                 {savedInterUnits.length}
               </span>
             </h2>
-            <span className="text-fuchsia-500 text-xs font-medium">
-              {showSavedInter ? '▲ Réduire' : '▼ Voir toutes'}
-            </span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={e => { e.stopPropagation(); handleExportCompleteInterPlan(); }}
+                className="flex items-center gap-1 px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-xs font-semibold shadow transition"
+                title="Télécharger le plan complet de toutes les unités interdisciplinaires (document détaillé)"
+              >
+                <FileText size={12} />
+                Plan complet
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); handleExportInterOverview(); }}
+                disabled={isExportingInterOverview}
+                className="flex items-center gap-1 px-3 py-1.5 bg-fuchsia-600 hover:bg-fuchsia-700 text-white rounded-lg text-xs font-semibold shadow transition disabled:opacity-60"
+                title="Télécharger le tableau synthèse interdisciplinaire (toutes classes)"
+              >
+                {isExportingInterOverview ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                Tableau synthèse
+              </button>
+              <span className="text-fuchsia-500 text-xs font-medium">
+                {showSavedInter ? '▲ Réduire' : '▼ Voir toutes'}
+              </span>
+            </div>
           </div>
 
           {showSavedInter && (
@@ -1205,6 +1387,146 @@ Chapitre 4 : Algèbre et équations
                                   <p className="text-xs text-slate-600 line-clamp-2">{p.text}</p>
                                 </div>
                               ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          PANNEAU : SERVICE ET ACTION (SEA) SAUVEGARDÉS
+          ═══════════════════════════════════════════════════════════════════ */}
+      {savedSEAPlans.length > 0 && (
+        <section className="bg-white rounded-xl border border-rose-200 shadow-sm overflow-hidden">
+          <div
+            className="flex items-center justify-between p-4 cursor-pointer bg-gradient-to-r from-rose-50 to-pink-50 hover:from-rose-100 hover:to-pink-100 transition"
+            onClick={() => setShowSavedSEA(v => !v)}
+          >
+            <h2 className="text-base font-bold text-rose-800 flex items-center gap-2">
+              <Heart size={18} className="text-rose-600" />
+              Planification Service et Action (SEA)
+              <span className="ml-2 bg-rose-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                {savedSEAPlans.length}
+              </span>
+            </h2>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={e => { e.stopPropagation(); handleExportSEAOverview(); }}
+                disabled={isExportingSEAOverview}
+                className="flex items-center gap-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold shadow transition disabled:opacity-60"
+                title="Télécharger le tableau Planification Service et Action (toutes classes)"
+              >
+                {isExportingSEAOverview ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                Tableau SEA
+              </button>
+              <span className="text-rose-500 text-xs font-medium">
+                {showSavedSEA ? '▲ Réduire' : '▼ Voir tous'}
+              </span>
+            </div>
+          </div>
+
+          {showSavedSEA && (
+            <div className="p-4 space-y-4">
+              {/* Grouper par classe */}
+              {['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'].map(grade => {
+                const gradeSeaPlans = savedSEAPlans.filter(s => s.grade === grade);
+                if (gradeSeaPlans.length === 0) return null;
+                return (
+                  <div key={grade}>
+                    <h3 className="text-xs font-bold text-rose-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                      <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded">{grade}</span>
+                      <span className="text-slate-400 font-normal">— {gradeSeaPlans.length} projet(s)</span>
+                    </h3>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      {gradeSeaPlans.map(sea => (
+                        <div key={sea.id} className="border border-rose-200 rounded-xl p-4 bg-rose-50 space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-xs text-rose-600 font-semibold uppercase tracking-wide mb-0.5">
+                                {sea.subject} — {sea.grade}
+                              </p>
+                              <h4 className="text-sm font-bold text-slate-800 leading-snug">{sea.title}</h4>
+                              <p className="text-xs text-slate-500 mt-0.5 italic">Basé sur : {sea.sourceUnitTitle}</p>
+                              {sea.teacherName && (
+                                <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
+                                  <User size={10} /> {sea.teacherName}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex gap-1 flex-shrink-0">
+                              <button
+                                onClick={() => exportSEAPlanToWord(sea)}
+                                className="flex items-center gap-1 px-2 py-1 bg-white border border-rose-300 text-rose-700 rounded text-xs font-medium hover:bg-rose-50 transition"
+                                title="Exporter en Word"
+                              >
+                                <Download size={12} /> Word
+                              </button>
+                              <button
+                                onClick={() => handleDeleteSEAPlan(sea.id)}
+                                className="flex items-center gap-1 px-2 py-1 bg-white border border-red-200 text-red-500 rounded text-xs font-medium hover:bg-red-50 transition"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Type d'action */}
+                          <div className="flex flex-wrap gap-1">
+                            {sea.actionTypes.map(t => (
+                              <span key={t} className="text-xs bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-medium">{t}</span>
+                            ))}
+                          </div>
+
+                          {/* Description courte */}
+                          {sea.projectDescription && (
+                            <p className="text-xs text-slate-600 line-clamp-3">{sea.projectDescription}</p>
+                          )}
+
+                          {/* Lien avec l'unité */}
+                          {sea.linkToUnit && (
+                            <div className="bg-blue-50 border border-blue-100 rounded p-2">
+                              <p className="text-xs font-bold text-blue-700 mb-0.5">🔗 Lien avec l'unité</p>
+                              <p className="text-xs text-slate-600 line-clamp-2">{sea.linkToUnit}</p>
+                            </div>
+                          )}
+
+                          {/* Objectifs d'apprentissage IB sélectionnés */}
+                          {sea.learningOutcomes.filter(lo => lo.selected).length > 0 && (
+                            <div className="bg-green-50 border border-green-100 rounded p-2">
+                              <p className="text-xs font-bold text-green-700 mb-1">🎓 Objectifs IB sélectionnés</p>
+                              <ul className="space-y-0.5">
+                                {sea.learningOutcomes.filter(lo => lo.selected).map(lo => (
+                                  <li key={lo.id} className="text-xs text-slate-600">• OA{lo.id}: {lo.text.substring(0, 60)}…</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* Compétences ATL */}
+                          {sea.atlSkills.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {sea.atlSkills.map((s, i) => (
+                                <span key={i} className="text-xs bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 rounded">{s}</span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Critères de réussite */}
+                          {sea.successCriteria.length > 0 && (
+                            <div>
+                              <p className="text-xs font-bold text-slate-600 mb-1">✅ Critères de réussite</p>
+                              <ul className="space-y-0.5">
+                                {sea.successCriteria.slice(0, 2).map((c, i) => (
+                                  <li key={i} className="text-xs text-slate-600">• {c.description}</li>
+                                ))}
+                              </ul>
                             </div>
                           )}
                         </div>
@@ -1673,6 +1995,232 @@ Chapitre 4 : Algèbre et équations
                     </>
                   )}
                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          MODALE : SERVICE ET ACTION (SEA)
+          ═══════════════════════════════════════════════════════════════════ */}
+      {isSEAModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto">
+            {/* En-tête */}
+            <div className="bg-gradient-to-r from-rose-600 to-pink-600 text-white p-6 rounded-t-2xl flex justify-between items-start">
+              <div>
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Heart size={22} /> Service en tant qu'Action — IB PEI
+                </h2>
+                <p className="text-rose-100 text-sm mt-1">
+                  Génère des projets SEA conformes IB à partir des unités déjà générées pour la classe
+                </p>
+              </div>
+              <button onClick={() => { setIsSEAModalOpen(false); setSeaStep('form'); setGeneratedSEAPlans([]); }}
+                className="text-white hover:text-rose-200 transition">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {seaStep === 'form' ? (
+                <>
+                  {/* Info IB */}
+                  <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-sm text-rose-800">
+                    <p className="font-semibold mb-2">📋 Rappel IB — Service en tant qu'Action :</p>
+                    <ul className="list-disc pl-4 space-y-1 text-rose-700">
+                      <li>Le projet SEA doit utiliser les <strong>compétences apprises en classe</strong></li>
+                      <li>Répondre à un <strong>besoin réel</strong> (local, national ou mondial)</li>
+                      <li><strong>Minimum 3 rencontres / séances</strong> documentées (journal de bord)</li>
+                      <li>Types : Service Direct, Indirect, Défense d'une cause, Recherche</li>
+                      <li>2 à 3 <strong>objectifs d'apprentissage IB</strong> parmi les 7 officiels</li>
+                    </ul>
+                  </div>
+
+                  {/* Sélection de la classe */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">Classe *</label>
+                    <div className="grid grid-cols-5 gap-2">
+                      {['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'].map(g => {
+                        const gradeCount = plans.filter(p => p.gradeLevel === g).length;
+                        return (
+                          <button
+                            key={g}
+                            onClick={() => setSeaGrade(g)}
+                            className={`py-3 rounded-xl font-semibold text-sm border-2 transition flex flex-col items-center gap-1 ${
+                              seaGrade === g
+                                ? 'bg-rose-600 border-rose-600 text-white'
+                                : gradeCount > 0
+                                ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
+                                : 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
+                            }`}
+                          >
+                            {g}
+                            <span className={`text-xs font-normal ${seaGrade === g ? 'text-rose-100' : gradeCount > 0 ? 'text-rose-500' : 'text-slate-400'}`}>
+                              {gradeCount} unité{gradeCount !== 1 ? 's' : ''}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {plans.filter(p => p.gradeLevel === seaGrade).length === 0 && (
+                      <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2">
+                        <AlertTriangle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                        <p className="text-sm text-amber-700">
+                          Aucune unité générée pour {seaGrade}. Lancez d'abord la <strong>Planification Annuelle</strong> pour cette classe.
+                        </p>
+                      </div>
+                    )}
+                    {plans.filter(p => p.gradeLevel === seaGrade).length > 0 && (
+                      <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-3">
+                        <p className="text-xs font-bold text-green-700 mb-1">
+                          ✅ {plans.filter(p => p.gradeLevel === seaGrade).length} unité(s) disponibles pour {seaGrade} :
+                        </p>
+                        <ul className="space-y-0.5">
+                          {plans.filter(p => p.gradeLevel === seaGrade).slice(0, 5).map(p => (
+                            <li key={p.id} className="text-xs text-slate-600">
+                              • <strong>{p.subject}</strong> — {p.title}
+                              {p.teacherName && <span className="text-slate-400"> ({p.teacherName})</span>}
+                            </li>
+                          ))}
+                          {plans.filter(p => p.gradeLevel === seaGrade).length > 5 && (
+                            <li className="text-xs text-slate-400">… et {plans.filter(p => p.gradeLevel === seaGrade).length - 5} autre(s)</li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Barre de progression SEA */}
+                  {isGeneratingSEA && seaProgress && (
+                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-2">
+                      <div className="flex items-center justify-between text-xs text-rose-700">
+                        <span className="font-semibold flex items-center gap-1">
+                          <Loader2 size={12} className="animate-spin" />
+                          Projet {seaProgress.current} / {seaProgress.total}
+                        </span>
+                        <span className="text-rose-500">{Math.round((seaProgress.current / seaProgress.total) * 100)}%</span>
+                      </div>
+                      <div className="w-full bg-rose-200 rounded-full h-2">
+                        <div
+                          className="bg-rose-600 h-2 rounded-full transition-all duration-500"
+                          style={{ width: `${(seaProgress.current / seaProgress.total) * 100}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-slate-600 italic truncate">
+                        Génération en cours : <strong>{seaProgress.unitTitle}</strong>
+                      </p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => handleGenerateSEA()}
+                    disabled={isGeneratingSEA || plans.filter(p => p.gradeLevel === seaGrade).length === 0}
+                    className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition disabled:opacity-60 disabled:cursor-not-allowed shadow-lg"
+                  >
+                    {isGeneratingSEA ? (
+                      <><Loader2 className="animate-spin" size={20} />Génération SEA en cours…</>
+                    ) : (
+                      <><Heart size={20} />Générer les projets SEA pour {seaGrade}</>
+                    )}
+                  </button>
+                </>
+              ) : (
+                /* ── Résultats SEA ── */
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-bold text-slate-800 text-lg">
+                      ✅ {generatedSEAPlans.length} projet(s) SEA générés
+                    </h3>
+                    <button onClick={() => setSeaStep('form')}
+                      className="text-sm text-rose-600 hover:underline flex items-center gap-1">
+                      <ArrowLeft size={14} /> Retour
+                    </button>
+                  </div>
+
+                  {generatedSEAPlans.map((sea, idx) => (
+                    <div key={sea.id} className="border border-rose-200 rounded-xl p-4 bg-rose-50 space-y-3">
+                      {/* En-tête */}
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="text-xs text-rose-600 font-semibold uppercase tracking-wide mb-1">
+                            Projet {idx + 1} · {sea.subject} · {sea.grade}
+                          </p>
+                          <h4 className="text-base font-bold text-slate-800">{sea.title}</h4>
+                          <p className="text-xs text-slate-500 mt-0.5 italic">Basé sur : {sea.sourceUnitTitle}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-1 justify-end">
+                          {sea.actionTypes.map(t => (
+                            <span key={t} className="text-xs bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full font-medium">{t}</span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Description */}
+                      <div className="bg-white border border-rose-100 rounded-lg p-3">
+                        <p className="text-xs font-bold text-slate-600 mb-1">📋 Description du projet</p>
+                        <p className="text-xs text-slate-700">{sea.projectDescription}</p>
+                      </div>
+
+                      {/* Besoin + Lien */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-amber-50 border border-amber-100 rounded-lg p-2">
+                          <p className="text-xs font-bold text-amber-700 mb-1">🎯 Besoin de la communauté</p>
+                          <p className="text-xs text-slate-600 line-clamp-3">{sea.communityNeed}</p>
+                        </div>
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-2">
+                          <p className="text-xs font-bold text-blue-700 mb-1">🔗 Lien avec l'unité</p>
+                          <p className="text-xs text-slate-600 line-clamp-3">{sea.linkToUnit}</p>
+                        </div>
+                      </div>
+
+                      {/* Objectifs IB */}
+                      <div className="bg-green-50 border border-green-100 rounded-lg p-2">
+                        <p className="text-xs font-bold text-green-700 mb-1">🎓 Objectifs d'apprentissage IB sélectionnés</p>
+                        <ul className="space-y-0.5">
+                          {sea.learningOutcomes.filter(lo => lo.selected).map(lo => (
+                            <li key={lo.id} className="text-xs text-slate-700">
+                              <span className="font-bold text-green-700">OA{lo.id} :</span> {lo.text}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      {/* ATL + Critères */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-xs font-bold text-purple-700 mb-1">🧠 Compétences ATL</p>
+                          <ul className="space-y-0.5">
+                            {sea.atlSkills.map((s, i) => <li key={i} className="text-xs text-slate-600">• {s}</li>)}
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-600 mb-1">✅ Critères de réussite</p>
+                          <ul className="space-y-0.5">
+                            {sea.successCriteria.map((c, i) => <li key={i} className="text-xs text-slate-600">• {c.description}</li>)}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Questions de réflexion */}
+                      {sea.reflectionPrompts.length > 0 && (
+                        <div className="bg-purple-50 border border-purple-100 rounded-lg p-2">
+                          <p className="text-xs font-bold text-purple-700 mb-1">💭 Questions de réflexion</p>
+                          <ol className="space-y-0.5 list-decimal list-inside">
+                            {sea.reflectionPrompts.map((q, i) => <li key={i} className="text-xs text-slate-600">{q.question}</li>)}
+                          </ol>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  <button onClick={handleSaveSEAPlans}
+                    className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition shadow-lg">
+                    <CheckCircle size={20} />
+                    Sauvegarder {generatedSEAPlans.length} projet(s) SEA
+                  </button>
+                </>
               )}
             </div>
           </div>

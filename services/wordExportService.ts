@@ -2,7 +2,7 @@ import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import FileSaver from "file-saver";
 import JSZip from "jszip";
-import { UnitPlan, AssessmentData } from "../types";
+import { UnitPlan, AssessmentData, ServiceActionPlan } from "../types";
 import { PLAN_TEMPLATE_URL, EVAL_TEMPLATE_URL } from "../constants";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
 import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit } from "./geminiService";
@@ -1117,4 +1117,565 @@ export const exportInterdisciplinaryToWord = (unit: InterdisciplinaryUnit): void
   const safeName = (unit.title || 'interdisciplinaire').replace(/[^a-z0-9]/gi, '_').substring(0, 40);
   const safeGrade = (unit.grade || '').replace(/\s+/g, '');
   saveAs(blob, `Interdisciplinaire_${safeName}_${safeGrade}.doc`);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// exportInterdisciplinaryOverviewToWord
+// Tableau synthèse de toutes les unités interdisciplinaires (toutes classes)
+// Correspond au modèle "Planification de l'unité interdisciplinaire" fourni
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportInterdisciplinaryOverviewToWord = async (units: InterdisciplinaryUnit[]): Promise<void> => {
+  const esc = (s: string | undefined | null) =>
+    (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const rows = units.map(u => {
+    const disciplines = (u.disciplines || []).join(' + ');
+    const teachers = (u.disciplines || []).map((d, i) => `${d}: ${u.teachers?.[i] || '—'}`).join(' | ');
+    const purpose = esc(u.integrationPurpose || '');
+    const perspectives = [
+      u.keyConcept ? `Concept clé : ${u.keyConcept}` : '',
+      u.relatedConcepts?.length ? `Connexes : ${u.relatedConcepts.join(', ')}` : '',
+    ].filter(Boolean).join('\n');
+
+    return `
+    <tr>
+      <td style="text-align:center;font-weight:bold;">${esc(u.grade)}</td>
+      <td>${esc(u.title)}<br/><span style="font-size:8pt;color:#666;">${esc(teachers)}</span></td>
+      <td>${esc(disciplines)}</td>
+      <td>${esc(purpose)}</td>
+      <td>${esc(perspectives)}</td>
+      <td>${esc(u.globalContext)}</td>
+      <td style="text-align:center;">${esc(u.duration)}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4 landscape; margin: 15mm 12mm; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 9pt; color: #1e293b; }
+  h1 { text-align:center; font-size:13pt; color:#1e3a5f; margin-bottom:4px; }
+  h2 { text-align:center; font-size:10pt; color:#64748b; font-weight:normal; margin-top:0; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th { background:#1e3a5f; color:white; font-size:9pt; font-weight:bold; padding:6px 5px; border:1px solid #4472c4; text-align:center; vertical-align:middle; }
+  td { border:1px solid #9bbcd6; padding:4px 5px; vertical-align:top; font-size:8.5pt; }
+  tr:nth-child(even) td { background:#f0f4ff; }
+  .footer { text-align:center; margin-top:10px; font-size:8pt; color:#94a3b8; }
+</style>
+</head>
+<body>
+<h1>Planification de l'unité interdisciplinaire</h1>
+<h2>Programme des Écoles Intermédiaires (PEI) — IB</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width:7%;">Année du PEI</th>
+      <th style="width:20%;">Titre de l'unité</th>
+      <th style="width:16%;">Matières</th>
+      <th style="width:22%;">But de l'intégration</th>
+      <th style="width:16%;">Perspectives<br/>(Concept clé / Connexes)</th>
+      <th style="width:13%;">Contexte mondial</th>
+      <th style="width:6%;">Durée</th>
+    </tr>
+  </thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="footer">Document généré automatiquement — Planificateur PEI IB Al Kawthar</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const saveAs = (FileSaver as any).saveAs || FileSaver;
+  saveAs(blob, `Planification_Interdisciplinaire_Toutes_Classes.doc`);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// exportSEAOverviewToWord
+// Tableau synthèse "Planification Service et Action" — toutes classes
+// Correspond au modèle avec colonnes Classe, Matière, Contexte mondial,
+// SEA (titre + contenu), Type, Objectif ciblé, Échéancier, Compétences ATL
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportSEAOverviewToWord = async (seaPlans: ServiceActionPlan[]): Promise<void> => {
+  const esc = (s: string | undefined | null) =>
+    (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const rows = seaPlans.map(sea => {
+    const actionTypes = (sea.actionTypes || []).join(', ');
+    const selectedOutcomes = (sea.learningOutcomes || [])
+      .filter(lo => lo.selected)
+      .map(lo => `OA${lo.id}: ${lo.text.substring(0, 50)}…`)
+      .join('\n');
+    const atl = (sea.atlSkills || []).join('\n');
+    const journals = (sea.journalEntries || []);
+    const dateRange = journals.length >= 2
+      ? `Du ${esc(journals[0]?.date || '')} au ${esc(journals[journals.length - 1]?.date || '')}`
+      : journals.length === 1 ? esc(journals[0]?.date || '') : '';
+
+    return `
+    <tr>
+      <td style="text-align:center;font-weight:bold;">${esc(sea.grade)}</td>
+      <td>${esc(sea.subject)}<br/><span style="font-size:7.5pt;color:#666;">${esc(sea.teacherName)}</span></td>
+      <td style="font-size:8pt;">${esc(sea.globalContext)}</td>
+      <td>
+        <strong>${esc(sea.title)}</strong><br/>
+        <span style="font-size:7.5pt;color:#555;font-style:italic;">Basé sur : ${esc(sea.sourceUnitTitle)}</span><br/>
+        <span style="font-size:7.5pt;">${esc(sea.projectDescription?.substring(0, 200) || '')}${(sea.projectDescription?.length || 0) > 200 ? '…' : ''}</span>
+      </td>
+      <td style="font-size:8pt;">${esc(actionTypes)}</td>
+      <td style="font-size:7.5pt;">${esc(selectedOutcomes)}</td>
+      <td style="font-size:8pt;text-align:center;">${esc(dateRange)}</td>
+      <td style="font-size:7.5pt;">${esc(atl)}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4 landscape; margin: 15mm 12mm; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 9pt; color: #1e293b; }
+  h1 { text-align:center; font-size:13pt; color:#1e3a5f; margin-bottom:2px; font-weight:bold; }
+  h2 { text-align:center; font-size:9.5pt; color:#64748b; font-weight:normal; margin-top:0; margin-bottom:4px; font-style:italic; }
+  h3 { text-align:center; font-size:9pt; color:#475569; font-weight:normal; margin-top:0; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th { background:#1e3a5f; color:white; font-size:8.5pt; font-weight:bold; padding:5px 4px; border:1px solid #4472c4; text-align:center; vertical-align:middle; }
+  td { border:1px solid #9bbcd6; padding:4px 5px; vertical-align:top; font-size:8pt; }
+  tr:nth-child(even) td { background:#fff5f5; }
+  .footer { text-align:center; margin-top:10px; font-size:8pt; color:#94a3b8; }
+</style>
+</head>
+<body>
+<h1>Planification Service et Action</h1>
+<h2>Le projet SEA engage les élèves à être des citoyens actifs et responsables dans leur communauté.</h2>
+<h3>Programme des Écoles Intermédiaires (PEI) — IB Al Kawthar</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width:6%;">Classe</th>
+      <th style="width:10%;">Matière</th>
+      <th style="width:12%;">Contexte mondial</th>
+      <th style="width:28%;">SEA (titre et contenu de l'action)</th>
+      <th style="width:11%;">Type (direct, indirect, défense d'une cause, recherche)</th>
+      <th style="width:15%;">Objectif ciblé (à préciser)</th>
+      <th style="width:9%;">Échéancier (du…au…)</th>
+      <th style="width:9%;">Compétences ATL/PEI</th>
+    </tr>
+  </thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="footer">Document généré automatiquement — Planificateur PEI IB Al Kawthar</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const saveAs = (FileSaver as any).saveAs || FileSaver;
+  saveAs(blob, `Planification_Service_et_Action_Toutes_Classes.doc`);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// exportSEAPlanToWord
+// Export complet d'un plan SEA individuel en Word
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportSEAPlanToWord = (sea: ServiceActionPlan): void => {
+  const esc = (s: string | undefined | null) =>
+    (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const li = (arr: string[]) => arr.length
+    ? `<ul>${arr.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`
+    : '<p>—</p>';
+
+  const journalRows = (sea.journalEntries || []).map((e, i) => `
+    <tr>
+      <td style="text-align:center;font-weight:bold;">${i + 1}</td>
+      <td style="text-align:center;">${esc(e.date)}</td>
+      <td>${esc(e.description)}</td>
+    </tr>`).join('');
+
+  const outcomeRows = (sea.learningOutcomes || []).map(lo => `
+    <tr style="${lo.selected ? 'background:#dcfce7;' : ''}">
+      <td style="text-align:center;font-weight:bold;">${lo.id}</td>
+      <td>${esc(lo.text)}</td>
+      <td style="text-align:center;">${lo.selected ? '✅' : '☐'}</td>
+    </tr>`).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 18mm 15mm; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #1e293b; line-height: 1.45; }
+  .doc-header { border: 2px solid #be123c; padding: 10px 14px; margin-bottom: 14px; background: #fff1f2; }
+  .doc-header h1 { font-size: 13pt; color: #be123c; margin: 0 0 4px 0; text-align:center; }
+  .doc-header .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; font-size: 9pt; }
+  .meta-row { display: flex; gap: 6px; }
+  .meta-label { font-weight: bold; color: #be123c; min-width: 140px; }
+  .section-title { background: #be123c; color: white; font-size: 11pt; font-weight: bold; padding: 6px 12px; margin: 14px 0 8px 0; border-radius: 2px; }
+  .subsection-title { font-size: 10pt; font-weight: bold; color: #be123c; border-bottom: 1px solid #fecdd3; margin: 10px 0 5px 0; padding-bottom: 2px; }
+  .info-box { background: #fff8f8; border: 1px solid #fecdd3; border-radius: 4px; padding: 8px 12px; margin: 6px 0; }
+  .highlight-box { background: #fff0f2; border-left: 4px solid #be123c; padding: 8px 14px; margin: 8px 0; font-style: italic; }
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 10px 0; font-size: 9pt; }
+  th { background: #fecdd3; color: #be123c; font-weight: bold; padding: 5px 6px; border: 1px solid #e11d48; text-align: center; }
+  td { border: 1px solid #fda4af; padding: 4px 6px; vertical-align: top; }
+  .badge { display: inline-block; background: #fce7f3; color: #be123c; padding: 2px 8px; border-radius: 10px; font-size: 8.5pt; margin: 2px; font-weight: bold; }
+  .outcome-badge { display: inline-block; background: #dcfce7; color: #15803d; padding: 2px 8px; border-radius: 10px; font-size: 8.5pt; margin: 2px; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div class="doc-header">
+  <h1>❤️ Service en tant qu'Action — IB PEI</h1>
+  <div class="meta-grid">
+    <div class="meta-row"><span class="meta-label">Enseignant(e) :</span><span><strong>${esc(sea.teacherName || '—')}</strong></span></div>
+    <div class="meta-row"><span class="meta-label">Matière :</span><span>${esc(sea.subject)}</span></div>
+    <div class="meta-row"><span class="meta-label">Titre du projet :</span><span><strong>${esc(sea.title)}</strong></span></div>
+    <div class="meta-row"><span class="meta-label">Classe :</span><span>${esc(sea.grade)}</span></div>
+    <div class="meta-row"><span class="meta-label">Unité source :</span><span>${esc(sea.sourceUnitTitle)}</span></div>
+    <div class="meta-row"><span class="meta-label">Contexte mondial :</span><span>${esc(sea.globalContext)}</span></div>
+    <div class="meta-row"><span class="meta-label">Concept clé :</span><span>${esc(sea.keyConcept)}</span></div>
+    <div class="meta-row"><span class="meta-label">Type(s) d'action :</span><span>${(sea.actionTypes || []).map(t => `<span class="badge">${esc(t)}</span>`).join(' ')}</span></div>
+  </div>
+</div>
+
+<!-- A. Identification -->
+<div class="section-title">A. Identification du projet</div>
+<div class="subsection-title">Description de l'action</div>
+<div class="info-box">${esc(sea.projectDescription)}</div>
+
+<div class="subsection-title">Besoin de la communauté</div>
+<div class="highlight-box">${esc(sea.communityNeed)}</div>
+
+<div class="subsection-title">Lien avec l'unité de cours</div>
+<div class="info-box">${esc(sea.linkToUnit)}</div>
+
+<!-- C. Objectifs d'apprentissage IB -->
+<div class="section-title">B. Objectifs d'apprentissage du Service (7 officiels IB)</div>
+<table>
+  <thead>
+    <tr>
+      <th style="width:5%;">N°</th>
+      <th>Objectif d'apprentissage</th>
+      <th style="width:10%;">Sélectionné</th>
+    </tr>
+  </thead>
+  <tbody>${outcomeRows}</tbody>
+</table>
+
+<!-- D. Compétences ATL -->
+<div class="section-title">C. Compétences ATL développées</div>
+<div class="info-box">${li(sea.atlSkills || [])}</div>
+
+<!-- E. Module d'évaluation -->
+<div class="section-title">D. Évaluation et réflexion post-action</div>
+
+<div class="subsection-title">Journal de bord (3 rencontres minimum IB)</div>
+<table>
+  <thead>
+    <tr>
+      <th style="width:6%;">Séance</th>
+      <th style="width:20%;">Date</th>
+      <th>Description de la rencontre / des activités réalisées</th>
+    </tr>
+  </thead>
+  <tbody>${journalRows}</tbody>
+</table>
+
+<div class="subsection-title">Questions de réflexion finale</div>
+<table>
+  <thead><tr><th>N°</th><th>Question de réflexion spécifique au projet</th></tr></thead>
+  <tbody>
+    ${(sea.reflectionPrompts || []).map((q, i) => `
+    <tr>
+      <td style="text-align:center;font-weight:bold;">${i + 1}</td>
+      <td>${esc(q.question)}</td>
+    </tr>`).join('')}
+  </tbody>
+</table>
+
+<div class="subsection-title">Critères de réussite (mesurables)</div>
+<table>
+  <thead><tr><th>Critère</th><th>Description mesurable</th></tr></thead>
+  <tbody>
+    ${(sea.successCriteria || []).map((c, i) => `
+    <tr>
+      <td style="text-align:center;font-weight:bold;">${i + 1}</td>
+      <td>${esc(c.description)}</td>
+    </tr>`).join('')}
+  </tbody>
+</table>
+
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const saveAs = (FileSaver as any).saveAs || FileSaver;
+  const safeName = (sea.title || 'sea').replace(/[^a-z0-9]/gi, '_').substring(0, 40);
+  const safeGrade = (sea.grade || '').replace(/\s+/g, '');
+  saveAs(blob, `SEA_${safeName}_${safeGrade}.doc`);
+};
+// ─────────────────────────────────────────────────────────────────────────────
+// exportCompleteInterdisciplinaryThemePlan
+// Export complet de TOUTES les unités interdisciplinaires en un seul document
+// (plan détaillé complet pour chaque unité, pas juste le tableau synthèse)
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportCompleteInterdisciplinaryThemePlan = (units: InterdisciplinaryUnit[]): void => {
+  if (!units || units.length === 0) return;
+
+  const esc = (s: string | undefined | null) =>
+    (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const li = (arr: string[]): string =>
+    arr.length ? `<ul>${arr.map(i => `<li>${esc(i)}</li>`).join('')}</ul>` : '<p>—</p>';
+
+  const buildUnitSection = (unit: InterdisciplinaryUnit, index: number): string => {
+    const criteriaRows = (unit.summativeCriteria || []).map(c => `
+      <tr>
+        <td style="text-align:center;font-weight:bold;background:#dce6f1;width:5%;">${esc(c.criterion)}</td>
+        <td style="font-weight:bold;">${esc(c.name)}</td>
+        <td>${esc(c.discipline)}</td>
+        <td><ul>${(c.strands || []).map(s => `<li>${esc(s)}</li>`).join('')}</ul></td>
+        <td style="text-align:center;font-weight:bold;width:5%;">8</td>
+      </tr>`).join('');
+
+    const disciplineBaseRows = (unit.disciplineBases || []).map(db => `
+      <tr>
+        <td style="font-weight:bold;background:#f0f4ff;width:15%;">${esc(db.discipline)}<br/><span style="font-weight:normal;font-size:8pt;">${esc(db.teacher)}</span></td>
+        <td>${esc(db.ibObjective)}</td>
+        <td>${(db.relatedConcepts || []).map(c => esc(c)).join(', ')}</td>
+        <td>${esc(db.content)}</td>
+        <td>${esc(db.learningActivities)}</td>
+      </tr>`).join('');
+
+    return `
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- UNITÉ ${index + 1} : ${esc(unit.title)}                                -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="unit-separator" style="${index > 0 ? 'page-break-before:always;' : ''}">
+  <div class="unit-header">
+    <div class="unit-number">Unité ${index + 1} / ${units.length}</div>
+    <h2>${esc(unit.title)}</h2>
+    <div class="unit-meta">
+      <span>📅 ${esc(unit.grade)}</span>
+      <span>⏱️ ${esc(unit.duration)}</span>
+      <span>🔗 ${unit.disciplines.map(d => esc(d)).join(' + ')}</span>
+      <span>🌍 ${esc(unit.globalContext)}</span>
+    </div>
+    <div class="teachers-row">
+      ${unit.disciplines.map((d, i) => `<span class="teacher-badge">${esc(d)}: <strong>${esc(unit.teachers?.[i] || '—')}</strong></span>`).join(' &nbsp;|&nbsp; ')}
+    </div>
+  </div>
+
+  <!-- SECTION RECHERCHE -->
+  <div class="section-title">🔍 RECHERCHE</div>
+
+  <div class="subsection-title">But de l'intégration</div>
+  <div class="info-box">${esc(unit.integrationPurpose)}</div>
+
+  <div class="subsection-title">Concepts</div>
+  <div class="info-box">
+    <strong>Concept clé :</strong> <span class="badge">${esc(unit.keyConcept)}</span>
+    &nbsp;&nbsp;
+    <strong>Concepts connexes :</strong>
+    ${(unit.relatedConcepts || []).map(c => `<span class="badge">${esc(c)}</span>`).join(' ')}
+  </div>
+
+  <div class="subsection-title">Objectifs communs aux disciplines</div>
+  <div class="info-box">${li(unit.sharedObjectives || [])}</div>
+
+  <div class="subsection-title">Énoncé de recherche</div>
+  <div class="soi">📌 ${esc(unit.statementOfInquiry)}</div>
+
+  <div class="subsection-title">Questions de recherche</div>
+  <table>
+    <thead><tr><th style="width:18%;">Type</th><th>Questions</th></tr></thead>
+    <tbody>
+      <tr>
+        <td style="font-weight:bold;color:#1e40af;text-align:center;">Factuelle(s)</td>
+        <td>${li(unit.inquiryQuestions?.factual || [])}</td>
+      </tr>
+      <tr>
+        <td style="font-weight:bold;color:#065f46;text-align:center;">Conceptuelle(s)</td>
+        <td>${li(unit.inquiryQuestions?.conceptual || [])}</td>
+      </tr>
+      <tr>
+        <td style="font-weight:bold;color:#92400e;text-align:center;">Invitant au débat</td>
+        <td>${li(unit.inquiryQuestions?.debatable || [])}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="subsection-title">Critères d'évaluation sommative (A, B, C — chacun /8)</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Crit.</th><th>Nom du critère</th><th>Discipline</th><th>Sous-aspects (strands)</th><th>Sur</th>
+      </tr>
+    </thead>
+    <tbody>${criteriaRows}</tbody>
+  </table>
+
+  ${(unit.summativeCriteria || []).length > 0 ? `
+  <div class="subsection-title">Tâches d'évaluation par critère</div>
+  <table>
+    <thead><tr><th style="width:10%;">Critère</th><th>Description de la tâche</th></tr></thead>
+    <tbody>
+      ${(unit.summativeCriteria || []).map(c => `
+      <tr>
+        <td style="text-align:center;font-weight:bold;"><span class="criterion-badge">Critère ${esc(c.criterion)}</span></td>
+        <td>${esc(c.task)}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : ''}
+
+  <div class="subsection-title">Compétences ATL</div>
+  <div class="info-box">${li(unit.atlSkills || [])}</div>
+
+  <!-- SECTION ACTION -->
+  <div class="section-title">⚡ ACTION</div>
+
+  <div class="subsection-title">Bases disciplinaires</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Matière / Enseignant</th>
+        <th>Objectif spécifique IB</th>
+        <th>Concepts connexes</th>
+        <th>Contenu</th>
+        <th>Activités d'apprentissage</th>
+      </tr>
+    </thead>
+    <tbody>${disciplineBaseRows}</tbody>
+  </table>
+
+  <div class="subsection-title">Processus d'apprentissage interdisciplinaire</div>
+  <div class="info-box">${esc(unit.interdisciplinaryLearningProcess)}</div>
+
+  <div class="subsection-title">Stratégies d'évaluation formative</div>
+  <div class="info-box">${esc(unit.formativeStrategies)}</div>
+
+  <div class="subsection-title">Tâche sommative finale</div>
+  <div class="info-box" style="border-left:4px solid #1e3a5f;background:#f0f4ff;">${esc(unit.summativeTask)}</div>
+
+  <div class="subsection-title">Différenciation</div>
+  <div class="info-box">${esc(unit.differentiation)}</div>
+
+  <div class="subsection-title">Ressources</div>
+  <div class="info-box">${esc(unit.resources)}</div>
+
+  <!-- SECTION RÉFLEXION -->
+  <div class="section-title">💡 RÉFLEXION</div>
+
+  <div class="phases-grid">
+    <div class="phase-box">
+      <div class="phase-label">🔍 RECHERCHE</div>
+      <p style="font-size:9pt;margin:0;">${esc(unit.phases?.recherche)}</p>
+    </div>
+    <div class="phase-box">
+      <div class="phase-label">⚡ ACTION</div>
+      <p style="font-size:9pt;margin:0;">${esc(unit.phases?.action)}</p>
+    </div>
+    <div class="phase-box">
+      <div class="phase-label">💡 RÉFLEXION</div>
+      <p style="font-size:9pt;margin:0;">${esc(unit.phases?.reflexion)}</p>
+    </div>
+  </div>
+
+  <div class="subsection-title">Réflexion des enseignants</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:33%;">Avant l'unité</th>
+        <th style="width:33%;">Pendant l'unité</th>
+        <th style="width:34%;">Suite à l'unité</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="min-height:60px;">${esc(unit.reflection?.before)}</td>
+        <td style="min-height:60px;">${esc(unit.reflection?.during)}</td>
+        <td style="min-height:60px;">${esc(unit.reflection?.after)}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>`;
+  };
+
+  const allUnitsHtml = units.map((u, i) => buildUnitSection(u, i)).join('\n\n');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 18mm 15mm; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #1e293b; line-height: 1.45; }
+
+  /* Cover */
+  .cover { text-align:center; padding: 60px 20px 40px; border-bottom: 3px solid #1e3a5f; margin-bottom: 30px; }
+  .cover h1 { font-size: 20pt; color: #1e3a5f; margin-bottom: 8px; }
+  .cover h2 { font-size: 13pt; color: #64748b; font-weight: normal; margin: 0 0 20px; }
+  .cover .cover-meta { display: inline-block; background: #f0f4ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 24px; }
+  .cover .cover-meta p { margin: 4px 0; font-size: 10pt; color: #334155; }
+
+  /* Unit header */
+  .unit-header { background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); color: white; padding: 14px 18px; border-radius: 4px; margin-bottom: 14px; }
+  .unit-header .unit-number { font-size: 9pt; opacity: 0.8; margin-bottom: 4px; }
+  .unit-header h2 { font-size: 14pt; margin: 0 0 8px; }
+  .unit-header .unit-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 9pt; opacity: 0.9; margin-bottom: 6px; }
+  .unit-header .teachers-row { font-size: 9pt; opacity: 0.85; }
+  .teacher-badge { background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 10px; }
+
+  /* Sections */
+  .section-title { background: #1e3a5f; color: white; font-size: 11pt; font-weight: bold; padding: 6px 12px; margin: 14px 0 8px; border-radius: 2px; }
+  .subsection-title { font-size: 10pt; font-weight: bold; color: #1e3a5f; border-bottom: 1px solid #bfdbfe; margin: 10px 0 5px; padding-bottom: 2px; }
+  .soi { font-style: italic; background: #fffbeb; border-left: 4px solid #f59e0b; padding: 8px 14px; margin: 8px 0; font-size: 10.5pt; color: #1a1a2e; }
+  .info-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px 12px; margin: 6px 0; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 10px; font-size: 9pt; }
+  th { background: #bfdbfe; color: #1e3a5f; font-weight: bold; padding: 5px 6px; border: 1px solid #4472c4; text-align: center; vertical-align: middle; }
+  td { border: 1px solid #9bbcd6; padding: 4px 6px; vertical-align: top; }
+  td ul { margin: 0; padding-left: 14px; }
+  td li { margin-bottom: 2px; }
+  tr:nth-child(even) td { background: #f0f7ff; }
+
+  /* Phases */
+  .phases-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 8px 0; }
+  .phase-box { border: 1px solid #bfdbfe; border-radius: 4px; padding: 8px; }
+  .phase-box .phase-label { font-weight: bold; font-size: 9pt; color: #1e40af; margin-bottom: 4px; }
+
+  /* Badges */
+  .badge { display: inline-block; background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 10px; font-size: 8.5pt; margin: 2px; font-weight: bold; }
+  .criterion-badge { display: inline-block; background: #ede9fe; color: #6d28d9; padding: 2px 10px; border-radius: 10px; font-size: 8.5pt; font-weight: bold; margin: 2px; }
+
+  /* Footer */
+  .footer { text-align: center; margin-top: 20px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 8pt; color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<!-- PAGE DE COUVERTURE -->
+<div class="cover">
+  <h1>🔗 Planification des Unités Interdisciplinaires</h1>
+  <h2>Programme des Écoles Intermédiaires (PEI) — IB Al Kawthar</h2>
+  <div class="cover-meta">
+    <p><strong>${units.length} unité(s) interdisciplinaire(s)</strong></p>
+    <p>Classes : ${[...new Set(units.map(u => u.grade))].sort().join(', ')}</p>
+    <p>Disciplines : ${[...new Set(units.flatMap(u => u.disciplines))].join(' • ')}</p>
+    <p style="color:#64748b;font-size:9pt;margin-top:8px;">Document généré le ${new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+  </div>
+</div>
+
+${allUnitsHtml}
+
+<div class="footer">Document généré automatiquement — Planificateur PEI IB Al Kawthar</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const saveAs = (FileSaver as any).saveAs || FileSaver;
+  saveAs(blob, `Plan_Complet_Interdisciplinaire_Toutes_Classes.doc`);
 };

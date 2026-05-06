@@ -195,3 +195,60 @@ export interface ExamGenerationConfig {
   includeGraphResource?: boolean; // Pour Sciences/Maths
   examType?: 'Examen' | 'Évaluation'; // Type: Examen (2H) ou Évaluation (40 min)
 }
+
+// ===== SERVICE EN TANT QU'ACTION (SEA) =====
+
+export type SEAActionType = 'Direct' | 'Indirect' | 'Défense d\'une cause' | 'Recherche';
+
+export interface SEALearningOutcome {
+  id: number; // 1-7 (IB official learning outcomes)
+  text: string;
+  selected: boolean;
+}
+
+export interface SEAReflectionPrompt {
+  question: string;
+}
+
+export interface SEASuccessCriteria {
+  description: string;
+}
+
+export interface SEAJournalEntry {
+  date: string;
+  description: string;
+}
+
+export interface ServiceActionPlan {
+  id: string;
+  grade: string;          // PEI 1..5
+  subject: string;        // Matière source
+  teacherName: string;
+  sourceUnitTitle: string;  // Titre de l'unité dont ce SEA est dérivé
+  sourceUnitId: string;
+
+  // A. Identification
+  title: string;
+  actionTypes: SEAActionType[];
+
+  // B. Cœur du projet
+  projectDescription: string;    // Ce que l'élève va faire concrètement
+  communityNeed: string;          // Pourquoi / qui aide-t-on
+  linkToUnit: string;             // Lien avec la matière / l'unité
+
+  // C. Objectifs d'apprentissage IB (2-3 parmi 7)
+  learningOutcomes: SEALearningOutcome[];
+
+  // D. Compétences ATL
+  atlSkills: string[];
+
+  // E. Module Évaluation / Réflexion
+  journalEntries: SEAJournalEntry[];   // 3 rencontres minimum IB
+  reflectionPrompts: SEAReflectionPrompt[];  // 3 questions spécifiques
+  successCriteria: SEASuccessCriteria[];
+
+  // Metadata
+  globalContext: string;
+  keyConcept: string;
+  createdAt: string;
+}

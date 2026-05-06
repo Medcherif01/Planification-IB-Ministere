@@ -81,6 +81,12 @@ const isDesignSubject = (subject: string): boolean => {
   return normalized === 'design' || normalized.startsWith('design');
 };
 
+// Helper: detect Sciences subject (SVT + Physique-Chimie)
+const isScienceSubject = (subject: string): boolean => {
+  const n = subject.toLowerCase().trim();
+  return n.includes('science') && !n.includes('social') && !n.includes('individu');
+};
+
 // Get language code based on subject
 // Arts/EPS use 'arts' mode (French only with practical-tasks rules)
 const getGenerationLanguage = (subject: string): 'fr' | 'en' | 'arts' | 'design' => {
@@ -1912,12 +1918,31 @@ export const generateCourseFromChapters = async (
         `;
       } else {
         const subjectConcepts = getIBConceptsForSubject(subject);
+        const scienceRatioRule = isScienceSubject(subject) ? `
+          ❗❗❗ RÈGLE ABSOLUE SCIENCES — RÉPARTITION SVT / PHYSIQUE-CHIMIE (NON NÉGOCIABLE) ❗❗❗
+          Ce programme de Sciences couvre OBLIGATOIREMENT deux sous-disciplines distinctes :
+          • SVT (Sciences de la Vie et de la Terre) : biologie, écologie, géologie, génétique, évolution
+          • Physique-Chimie : mécanique, optique, électricité, ondes, chimie, réactions chimiques, matière
+
+          RÉPARTITION OBLIGATOIRE selon le nombre d'unités générées :
+          ▶ 5 unités (cible idéale) : 3 SVT + 2 Physique-Chimie
+          ▶ 4 unités               : 2 SVT + 2 Physique-Chimie
+          ▶ 6 unités               : 3 SVT + 3 Physique-Chimie
+
+          RÈGLES D'APPLICATION :
+          1. Le champ "subject" de CHAQUE unité DOIT indiquer "Sciences — SVT" ou "Sciences — Physique-Chimie".
+          2. Le TITRE de chaque unité doit refléter clairement sa sous-discipline.
+          3. Les chapitres SVT et Physique-Chimie doivent être distribués entre les bonnes unités.
+          4. INTERDIT de générer uniquement des unités SVT ou uniquement Physique-Chimie.
+          5. Si les chapitres fournis couvrent les deux disciplines, respecter la répartition ci-dessus.
+          6. Si les chapitres ne mentionnent qu'une discipline, en inventer des pertinentes pour l'autre.
+        ` : '';
         userPrompt = `
           Matière: ${subject}
           Niveau: ${gradeLevel}
           Programme complet:
           ${allChapters}
-          
+          ${scienceRatioRule}
           ❗ CONCEPTS IB OFFICIELS OBLIGATOIRES pour ${subject} :
           ▶ Concepts clés autorisés (choisir parmi) : ${subjectConcepts.keyConcepts.join(', ')}
           ▶ Concepts connexes autorisés (choisir parmi) : ${subjectConcepts.relatedConcepts.join(', ')}
@@ -1931,7 +1956,7 @@ export const generateCourseFromChapters = async (
           • Être transférable et stimulant intellectuellement
           Exemple valide pour Maths : "La logique de la simplification des quantités révèle comment les relations entre les nombres modélisent des phénomènes du monde réel."
           
-          ❗ Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 4-5 unités pour couvrir l'année complète).
+          ❗ Génère MINIMUM 4 unités et MAXIMUM 6 unités (idéalement 5 unités pour couvrir l'année complète).
           ❗ JAMAIS moins de 4 unités.
         `;
       }
@@ -2753,4 +2778,185 @@ export const generateFromDriveForm = async (config: DriveFormConfig): Promise<Un
     resources:   config.resources   || plan.resources,
     duration:    config.duration    || plan.duration,
   }));
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SERVICE EN TANT QU'ACTION (SEA)
+// Génère automatiquement une proposition de projet SEA à partir d'une unité.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { ServiceActionPlan, SEAActionType, SEALearningOutcome } from '../types';
+
+const IB_SEA_LEARNING_OUTCOMES: SEALearningOutcome[] = [
+  { id: 1, text: "Prendre davantage conscience de ses points forts et des points qu'il peut améliorer.", selected: false },
+  { id: 2, text: "Relever des défis qui amènent à développer de nouvelles compétences.", selected: false },
+  { id: 3, text: "Discuter d'activités initiées par les élèves, les évaluer et les planifier.", selected: false },
+  { id: 4, text: "Faire preuve de persévérance dans les actions entreprises.", selected: false },
+  { id: 5, text: "Travailler en collaboration avec les autres.", selected: false },
+  { id: 6, text: "Développer leur sensibilité internationale.", selected: false },
+  { id: 7, text: "Prendre en considération la portée éthique de leurs actes.", selected: false },
+];
+
+const SEA_SYSTEM_PROMPT = `Tu es un expert du Programme des Écoles Intermédiaires (PEI) de l'IB, spécialisé dans le composant "Service en tant qu'Action" (SEA).
+Ton rôle est de générer des propositions de projets SEA pertinentes, réalisables et strictement conformes aux exigences IB.
+
+PRINCIPES DIRECTEURS :
+1. Chaque projet SEA doit utiliser les compétences apprises en classe — c'est l'essence du lien avec l'unité.
+2. Le projet répond à un BESOIN RÉEL (local, national ou mondial) — pas juste une activité.
+3. Le lien avec le contexte mondial de l'unité est obligatoire.
+4. Le ton doit être pédagogique, encourageant et aligné sur le guide SEA du PEI IB.
+5. L'élève doit être un citoyen actif — pas un simple exécutant.
+
+TYPES D'ACTION IB SEA :
+- Service Direct : contact face à face avec les bénéficiaires.
+- Service Indirect : action en retrait (ex: site web, collecte de fonds, confection d'objets).
+- Défense d'une cause : sensibilisation, campagne, slam, affiches.
+- Recherche : collecte et analyse de données pour informer ou proposer des solutions.
+
+OBJECTIFS D'APPRENTISSAGE IB (7 officiels) :
+1. Prendre davantage conscience de ses points forts et des points qu'il peut améliorer.
+2. Relever des défis qui amènent à développer de nouvelles compétences.
+3. Discuter d'activités initiées par les élèves, les évaluer et les planifier.
+4. Faire preuve de persévérance dans les actions entreprises.
+5. Travailler en collaboration avec les autres.
+6. Développer leur sensibilité internationale.
+7. Prendre en considération la portée éthique de leurs actes.
+
+FORMAT DE RÉPONSE : JSON valide uniquement, sans texte avant ou après.`;
+
+export const generateServiceActionPlan = async (
+  unit: UnitPlan,
+  grade: string
+): Promise<ServiceActionPlan> => {
+  const userPrompt = `Génère une proposition de projet SEA (Service en tant qu'Action) IB PEI pour l'unité suivante :
+
+Matière : ${unit.subject}
+Classe : ${grade}
+Enseignant(e) : ${unit.teacherName || 'Non spécifié'}
+Titre de l'unité : ${unit.title}
+Concept clé : ${unit.keyConcept}
+Concepts connexes : ${Array.isArray(unit.relatedConcepts) ? unit.relatedConcepts.join(', ') : unit.relatedConcepts}
+Contexte mondial : ${unit.globalContext}
+Énoncé de recherche : ${unit.statementOfInquiry}
+Contenu thématique : ${unit.content || unit.chapters || ''}
+Évaluation sommative : ${unit.summativeAssessment || ''}
+
+RÈGLES ABSOLUES :
+1. Le projet doit exploiter les compétences SPÉCIFIQUES de la matière "${unit.subject}".
+2. Le titre doit être accrocheur et explicite (ex: "Agir pour le respect et contre le harcèlement").
+3. La description du projet doit contenir 2-3 paragraphes concrets.
+4. Sélectionne 2 ou 3 objectifs d'apprentissage parmi les 7 officiels IB (donne leurs numéros : 1 à 7).
+5. Les 3 questions de réflexion doivent être SPÉCIFIQUES à ce projet (pas génériques).
+6. Les critères de réussite doivent être MESURABLES (ex: "50 signatures récoltées", "100 élèves sensibilisés").
+7. Les compétences ATL doivent venir de : Communication, Recherche, Autogestion, Pensée critique, Collaboration.
+8. Génère 3 entrées de journal de bord avec des dates fictives plausibles.
+
+Retourne UNIQUEMENT ce JSON (en français) :
+{
+  "title": "Titre accrocheur du projet SEA",
+  "actionTypes": ["Direct"|"Indirect"|"Défense d'une cause"|"Recherche"] (1 à 3 types),
+  "projectDescription": "Description concrète en 2-3 paragraphes de ce que l'élève va faire",
+  "communityNeed": "Pourquoi cette action est nécessaire — qui aide-t-on, quel besoin local/mondial",
+  "linkToUnit": "Comment les apprentissages de ${unit.subject} (${unit.title}) permettent de réaliser ce service",
+  "selectedLearningOutcomeIds": [num1, num2] (2 ou 3 numéros parmi 1-7),
+  "atlSkills": ["Compétence ATL 1", "Compétence ATL 2", "Compétence ATL 3"],
+  "reflectionPrompts": [
+    "Question de réflexion spécifique 1 ?",
+    "Question de réflexion spécifique 2 ?",
+    "Question de réflexion spécifique 3 ?"
+  ],
+  "successCriteria": [
+    "Critère de réussite mesurable 1",
+    "Critère de réussite mesurable 2",
+    "Critère de réussite mesurable 3"
+  ],
+  "journalEntries": [
+    { "date": "15 octobre 2024", "description": "Description de la 1ère rencontre/séance de travail" },
+    { "date": "8 novembre 2024", "description": "Description de la 2ème rencontre" },
+    { "date": "3 décembre 2024", "description": "Description de la 3ème rencontre — bilan" }
+  ]
+}`;
+
+  const rawText = await callGeminiViaProxy(userPrompt, SEA_SYSTEM_PROMPT, {
+    responseMimeType: 'application/json',
+    temperature: 0.7,
+    maxOutputTokens: 8192,
+  });
+
+  if (!rawText || rawText.trim() === '') {
+    throw new Error("L'IA n'a pas retourné de proposition SEA. Réessayez.");
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleanJsonText(rawText));
+  } catch {
+    const fixed = fixJsonString(rawText);
+    parsed = JSON.parse(fixed);
+  }
+
+  // Normalize selectedLearningOutcomeIds
+  const selectedIds: number[] = Array.isArray(parsed.selectedLearningOutcomeIds)
+    ? parsed.selectedLearningOutcomeIds.filter((n: any) => typeof n === 'number' && n >= 1 && n <= 7)
+    : [3, 5, 7];
+
+  const learningOutcomes: SEALearningOutcome[] = IB_SEA_LEARNING_OUTCOMES.map(lo => ({
+    ...lo,
+    selected: selectedIds.includes(lo.id),
+  }));
+
+  return {
+    id: `sea_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    grade,
+    subject: unit.subject,
+    teacherName: unit.teacherName || '',
+    sourceUnitTitle: unit.title,
+    sourceUnitId: unit.id,
+    title: parsed.title || `Projet SEA — ${unit.title}`,
+    actionTypes: (parsed.actionTypes || ['Indirect']) as SEAActionType[],
+    projectDescription: parsed.projectDescription || '',
+    communityNeed: parsed.communityNeed || '',
+    linkToUnit: parsed.linkToUnit || '',
+    learningOutcomes,
+    atlSkills: Array.isArray(parsed.atlSkills) ? parsed.atlSkills : [],
+    journalEntries: Array.isArray(parsed.journalEntries)
+      ? parsed.journalEntries.slice(0, 5).map((e: any) => ({ date: e.date || '', description: e.description || '' }))
+      : [{ date: '', description: '' }, { date: '', description: '' }, { date: '', description: '' }],
+    reflectionPrompts: Array.isArray(parsed.reflectionPrompts)
+      ? parsed.reflectionPrompts.slice(0, 3).map((q: string) => ({ question: q }))
+      : [],
+    successCriteria: Array.isArray(parsed.successCriteria)
+      ? parsed.successCriteria.slice(0, 4).map((s: string) => ({ description: s }))
+      : [],
+    globalContext: unit.globalContext,
+    keyConcept: unit.keyConcept,
+    createdAt: new Date().toISOString(),
+  };
+};
+
+export const generateServiceActionForGrade = async (
+  plans: UnitPlan[],
+  grade: string,
+  onProgress?: (current: number, total: number, unitTitle: string) => void
+): Promise<ServiceActionPlan[]> => {
+  if (!plans || plans.length === 0) {
+    throw new Error(`Aucune unité trouvée pour ${grade}. Générez d'abord les unités de cette classe.`);
+  }
+  // Generate one SEA per unit (or at most 6 to avoid overload)
+  const target = plans.slice(0, 6);
+  const results: ServiceActionPlan[] = [];
+  for (let i = 0; i < target.length; i++) {
+    const unit = target[i];
+    onProgress?.(i + 1, target.length, unit.title);
+    try {
+      const sea = await generateServiceActionPlan(unit, grade);
+      results.push(sea);
+    } catch (e: any) {
+      console.warn(`⚠️ SEA skipped for unit "${unit.title}": ${e?.message}`);
+    }
+  }
+  if (results.length === 0) {
+    throw new Error("Aucun projet SEA n'a pu être généré. Vérifiez vos unités et réessayez.");
+  }
+  return results;
 };
