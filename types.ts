@@ -65,6 +65,7 @@ export interface UnitPlan {
 
 export enum AppView {
   LOGIN = 'LOGIN',
+  HOME = 'HOME',
   DASHBOARD = 'DASHBOARD',
   EDITOR = 'EDITOR',
   EXAMS_DASHBOARD = 'EXAMS_DASHBOARD',

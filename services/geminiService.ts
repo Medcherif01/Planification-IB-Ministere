@@ -1927,7 +1927,7 @@ export const generateCourseFromChapters = async (
           RÉPARTITION OBLIGATOIRE selon le nombre d'unités générées :
           ▶ 5 unités (cible idéale) : 3 SVT + 2 Physique-Chimie
           ▶ 4 unités               : 2 SVT + 2 Physique-Chimie
-          ▶ 6 unités               : 3 SVT + 3 Physique-Chimie
+          ▶ 6 unités               : 4 SVT + 2 Physique-Chimie
 
           RÈGLES D'APPLICATION :
           1. Le champ "subject" de CHAQUE unité DOIT indiquer "Sciences — SVT" ou "Sciences — Physique-Chimie".
@@ -2959,4 +2959,79 @@ export const generateServiceActionForGrade = async (
     throw new Error("Aucun projet SEA n'a pu être généré. Vérifiez vos unités et réessayez.");
   }
   return results;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateAutoInterdisciplinaryForGrade
+// Analyse toutes les unités existantes d'une classe, identifie les paires/triplets
+// de matières partageant un concept clé ou contexte mondial commun, et génère
+// automatiquement 2 unités interdisciplinaires IB conformes.
+// ─────────────────────────────────────────────────────────────────────────────
+export const generateAutoInterdisciplinaryForGrade = async (
+  grade: string,
+  existingPlans: UnitPlan[],
+  onProgress?: (msg: string) => void
+): Promise<InterdisciplinaryUnit[]> => {
+  if (!existingPlans || existingPlans.length === 0) {
+    throw new Error(`Aucune unité disponible pour ${grade}. Générez d'abord les planifications annuelles.`);
+  }
+
+  // Group plans by subject
+  const bySubject: Record<string, UnitPlan[]> = {};
+  for (const plan of existingPlans) {
+    const subj = plan.subject || 'Inconnu';
+    if (!bySubject[subj]) bySubject[subj] = [];
+    bySubject[subj].push(plan);
+  }
+
+  const subjects = Object.keys(bySubject);
+  if (subjects.length < 2) {
+    throw new Error(`Au moins 2 matières différentes sont nécessaires pour générer des unités interdisciplinaires. Classe ${grade} n'a que : ${subjects.join(', ')}`);
+  }
+
+  // Build a rich context summary of what each subject covers
+  const subjectSummaries = subjects.map(s => {
+    const plans = bySubject[s];
+    const titles = plans.map(p => p.title).filter(Boolean).slice(0, 3).join(' | ');
+    const concepts = [...new Set(plans.map(p => p.keyConcept).filter(Boolean))].slice(0, 2).join(', ');
+    const contexts = [...new Set(plans.map(p => p.globalContext).filter(Boolean))].slice(0, 2).join(', ');
+    const teacher = plans.find(p => p.teacherName)?.teacherName || '';
+    return `- ${s}${teacher ? ` (${teacher})` : ''}: unités=[${titles}] concepts=[${concepts}] contextes=[${contexts}]`;
+  }).join('\n');
+
+  onProgress?.(`Analyse des ${subjects.length} matières de ${grade}…`);
+
+  const userPrompt = `Tu es un expert IB PEI. Génère 2 unités interdisciplinaires pour la classe ${grade}.
+
+MATIÈRES DISPONIBLES ET LEURS UNITÉS EXISTANTES :
+${subjectSummaries}
+
+CONSIGNES STRICTES :
+1. Chaque unité interdisciplinaire DOIT impliquer AU MOINS 2 matières de la liste ci-dessus (3 préférable).
+2. Choisis les matières qui partagent des concepts ou contextes communs.
+3. Le thème doit émerger NATURELLEMENT des unités existantes.
+4. Utilise les noms d'enseignants fournis.
+5. Respecte les règles IB interdisciplinaires (critères A, B, C chacun /8, structure Recherche→Action→Réflexion).
+6. L'énoncé de recherche ne cite PAS les noms des matières.
+
+Retourne un tableau JSON de 2 objets InterdisciplinaryUnit complets.`;
+
+  onProgress?.(`Génération IA en cours…`);
+
+  // Pick top 3 subjects for the generation
+  const disc1 = subjects[0];
+  const disc2 = subjects[1];
+  const additional = subjects.slice(2, 4);
+  const teachers = subjects.map(s => bySubject[s]?.find(p => p.teacherName)?.teacherName || '');
+
+  return generateInterdisciplinaryUnits(
+    grade,
+    disc1,
+    disc2,
+    additional,
+    subjectSummaries,
+    2,
+    teachers,
+    []
+  );
 };

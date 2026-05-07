@@ -2,15 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { UnitPlan, AppView, AppMode } from './types';
 import Dashboard from './components/Dashboard';
 import UnitPlanForm from './components/UnitPlanForm';
-import LoginScreen from './components/LoginScreen';
 import AuthenticationScreen from './components/AuthenticationScreen';
+import HomeScreen from './components/HomeScreen';
 import ExamsWizard from './components/ExamsWizard';
 import { sanitizeUnitPlan } from './services/geminiService';
 import { loadPlansFromDatabase, savePlansToDatabase, migrateLocalStorageToMongoDB, needsMigration, cleanupInvalidLocalStorageKeys } from './services/databaseService';
 
 // ─── Initialisation synchrone depuis localStorage ───────────────────────────
-// On lit localStorage AVANT le premier render pour éviter tout flash de l'écran
-// de connexion quand l'utilisateur est déjà authentifié.
 function getInitialAuthState(): boolean {
   try {
     return localStorage.getItem('isAuthenticated') === 'true';
@@ -28,26 +26,31 @@ function getInitialSession(): { subject: string; grade: string; mode?: AppMode }
   }
 }
 
-function getInitialView(authenticated: boolean, session: { subject: string; grade: string; mode?: AppMode } | null): AppView {
+function getInitialView(
+  authenticated: boolean,
+  session: { subject: string; grade: string; mode?: AppMode } | null
+): AppView {
   if (!authenticated) return AppView.LOGIN;
   try {
     const savedView = localStorage.getItem('currentView') as AppView | null;
-    // EDITOR n'est pas restaurable (editingPlan non persisté) → DASHBOARD
+    // EDITOR n'est pas restaurable → HOME
     if (savedView && savedView !== AppView.LOGIN && savedView !== AppView.EDITOR) {
       return savedView;
     }
     if (session?.mode === AppMode.EXAMS) return AppView.EXAMS_WIZARD;
-    if (session?.mode === AppMode.PEI_PLANNER) return AppView.DASHBOARD;
-    return AppView.LOGIN; // écran de sélection matière/classe
+    if (session?.mode === AppMode.PEI_PLANNER && session.subject && session.grade) {
+      return AppView.DASHBOARD;
+    }
+    return AppView.HOME;
   } catch {
-    return AppView.LOGIN;
+    return AppView.HOME;
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 const App: React.FC = () => {
-  // Initialisation SYNCHRONE (pas de useEffect) → zéro flash au rechargement
+  // Initialisation SYNCHRONE → zéro flash au rechargement
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => getInitialAuthState());
   const [session, setSession] = useState<{ subject: string; grade: string; mode?: AppMode } | null>(
     () => (getInitialAuthState() ? getInitialSession() : null)
@@ -62,14 +65,12 @@ const App: React.FC = () => {
   const [editingPlan, setEditingPlan] = useState<UnitPlan | undefined>(undefined);
   const [migrationDone, setMigrationDone] = useState(false);
 
-  // Migration automatique au démarrage de l'application
+  // Migration automatique au démarrage
   useEffect(() => {
     const runMigration = async () => {
       if (migrationDone) return;
-
       try {
         cleanupInvalidLocalStorageKeys();
-
         if (needsMigration()) {
           console.log('🚀 Démarrage de la migration automatique localStorage → MongoDB');
           const result = await migrateLocalStorageToMongoDB();
@@ -80,18 +81,16 @@ const App: React.FC = () => {
             console.warn(`⚠️ ${result.errors} erreur(s) lors de la migration`);
           }
         } else {
-          console.log('✅ Aucune migration nécessaire (localStorage vide ou déjà migré)');
+          console.log('✅ Aucune migration nécessaire');
         }
-
         setMigrationDone(true);
       } catch (error) {
         console.error('❌ Erreur lors de la migration automatique:', error);
         setMigrationDone(true);
       }
     };
-
     runMigration();
-  }, []); // Exécuter une seule fois au montage
+  }, []);
 
   // Charger les plans quand la session change (depuis MongoDB)
   useEffect(() => {
@@ -137,34 +136,33 @@ const App: React.FC = () => {
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
-  /** Appelé par AuthenticationScreen après connexion réussie (ou auto-reconnexion) */
+  /** Appelé par AuthenticationScreen après connexion réussie */
   const handleAuthenticated = () => {
     setIsAuthenticated(true);
     const savedSession = getInitialSession();
     const savedView = localStorage.getItem('currentView') as AppView | null;
 
-    if (savedSession) {
+    if (savedSession && savedSession.mode === AppMode.EXAMS) {
       setSession(savedSession);
-      const restoredView =
-        savedView && savedView !== AppView.LOGIN && savedView !== AppView.EDITOR
-          ? savedView
-          : null;
-      if (restoredView) {
-        setView(restoredView);
-      } else if (savedSession.mode === AppMode.EXAMS) {
-        setView(AppView.EXAMS_WIZARD);
-      } else if (savedSession.mode === AppMode.PEI_PLANNER) {
-        setView(AppView.DASHBOARD);
-      } else {
-        setView(AppView.LOGIN);
-      }
+      setView(AppView.EXAMS_WIZARD);
+    } else if (
+      savedSession &&
+      savedSession.mode === AppMode.PEI_PLANNER &&
+      savedSession.subject &&
+      savedSession.grade &&
+      savedView === AppView.DASHBOARD
+    ) {
+      setSession(savedSession);
+      setView(AppView.DASHBOARD);
     } else {
-      setView(AppView.LOGIN);
+      // Toujours aller vers le HomeScreen PEI après connexion
+      setView(AppView.HOME);
+      localStorage.setItem('currentView', AppView.HOME);
     }
   };
 
-  /** Appelé par LoginScreen quand l'utilisateur choisit matière / classe / mode */
-  const handleLogin = (subject: string, grade: string, mode: AppMode) => {
+  /** Appelé par HomeScreen quand l'utilisateur choisit matière / classe */
+  const handleSelectSubjectGrade = (subject: string, grade: string, mode: AppMode) => {
     if (mode === AppMode.EXAMS) {
       const sessionData = { subject: '', grade: '', mode };
       setSession(sessionData);
@@ -180,22 +178,16 @@ const App: React.FC = () => {
     }
   };
 
-  /**
-   * Retour à l'écran de sélection matière/classe SANS déconnecter l'utilisateur.
-   * La session d'authentification (identifiants) est conservée dans localStorage —
-   * seule la session de travail (matière/classe) est effacée.
-   * L'utilisateur n'a PAS à ressaisir son mot de passe.
-   */
-  const handleBackToModuleSelect = () => {
+  /** Retour au HomeScreen SANS déconnecter */
+  const handleBackToHome = () => {
     setSession(null);
     setCurrentPlans([]);
-    setView(AppView.LOGIN); // LOGIN = écran de sélection module/matière/classe
+    setView(AppView.HOME);
     localStorage.removeItem('userSession');
-    localStorage.setItem('currentView', AppView.LOGIN);
-    // isAuthenticated et les clés auth restent dans localStorage → pas de re-login
+    localStorage.setItem('currentView', AppView.HOME);
   };
 
-  /** Déconnexion complète — efface tout localStorage lié à la session */
+  /** Déconnexion complète */
   const handleLogout = () => {
     console.log('🚪 Déconnexion de l\'utilisateur...');
     localStorage.removeItem('isAuthenticated');
@@ -209,6 +201,14 @@ const App: React.FC = () => {
     setCurrentPlans([]);
     setView(AppView.LOGIN);
     console.log('✅ Déconnexion complète effectuée');
+  };
+
+  const handleGoToExams = () => {
+    const sessionData = { subject: '', grade: '', mode: AppMode.EXAMS };
+    setSession(sessionData);
+    setView(AppView.EXAMS_WIZARD);
+    localStorage.setItem('userSession', JSON.stringify(sessionData));
+    localStorage.setItem('currentView', AppView.EXAMS_WIZARD);
   };
 
   const handleCreateNew = () => {
@@ -280,23 +280,28 @@ const App: React.FC = () => {
 
   // ── Rendu ─────────────────────────────────────────────────────────────────
 
-  // Pas authentifié → écran de connexion avec identifiants
+  // Non authentifié → écran de connexion
   if (!isAuthenticated) {
     return <AuthenticationScreen onAuthenticated={handleAuthenticated} />;
   }
 
-  // Authentifié mais pas encore de session (choix matière/classe/mode)
-  // Le bouton Déconnexion ici effectue une vraie déconnexion complète
-  if (view === AppView.LOGIN) {
-    return <LoginScreen onLogin={handleLogin} onLogout={handleLogout} />;
+  // Authentifié → HomeScreen PEI (sélection classe → matière)
+  if (view === AppView.HOME) {
+    return (
+      <HomeScreen
+        onSelectSubjectGrade={handleSelectSubjectGrade}
+        onLogout={handleLogout}
+        onGoToExams={handleGoToExams}
+      />
+    );
   }
 
-  // Mode Examens — le bouton Retour revient à la sélection de module SANS déconnecter
+  // Mode Examens
   if (view === AppView.EXAMS_WIZARD) {
-    return <ExamsWizard onBack={handleBackToModuleSelect} />;
+    return <ExamsWizard onBack={handleBackToHome} />;
   }
 
-  // Mode PEI Planner
+  // Mode PEI Planner — Dashboard + Editor
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {view === AppView.DASHBOARD && session ? (
@@ -308,7 +313,7 @@ const App: React.FC = () => {
           onEdit={handleEdit}
           onDelete={handleDelete}
           onAddPlans={handleAddPlans}
-          onLogout={handleBackToModuleSelect}
+          onLogout={handleBackToHome}
         />
       ) : (
         <div className="p-4 md:p-8">
