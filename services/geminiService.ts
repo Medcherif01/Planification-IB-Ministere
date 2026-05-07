@@ -1925,8 +1925,8 @@ export const generateCourseFromChapters = async (
           • Physique-Chimie : mécanique, optique, électricité, ondes, chimie, réactions chimiques, matière
 
           RÉPARTITION OBLIGATOIRE selon le nombre d'unités générées :
+          ▶ 4 unités               : 3 SVT + 1 Physique-Chimie
           ▶ 5 unités (cible idéale) : 3 SVT + 2 Physique-Chimie
-          ▶ 4 unités               : 2 SVT + 2 Physique-Chimie
           ▶ 6 unités               : 4 SVT + 2 Physique-Chimie
 
           RÈGLES D'APPLICATION :
@@ -1961,83 +1961,75 @@ export const generateCourseFromChapters = async (
         `;
       }
   
-      const text = await callGeminiViaProxy(
-        userPrompt,
-        systemInstruction,
-        { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 65536 }
-      );
-  
-      if (!text || text.trim() === "") {
-        console.error("❌ L'IA n'a retourné aucune réponse");
-        throw new Error("L'IA n'a pas retourné de plan valide. Veuillez réessayer.");
-      }
-      
-      console.log("✓ Réponse AI reçue pour planification, longueur:", text.length);
-      
-      const cleanedJson = cleanJsonText(text);
-      
-      if (!cleanedJson || cleanedJson === "{}" || cleanedJson === "[]") {
-        console.error("❌ Échec du nettoyage JSON. Texte brut:", text.substring(0, 200));
-        throw new Error("L'IA n'a pas retourné de plan valide. Le format JSON est invalide. Veuillez vérifier que les chapitres sont bien formatés et réessayer.");
-      }
-      
-      console.log("✓ JSON nettoyé pour planification, longueur:", cleanedJson.length);
-      
-      let plans;
-      try {
-        const parsed = JSON.parse(cleanedJson);
-        
-        // Cas 1 : tableau direct  → [ {...}, {...} ]
-        if (Array.isArray(parsed)) {
-          plans = parsed;
+      // ── Helper : appel IA + parsing + validation ────────────────────────
+      const runGeneration = async (prompt: string, sysInstr: string): Promise<any[]> => {
+        const rawText = await callGeminiViaProxy(
+          prompt,
+          sysInstr,
+          { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 65536 }
+        );
+
+        if (!rawText || rawText.trim() === '') {
+          throw new Error("L'IA n'a pas retourné de réponse.");
         }
-        // Cas 2 : objet wrapper (OpenAI/GROQ ne peut pas retourner un tableau à la racine)
-        // Formes possibles : { units:[...] } | { plans:[...] } | { unitPlans:[...] }
-        //                    { unit_plans:[...] } | { data:[...] } | { results:[...] }
-        else if (parsed && typeof parsed === 'object') {
-          const arrayKey = ['units','plans','unitPlans','unit_plans','data','results','planifications']
+
+        const cleaned = cleanJsonText(rawText);
+        if (!cleaned || cleaned === '{}' || cleaned === '[]') {
+          throw new Error("L'IA a retourné un JSON invalide.");
+        }
+
+        const parsed = JSON.parse(cleaned);
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === 'object') {
+          const key = ['units','plans','unitPlans','unit_plans','data','results','planifications']
             .find(k => Array.isArray(parsed[k]));
-          if (arrayKey) {
-            console.log(`✓ Tableau trouvé dans la clé wrapper "${arrayKey}"`);
-            plans = parsed[arrayKey];
-          } else {
-            // Dernier recours : si l'objet ressemble à un plan unique, l'envelopper dans un tableau
-            if (parsed.title || parsed.keyConcept || parsed.subject) {
-              console.log('✓ Objet unique détecté, enveloppé dans un tableau');
-              plans = [parsed];
-            } else {
-              console.error("❌ L'IA n'a pas retourné un tableau de plans, clés reçues:", Object.keys(parsed).join(', '));
-              throw new Error("L'IA n'a pas retourné de plan valide. Veuillez réessayer.");
-            }
-          }
-        } else {
-          throw new Error("Format JSON inattendu.");
+          if (key) return parsed[key];
+          if (parsed.title || parsed.keyConcept || parsed.subject) return [parsed];
         }
-      } catch (parseError: any) {
-        if (parseError.message && (parseError.message.includes('plan valide') || parseError.message.includes('inattendu'))) {
-          throw parseError;
-        }
-        console.error("❌ Erreur de parsing JSON:", parseError);
-        console.error("JSON problématique:", cleanedJson.substring(0, 500));
-        throw new Error("Le format des plans générés est invalide. Veuillez réessayer avec des chapitres plus clairs.");
-      }
-      
-      if (plans.length === 0) {
-        console.error("❌ L'IA a retourné un tableau vide");
-        throw new Error("Aucun plan n'a été généré. Veuillez vérifier que les chapitres sont bien renseignés et réessayer.");
-      }
-      
-      // ── Validation : minimum 4 unités ────────────────────────────────────
+        throw new Error("Format JSON inattendu.");
+      };
+
+      // ── Premier appel ─────────────────────────────────────────────────────
+      let plans = await runGeneration(userPrompt, systemInstruction);
+
+      // ── Retry automatique si < 4 unités générées ─────────────────────────
       if (plans.length < 4) {
-        console.warn(`⚠️ Seulement ${plans.length} unité(s) générée(s) — minimum requis : 4. Relance possible.`);
-        // On ne bloque pas, on avertit. L'utilisateur peut relancer si besoin.
-        // Note : l'IA peut parfois en générer moins si le contenu est court.
+        console.warn(`⚠️ Seulement ${plans.length} unité(s) — relance avec prompt renforcé (tentative 2/3)…`);
+        const retryPrompt = userPrompt + `
+
+‼️‼️‼️ ERREUR CRITIQUE : Tu as généré ${plans.length} unité(s) seulement.
+‼️‼️‼️ C'EST INSUFFISANT. UN PROGRAMME ANNUEL IB PEI REQUIERT OBLIGATOIREMENT AU MINIMUM 4 UNITÉS.
+‼️‼️‼️ Tu DOIS retourner un tableau JSON de EXACTEMENT 4, 5 ou 6 unités — JAMAIS MOINS DE 4.
+‼️‼️‼️ Si le contenu semble court, DIVISE les chapitres en sous-thèmes distincts pour atteindre 4 unités.
+‼️‼️‼️ RETOURNE UNIQUEMENT LE JSON — PAS DE TEXTE AUTOUR.`;
+        plans = await runGeneration(retryPrompt, systemInstruction);
       }
+
+      // ── Deuxième retry si toujours < 4 ───────────────────────────────────
+      if (plans.length < 4) {
+        console.warn(`⚠️ Toujours ${plans.length} unité(s) après 1er retry — tentative 3/3 avec température basse…`);
+        const forcePrompt = `Tu es un planificateur IB PEI. Pour la matière "${subject}", niveau "${gradeLevel}", programme :
+${allChapters}
+
+Génère EXACTEMENT 5 unités annuelles IB PEI. Retourne un tableau JSON de 5 objets UnitPlan complets.
+Règle absolue : 5 objets dans le tableau, ni plus ni moins.`;
+        plans = await runGeneration(forcePrompt, systemInstruction);
+      }
+
+      // ── Blocage définitif si toujours insuffisant ─────────────────────────
+      if (plans.length < 4) {
+        throw new Error(
+          `❌ L'IA n'a généré que ${plans.length} unité(s) après 3 tentatives.\n\n` +
+          `Vérifiez que vous avez entré au moins 4 chapitres distincts dans le programme.\n` +
+          `Exemple : "Chapitre 1 : … \nChapitre 2 : … \nChapitre 3 : … \nChapitre 4 : …"`
+        );
+      }
+
       if (plans.length > 6) {
-        console.warn(`⚠️ ${plans.length} unités générées — tronqué à 6 (maximum autorisé)`);
+        console.warn(`⚠️ ${plans.length} unités générées — tronqué à 6`);
         plans = plans.slice(0, 6);
       }
-      
+
       console.log(`✓ ${plans.length} plan(s) validé(s) avec succès`);
 
       return plans.map((p: any, index: number) => {
