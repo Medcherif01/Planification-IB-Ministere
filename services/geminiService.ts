@@ -2056,6 +2056,323 @@ Règle absolue : 5 objets dans le tableau, ni plus ni moins.`;
   };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// generateAssessmentsForUnit — Génère uniquement les évaluations critériées
+// pour une unité existante (utilisé après modification manuelle d'une unité)
+// ─────────────────────────────────────────────────────────────────────────────
+export const generateAssessmentsForUnit = async (plan: UnitPlan): Promise<AssessmentData[]> => {
+  const subject = plan.subject || '';
+  const gradeLevel = plan.gradeLevel || '';
+  const lang = getGenerationLanguage(subject);
+  const isDesign = isDesignSubject(subject);
+
+  const criteriaCount = isDesign ? 4 : 2;
+  const criteriaRule = isDesign
+    ? 'EXACTEMENT 4 critères A, B, C, D (Dossier de conception IB Design)'
+    : 'EXACTEMENT 2 critères choisis parmi A, B, C, D (les plus pertinents pour cette unité)';
+
+  const sysInstruction = getSystemInstruction(subject);
+
+  const prompt = lang === 'en'
+    ? `
+You are an IB MYP assessment expert. Generate ONLY the criterion-based assessments for the following existing unit. Do NOT regenerate the full unit plan.
+
+Unit Title: "${plan.title}"
+Subject: ${subject}
+Grade: ${gradeLevel}
+Statement of Inquiry: "${plan.statementOfInquiry}"
+Key Concept: ${plan.keyConcept}
+Related Concepts: ${(plan.relatedConcepts || []).join(', ')}
+Global Context: ${plan.globalContext}
+Chapters/Content: ${plan.chapters || plan.content || ''}
+Objectives: ${(plan.objectives || []).join(', ')}
+
+MANDATORY RULE: Generate ${criteriaRule}.
+Each criterion must have AT LEAST 3 strands (sub-aspects).
+Each criterion must have at least 1 exercise adapted to this specific unit.
+Design assessments for 30-minute duration.
+
+Return ONLY a valid JSON array of assessment objects (no surrounding object, just the array):
+[
+  {
+    "criterion": "A",
+    "criterionName": "Knowledge and Understanding",
+    "maxPoints": 8,
+    "strands": ["i. ...", "ii. ...", "iii. ..."],
+    "rubricRows": [
+      {"level": "1-2", "descriptor": "..."},
+      {"level": "3-4", "descriptor": "..."},
+      {"level": "5-6", "descriptor": "..."},
+      {"level": "7-8", "descriptor": "..."}
+    ],
+    "exercises": [
+      {
+        "title": "Exercise 1",
+        "content": "...",
+        "criterionReference": "Criterion A: i, ii",
+        "workspaceNeeded": true
+      }
+    ]
+  }
+]
+`
+    : `
+Tu es un expert en évaluation IB PEI. Génère UNIQUEMENT les évaluations critériées pour l'unité existante suivante. NE régénère PAS le plan complet.
+
+Titre de l'unité: "${plan.title}"
+Matière: ${subject}
+Niveau: ${gradeLevel}
+Énoncé de recherche: "${plan.statementOfInquiry}"
+Concept clé: ${plan.keyConcept}
+Concepts connexes: ${(plan.relatedConcepts || []).join(', ')}
+Contexte mondial: ${plan.globalContext}
+Chapitres/Contenu: ${plan.chapters || plan.content || ''}
+Objectifs: ${(plan.objectives || []).join(', ')}
+
+RÈGLE OBLIGATOIRE: Génère ${criteriaRule}.
+Chaque critère doit avoir AU MINIMUM 3 sous-aspects (strands).
+Chaque critère doit avoir au moins 1 exercice adapté à cette unité spécifique.
+Conçois les évaluations pour une durée de 30 minutes.
+
+Retourne UNIQUEMENT un tableau JSON d'objets évaluation (pas d'objet englobant, juste le tableau) :
+[
+  {
+    "criterion": "A",
+    "criterionName": "Connaissances et compréhension",
+    "maxPoints": 8,
+    "strands": ["i. ...", "ii. ...", "iii. ..."],
+    "rubricRows": [
+      {"level": "1-2", "descriptor": "..."},
+      {"level": "3-4", "descriptor": "..."},
+      {"level": "5-6", "descriptor": "..."},
+      {"level": "7-8", "descriptor": "..."}
+    ],
+    "exercises": [
+      {
+        "title": "Exercice 1",
+        "content": "...",
+        "criterionReference": "Critère A : i, ii",
+        "workspaceNeeded": true
+      }
+    ]
+  }
+]
+`;
+
+  try {
+    const rawText = await callGeminiViaProxy(
+      prompt,
+      sysInstruction,
+      { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 32768 }
+    );
+
+    const cleaned = cleanJsonText(rawText);
+    const parsed = JSON.parse(cleaned);
+
+    let assessmentsRaw: any[] = Array.isArray(parsed) ? parsed : (parsed.assessments || []);
+    const assessments = assessmentsRaw
+      .map(sanitizeAssessmentData)
+      .filter((a): a is AssessmentData => !!a);
+
+    return enforceAssessmentsRules(assessments, subject);
+  } catch (err: any) {
+    throw new Error(`Erreur génération évaluations: ${err?.message || err}`);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// regenerateAllUnitsFromSummary — Refait toutes les unités de l'année en se
+// basant sur le titre + énoncé de recherche + chapitres + critères existants
+// ─────────────────────────────────────────────────────────────────────────────
+export interface UnitSummaryInput {
+  title: string;
+  statementOfInquiry: string;
+  chapters: string;
+  objectives: string[]; // Critères d'évaluation ex: ["Critère A", "Critère C"]
+}
+
+export const regenerateAllUnitsFromSummary = async (
+  unitSummaries: UnitSummaryInput[],
+  subject: string,
+  gradeLevel: string
+): Promise<UnitPlan[]> => {
+  if (!unitSummaries || unitSummaries.length === 0) {
+    throw new Error('Aucune unité fournie pour la régénération.');
+  }
+
+  const lang = getGenerationLanguage(subject);
+  const sysInstruction = getSystemInstruction(subject);
+  const subjectConcepts = getIBConceptsForSubject(subject);
+
+  const unitDescriptions = unitSummaries.map((u, i) =>
+    `Unité ${i + 1}:
+  - Titre: "${u.title}"
+  - Énoncé de recherche: "${u.statementOfInquiry}"
+  - Chapitres: ${u.chapters || 'Non spécifié'}
+  - Critères d'évaluation: ${u.objectives.join(', ') || 'Non spécifié'}`
+  ).join('\n\n');
+
+  const prompt = lang === 'en'
+    ? `
+You are an IB MYP expert. Regenerate ${unitSummaries.length} complete unit plans based STRICTLY on these existing summaries:
+
+${unitDescriptions}
+
+Subject: ${subject}
+Grade: ${gradeLevel}
+
+RULES:
+- Keep the EXACT title and statement of inquiry as provided (do not change them)
+- Keep the same chapters/content as provided
+- Keep the same assessment criteria (objectives) as provided
+- Generate ALL other fields: keyConcept, relatedConcepts, globalContext, inquiryQuestions, atlSkills, learningExperiences, summativeAssessment, formativeAssessment, differentiation, resources, reflection
+- Generate criterion-based assessments (assessments array) matching the specified criteria
+- Each criterion must have at least 3 strands and at least 1 exercise
+
+Return ONLY a valid JSON array of ${unitSummaries.length} complete UnitPlan objects.
+`
+    : `
+Tu es un expert IB PEI. Régénère ${unitSummaries.length} plans d'unités COMPLETS en te basant STRICTEMENT sur ces résumés existants:
+
+${unitDescriptions}
+
+Matière: ${subject}
+Niveau: ${gradeLevel}
+
+${!isDesignSubject(subject) && lang !== 'en' ? `Concepts IB officiels pour ${subject}:
+- Concepts clés autorisés: ${subjectConcepts.keyConcepts.join(', ')}
+- Concepts connexes autorisés: ${subjectConcepts.relatedConcepts.join(', ')}` : ''}
+
+RÈGLES ABSOLUES:
+- Garde le TITRE et l'ÉNONCÉ DE RECHERCHE EXACTEMENT tels que fournis (ne les modifie pas)
+- Garde les MÊMES chapitres/contenu que fournis
+- Garde les MÊMES critères d'évaluation (objectifs) que fournis
+- Génère TOUS les autres champs: keyConcept, relatedConcepts, globalContext, inquiryQuestions, atlSkills, learningExperiences, summativeAssessment, formativeAssessment, differentiation, resources, reflection
+- Génère les évaluations critériées (tableau "assessments") correspondant aux critères spécifiés
+- Chaque critère doit avoir au minimum 3 sous-aspects et au moins 1 exercice adapté
+- Respecte les concepts IB officiels de la matière pour keyConcept et relatedConcepts
+
+Retourne UNIQUEMENT un tableau JSON valide de ${unitSummaries.length} objets UnitPlan complets.
+`;
+
+  const taskInstruction = `
+TÂCHE: Régénérer ${unitSummaries.length} unités complètes en respectant les titres, énoncés et chapitres fournis.
+Retourne un tableau JSON de ${unitSummaries.length} objets UnitPlan.
+`;
+
+  const fullSystemInstruction = `${sysInstruction}\n${taskInstruction}`;
+
+  const rawText = await callGeminiViaProxy(
+    prompt,
+    fullSystemInstruction,
+    { responseMimeType: 'application/json', temperature: 0.6, maxOutputTokens: 65536 }
+  );
+
+  const cleaned = cleanJsonText(rawText);
+  const parsed = JSON.parse(cleaned);
+
+  let plansRaw: any[] = Array.isArray(parsed) ? parsed : (parsed.units || parsed.plans || [parsed]);
+
+  return plansRaw.map((p: any, idx: number) => {
+    // Force-preserve the original title, SOI, chapters and objectives from summaries
+    const original = unitSummaries[idx] || unitSummaries[0];
+    const sanitized = sanitizeUnitPlan(p, subject, gradeLevel);
+    return {
+      ...sanitized,
+      id: Date.now().toString() + '-' + idx,
+      title: original.title || sanitized.title,
+      statementOfInquiry: original.statementOfInquiry || sanitized.statementOfInquiry,
+      chapters: original.chapters || sanitized.chapters,
+      objectives: original.objectives.length > 0 ? original.objectives : sanitized.objectives,
+    };
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateSingleUnit — Génère UNE seule unité complète (avec évaluations)
+// Mode automatique depuis le Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+export const generateSingleUnit = async (
+  unitTitle: string,
+  statementOfInquiry: string,
+  chapters: string,
+  objectives: string[], // critères choisis ex: ["A", "C"]
+  subject: string,
+  gradeLevel: string
+): Promise<UnitPlan> => {
+  const lang = getGenerationLanguage(subject);
+  const sysInstruction = getSystemInstruction(subject);
+  const subjectConcepts = getIBConceptsForSubject(subject);
+  const isDesign = isDesignSubject(subject);
+
+  const criteriaRule = isDesign
+    ? 'EXACTEMENT 4 critères A, B, C, D'
+    : objectives.length > 0
+      ? `EXACTEMENT les critères suivants: ${objectives.join(', ')}`
+      : 'EXACTEMENT 2 critères (les plus pertinents)';
+
+  const prompt = lang === 'en'
+    ? `
+Generate a COMPLETE single IB MYP unit plan with criterion-based assessments.
+
+Unit Title: "${unitTitle}"
+Statement of Inquiry: "${statementOfInquiry}"
+Chapters/Content: ${chapters}
+Subject: ${subject}
+Grade: ${gradeLevel}
+Assessment Criteria to use: ${criteriaRule}
+
+Generate all fields: keyConcept, relatedConcepts, globalContext, inquiryQuestions, atlSkills, content, learningExperiences, summativeAssessment, formativeAssessment, differentiation, resources, reflection, AND assessments array.
+
+Keep the title "${unitTitle}" and statement of inquiry "${statementOfInquiry}" exactly as provided.
+
+Return ONLY a valid JSON object (single UnitPlan).
+`
+    : `
+Génère un plan d'unité IB PEI COMPLET avec évaluations critériées.
+
+Titre de l'unité: "${unitTitle}"
+Énoncé de recherche: "${statementOfInquiry}"
+Chapitres/Contenu: ${chapters}
+Matière: ${subject}
+Niveau: ${gradeLevel}
+Critères d'évaluation à utiliser: ${criteriaRule}
+
+${!isDesign ? `Concepts IB officiels pour ${subject}:
+- Concepts clés autorisés: ${subjectConcepts.keyConcepts.join(', ')}
+- Concepts connexes autorisés: ${subjectConcepts.relatedConcepts.join(', ')}` : ''}
+
+Génère TOUS les champs: keyConcept, relatedConcepts, globalContext, inquiryQuestions, atlSkills, content, learningExperiences, summativeAssessment, formativeAssessment, differentiation, resources, reflection, ET le tableau assessments.
+
+Garde le titre "${unitTitle}" et l'énoncé de recherche "${statementOfInquiry}" EXACTEMENT tels que fournis.
+
+Retourne UNIQUEMENT un objet JSON valide (un seul UnitPlan).
+`;
+
+  const rawText = await callGeminiViaProxy(
+    prompt,
+    sysInstruction,
+    { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 32768 }
+  );
+
+  const cleaned = cleanJsonText(rawText);
+  const parsed = JSON.parse(cleaned);
+
+  const sanitized = sanitizeUnitPlan(
+    Array.isArray(parsed) ? parsed[0] : parsed,
+    subject,
+    gradeLevel
+  );
+
+  return {
+    ...sanitized,
+    id: Date.now().toString(),
+    title: unitTitle || sanitized.title,
+    statementOfInquiry: statementOfInquiry || sanitized.statementOfInquiry,
+    chapters: chapters || sanitized.chapters,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // generateOverviewForSubject — Génère un résumé enrichi de toutes les unités
 // d'une matière sur les 5 années PEI pour l'export Overview Word
 // ─────────────────────────────────────────────────────────────────────────────

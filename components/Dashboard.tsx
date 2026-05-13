@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UnitPlan, ServiceActionPlan } from '../types';
-import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade } from '../services/geminiService';
+import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput } from '../services/geminiService';
 import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan } from '../services/wordExportService';
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
+import AddEditUnitModal from './AddEditUnitModal';
 
 interface DashboardProps {
   currentSubject: string;
@@ -15,10 +16,12 @@ interface DashboardProps {
   onEdit: (plan: UnitPlan) => void;
   onDelete: (id: string) => void;
   onAddPlans: (newPlans: UnitPlan[]) => void;
+  onAddSingleUnit?: (plan: UnitPlan) => void;
+  onUpdateUnit?: (plan: UnitPlan) => void;
   onLogout: () => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, plans, onCreateNew, onEdit, onDelete, onAddPlans, onLogout }) => {
+const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, plans, onCreateNew, onEdit, onDelete, onAddPlans, onAddSingleUnit, onUpdateUnit, onLogout }) => {
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   // Pre-fill subject and grade from session
   const [bulkSubject, setBulkSubject] = useState(currentSubject);
@@ -76,6 +79,17 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   const [driveFormParsed, setDriveFormParsed] = useState<DriveFormConfig | null>(null);
   const [isDriveFormGenerating, setIsDriveFormGenerating] = useState(false);
   const driveFormTextRef = useRef<HTMLTextAreaElement>(null);
+
+  // ── État : Ajouter/Modifier une unité ─────────────────────────────────────
+  const [isAddEditUnitModalOpen, setIsAddEditUnitModalOpen] = useState(false);
+  const [editingUnitPlan, setEditingUnitPlan] = useState<UnitPlan | null>(null);
+
+  // ── État : Refaire toutes les unités de l'année ───────────────────────────
+  const [isRegenAllModalOpen, setIsRegenAllModalOpen] = useState(false);
+  const [isRegenAllGenerating, setIsRegenAllGenerating] = useState(false);
+  const [regenAllProgress, setRegenAllProgress] = useState('');
+  // Editable summaries for regen
+  const [regenSummaries, setRegenSummaries] = useState<UnitSummaryInput[]>([]);
 
   // Vérifier la complétude de la matière sur tous les PEI au montage
   useEffect(() => {
@@ -554,6 +568,102 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     }
   };
 
+  // ── Handlers : Ajouter / Modifier une unité ──────────────────────────────
+  const handleOpenAddUnit = () => {
+    setEditingUnitPlan(null);
+    setIsAddEditUnitModalOpen(true);
+  };
+
+  const handleOpenEditUnit = (plan: UnitPlan) => {
+    setEditingUnitPlan(plan);
+    setIsAddEditUnitModalOpen(true);
+  };
+
+  const handleSaveUnit = (plan: UnitPlan) => {
+    const planWithSession = {
+      ...plan,
+      subject: plan.subject || currentSubject,
+      gradeLevel: plan.gradeLevel || currentGrade,
+    };
+    if (editingUnitPlan && editingUnitPlan.id) {
+      // Modification d'une unité existante
+      if (onUpdateUnit) {
+        onUpdateUnit(planWithSession);
+      } else {
+        // Fallback: replace in the whole plans array
+        const updated = plans.map(p => p.id === planWithSession.id ? planWithSession : p);
+        onAddPlans(updated);
+      }
+    } else {
+      // Ajout d'une nouvelle unité
+      if (onAddSingleUnit) {
+        onAddSingleUnit({ ...planWithSession, id: Date.now().toString() });
+      } else {
+        onAddPlans([...plans, { ...planWithSession, id: Date.now().toString() }]);
+      }
+    }
+    setIsAddEditUnitModalOpen(false);
+    setEditingUnitPlan(null);
+  };
+
+  // ── Handlers : Refaire toutes les unités de l'année ──────────────────────
+  const handleOpenRegenAll = () => {
+    // Init summaries from current plans
+    const summaries: UnitSummaryInput[] = plans.map(p => ({
+      title: p.title || '',
+      statementOfInquiry: p.statementOfInquiry || '',
+      chapters: p.chapters || p.content || '',
+      objectives: (p.assessments || []).map(a => `Critère ${a.criterion}`).filter(Boolean).length > 0
+        ? (p.assessments || []).map(a => `Critère ${a.criterion}`)
+        : (p.objectives || []),
+    }));
+    setRegenSummaries(summaries);
+    setIsRegenAllModalOpen(true);
+    setRegenAllProgress('');
+  };
+
+  const handleRegenAllUnits = async () => {
+    if (regenSummaries.length === 0) {
+      alert('Aucune unité à régénérer.');
+      return;
+    }
+    const hasEmpty = regenSummaries.some(s => !s.title.trim() || !s.statementOfInquiry.trim());
+    if (hasEmpty) {
+      alert('Veuillez remplir le titre et l\'énoncé de recherche pour toutes les unités.');
+      return;
+    }
+    setIsRegenAllGenerating(true);
+    setRegenAllProgress('Génération en cours…');
+    try {
+      const newPlans = await regenerateAllUnitsFromSummary(regenSummaries, currentSubject, currentGrade);
+      // Preserve teacher names from original plans
+      const enriched = newPlans.map((p, idx) => ({
+        ...p,
+        teacherName: plans[idx]?.teacherName || p.teacherName,
+        subject: currentSubject,
+        gradeLevel: currentGrade,
+      }));
+      if (onAddPlans) {
+        // Use the existing onAddPlans (it will ask confirmation since plans exist)
+        onAddPlans(enriched);
+      }
+      setIsRegenAllModalOpen(false);
+      setRegenAllProgress('');
+    } catch (e: any) {
+      alert('❌ Erreur lors de la régénération:\n\n' + (e?.message || e));
+    } finally {
+      setIsRegenAllGenerating(false);
+    }
+  };
+
+  const updateRegenSummary = (idx: number, field: keyof UnitSummaryInput, value: string | string[]) => {
+    setRegenSummaries(prev => {
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], [field]: value };
+      return copy;
+    });
+  };
+
   // ── Handlers : Formulaire Drive avec balises ───────────────────────────────
   const handleParseDriveForm = () => {
     if (!driveFormText.trim()) return;
@@ -972,12 +1082,23 @@ Chapitre 4 : Algèbre et équations
               <Layers size={20} />
               Planification Annuelle
             </button>
+             {/* ── Bouton Refaire toutes les unités ────────────────── */}
+             {plans.length > 0 && (
+               <button
+                 onClick={handleOpenRegenAll}
+                 className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
+                 title="Refaire toutes les unités de l'année (basé sur titre + énoncé + chapitres + critères)"
+               >
+                 <RotateCcw size={20} />
+                 Refaire Toutes les Unités
+               </button>
+             )}
             <button 
-              onClick={onCreateNew}
+              onClick={handleOpenAddUnit}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
             >
               <Plus size={20} />
-              Nouvelle unité
+              Ajouter une unité
             </button>
         </div>
       </header>
@@ -1066,7 +1187,7 @@ Chapitre 4 : Algèbre et équations
                 </button>
                 <div className="mt-4">
                      <span className="text-slate-400 text-sm">ou</span>
-                     <button onClick={onCreateNew} className="ml-2 text-blue-600 hover:underline text-sm">créer une unité manuellement</button>
+                     <button onClick={handleOpenAddUnit} className="ml-2 text-blue-600 hover:underline text-sm">ajouter une unité (auto ou manuel)</button>
                 </div>
             </div>
         ) : filteredPlans.length === 0 ? (
@@ -1093,9 +1214,9 @@ Chapitre 4 : Algèbre et équations
                             </div>
                             <div className="flex flex-col gap-2">
                                 <button 
-                                    onClick={() => onEdit(plan)}
+                                    onClick={() => handleOpenEditUnit(plan)}
                                     className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition ml-auto"
-                                    title="Modifier"
+                                    title="Modifier l'unité"
                                 >
                                     <Edit2 size={18} />
                                 </button>
@@ -2228,6 +2349,161 @@ Chapitre 4 : Algèbre et équations
       )}
 
     </div>
+
+    {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : AJOUTER / MODIFIER UNE UNITÉ
+        ═══════════════════════════════════════════════════════════════════ */}
+    <AddEditUnitModal
+      isOpen={isAddEditUnitModalOpen}
+      onClose={() => { setIsAddEditUnitModalOpen(false); setEditingUnitPlan(null); }}
+      onSave={handleSaveUnit}
+      existingPlan={editingUnitPlan}
+      subject={currentSubject}
+      gradeLevel={currentGrade}
+    />
+
+    {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : REFAIRE TOUTES LES UNITÉS DE L'ANNÉE
+        ═══════════════════════════════════════════════════════════════════ */}
+    {isRegenAllModalOpen && (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-amber-600 to-orange-600 text-white p-5 rounded-t-2xl flex justify-between items-start">
+            <div>
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <RotateCcw size={22} />
+                Refaire toutes les unités de l'année
+              </h2>
+              <p className="text-amber-100 text-sm mt-1">
+                Régénère {plans.length} unité(s) complète(s) en conservant le titre, l'énoncé, les chapitres et les critères
+              </p>
+            </div>
+            <button
+              onClick={() => { setIsRegenAllModalOpen(false); setRegenAllProgress(''); }}
+              className="text-white hover:text-amber-200 transition p-1"
+            >
+              <X size={24} />
+            </button>
+          </div>
+
+          {/* Body scrollable */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {/* Info box */}
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+              <p className="font-semibold mb-2">ℹ️ Comment fonctionne cette option ?</p>
+              <ul className="list-disc pl-4 space-y-1 text-amber-700">
+                <li>L'IA régénère <strong>tous les champs</strong> de chaque unité (concepts, contexte, questions, activités, évaluations…)</li>
+                <li>Elle <strong>conserve</strong> le titre, l'énoncé de recherche, les chapitres et les critères que vous définissez ci-dessous</li>
+                <li>Vous pouvez modifier ces informations avant de lancer la régénération</li>
+                <li>⚠️ La planification existante sera <strong>remplacée</strong></li>
+              </ul>
+            </div>
+
+            {/* Editable summaries */}
+            <div className="space-y-4">
+              {regenSummaries.map((summary, idx) => (
+                <div key={idx} className="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="bg-amber-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                      Unité {idx + 1}
+                    </span>
+                    <span className="text-xs text-slate-500 font-medium">{summary.title || 'Sans titre'}</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Titre *</label>
+                    <input
+                      value={summary.title}
+                      onChange={e => updateRegenSummary(idx, 'title', e.target.value)}
+                      className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-400 outline-none"
+                      placeholder="Titre de l'unité"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Énoncé de recherche *</label>
+                    <textarea
+                      value={summary.statementOfInquiry}
+                      onChange={e => updateRegenSummary(idx, 'statementOfInquiry', e.target.value)}
+                      rows={2}
+                      className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-400 outline-none resize-none"
+                      placeholder="Énoncé de recherche…"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Chapitres</label>
+                    <textarea
+                      value={summary.chapters}
+                      onChange={e => updateRegenSummary(idx, 'chapters', e.target.value)}
+                      rows={2}
+                      className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-400 outline-none resize-none"
+                      placeholder="Chapitres et leçons…"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Critères d'évaluation</label>
+                    <div className="flex flex-wrap gap-2">
+                      {['A', 'B', 'C', 'D'].map(letter => {
+                        const isSelected = summary.objectives.some(o => o.includes(letter));
+                        return (
+                          <button
+                            key={letter}
+                            type="button"
+                            onClick={() => {
+                              const current = summary.objectives.some(o => o.includes(letter));
+                              const newObjs = current
+                                ? summary.objectives.filter(o => !o.includes(letter))
+                                : [...summary.objectives, `Critère ${letter}`];
+                              updateRegenSummary(idx, 'objectives', newObjs);
+                            }}
+                            className={`px-3 py-1 rounded-lg text-xs font-semibold border transition ${
+                              isSelected
+                                ? 'bg-amber-600 text-white border-amber-600'
+                                : 'bg-white text-slate-600 border-slate-300 hover:border-amber-400'
+                            }`}
+                          >
+                            Critère {letter}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-between items-center gap-4">
+            <p className="text-xs text-slate-500">
+              {regenSummaries.length} unité(s) seront régénérées pour <strong>{currentSubject} — {currentGrade}</strong>
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setIsRegenAllModalOpen(false); setRegenAllProgress(''); }}
+                className="px-5 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-sm transition"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleRegenAllUnits}
+                disabled={isRegenAllGenerating}
+                className="px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm flex items-center gap-2 transition disabled:opacity-60 shadow"
+              >
+                {isRegenAllGenerating ? (
+                  <><Loader2 className="animate-spin" size={18} />{regenAllProgress || 'Génération…'}</>
+                ) : (
+                  <><RotateCcw size={18} />Lancer la régénération</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 };

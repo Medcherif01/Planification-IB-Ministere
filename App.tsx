@@ -273,6 +273,20 @@ const App: React.FC = () => {
     );
   };
 
+  /** Ajouter une seule nouvelle unité (sans remplacement) */
+  const handleAddSingleUnit = (plan: UnitPlan) => {
+    if (!session) return;
+    const signed = { ...plan, subject: session.subject, gradeLevel: session.grade };
+    setCurrentPlans(prev => [...prev, signed]);
+  };
+
+  /** Mettre à jour une unité existante */
+  const handleUpdateUnit = (plan: UnitPlan) => {
+    if (!session) return;
+    const signed = { ...plan, subject: session.subject, gradeLevel: session.grade };
+    setCurrentPlans(prev => prev.map(p => p.id === signed.id ? signed : p));
+  };
+
   const handleCancel = () => {
     setView(AppView.DASHBOARD);
     localStorage.setItem('currentView', AppView.DASHBOARD);
@@ -313,6 +327,8 @@ const App: React.FC = () => {
           onEdit={handleEdit}
           onDelete={handleDelete}
           onAddPlans={handleAddPlans}
+          onAddSingleUnit={handleAddSingleUnit}
+          onUpdateUnit={handleUpdateUnit}
           onLogout={handleBackToHome}
         />
       ) : (
