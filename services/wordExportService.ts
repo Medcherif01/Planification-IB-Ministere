@@ -1679,3 +1679,132 @@ ${allUnitsHtml}
   const saveAs = (FileSaver as any).saveAs || FileSaver;
   saveAs(blob, `Plan_Complet_Interdisciplinaire_Toutes_Classes.doc`);
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// exportInterdisciplinaryAssessmentsToZip
+// Génère un ZIP contenant un fichier .docx d'évaluation critériée (même modèle
+// que les unités classiques) pour CHAQUE critère A, B, C d'une unité
+// interdisciplinaire. Les critères summativeCriteria sont convertis en
+// AssessmentData puis injectés dans le template EVAL_TEMPLATE_URL existant.
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportInterdisciplinaryAssessmentsToZip = async (
+  unit: InterdisciplinaryUnit
+): Promise<void> => {
+  try {
+    const criteria = unit.summativeCriteria;
+    if (!criteria || criteria.length === 0) {
+      alert("Aucun critère d'évaluation trouvé pour cette unité interdisciplinaire.");
+      return;
+    }
+
+    // Build a synthetic UnitPlan header for the template fields
+    const syntheticPlan: UnitPlan = {
+      id: unit.id,
+      teacherName: (unit.teachers || []).join(' / '),
+      title: unit.title,
+      subject: (unit.disciplines || []).join(' + '),
+      gradeLevel: unit.grade,
+      duration: unit.duration || '',
+      keyConcept: unit.keyConcept || '',
+      relatedConcepts: unit.relatedConcepts || [],
+      globalContext: unit.globalContext || '',
+      statementOfInquiry: unit.statementOfInquiry || '',
+      inquiryQuestions: { factual: [], conceptual: [], debatable: [] },
+      objectives: (unit.summativeCriteria || []).map(c => `Critère ${c.criterion}`),
+      atlSkills: unit.atlSkills || [],
+      content: unit.content || '',
+      learningExperiences: unit.interdisciplinaryLearningProcess || '',
+      summativeAssessment: unit.summativeTask || '',
+      formativeAssessment: unit.formativeStrategies || '',
+      differentiation: unit.differentiation || '',
+      resources: unit.resources || '',
+      reflection: {
+        prior: unit.reflection?.before || '',
+        during: unit.reflection?.during || '',
+        after: unit.reflection?.after || '',
+      },
+      generatedAssessmentDocument: '',
+      assessments: [],
+    };
+
+    // Convert each summative criterion into a full AssessmentData
+    const assessments: AssessmentData[] = criteria.map(c => {
+      const strands = (c.strands && c.strands.length >= 3)
+        ? c.strands
+        : [
+            `i. Mobiliser les savoirs de plusieurs disciplines pour analyser le thème commun`,
+            `ii. Établir des liens explicites entre les concepts disciplinaires`,
+            `iii. Justifier la pertinence de chaque discipline dans l'approche du thème`,
+          ];
+
+      // Build a 5-level rubric (0, 1-2, 3-4, 5-6, 7-8) adapted to the criterion
+      const rubricRows = [
+        {
+          level: '0',
+          descriptor: "L'élève n'atteint pas le niveau décrit par les descripteurs suivants.",
+        },
+        {
+          level: '1–2',
+          descriptor: `L'élève démontre une compréhension limitée de ${c.name}. Il établit peu de liens entre les disciplines et mobilise les savoirs de façon partielle.`,
+        },
+        {
+          level: '3–4',
+          descriptor: `L'élève démontre une compréhension partielle de ${c.name}. Il établit quelques liens interdisciplinaires et mobilise les savoirs avec un certain degré de pertinence.`,
+        },
+        {
+          level: '5–6',
+          descriptor: `L'élève démontre une bonne compréhension de ${c.name}. Il établit des liens clairs entre les disciplines et mobilise les savoirs de façon cohérente.`,
+        },
+        {
+          level: '7–8',
+          descriptor: `L'élève démontre une compréhension approfondie de ${c.name}. Il établit des liens rigoureux et nuancés entre les disciplines, mobilise les savoirs avec pertinence et justifie sa démarche interdisciplinaire de façon convaincante.`,
+        },
+      ];
+
+      // Build exercises from the criterion task
+      const exercises = [
+        {
+          title: `Tâche interdisciplinaire — Critère ${c.criterion}`,
+          content: c.task || `Réaliser une tâche intégrant les apports de ${(unit.disciplines || []).join(', ')} sur le thème "${unit.title}".`,
+          criterionReference: `Critère ${c.criterion} : ${strands[0] || ''}`,
+          workspaceNeeded: true,
+        },
+        {
+          title: `Synthèse et argumentation — Critère ${c.criterion}`,
+          content: `Présenter une réflexion structurée démontrant votre maîtrise de "${c.name}" en mobilisant les ressources de chaque discipline participante.`,
+          criterionReference: `Critère ${c.criterion} : ${strands[strands.length - 1] || ''}`,
+          workspaceNeeded: true,
+        },
+      ];
+
+      return {
+        criterion: c.criterion,
+        criterionName: c.name,
+        maxPoints: 8,
+        strands,
+        rubricRows,
+        exercises,
+      };
+    });
+
+    // Load template and build ZIP
+    const templateContent = await loadFile(EVAL_TEMPLATE_URL);
+    const zip = new JSZip();
+    const folderName = `Evaluations_Interdisc_${clean(unit.title).replace(/ /g, '_').substring(0, 30)}_${clean(unit.grade).replace(/ /g, '')}`;
+    const folder = zip.folder(folderName);
+
+    for (const assessment of assessments) {
+      const data = mapAssessmentToTemplate(syntheticPlan, assessment);
+      const docBlob = generateDocumentBlob(templateContent, data);
+      const fileName = `Eval_Critere_${assessment.criterion}_Interdisc_${clean(unit.title).substring(0, 20)}.docx`;
+      folder?.file(fileName, docBlob);
+    }
+
+    const zipContent = await zip.generateAsync({ type: 'blob' });
+    const saveAs = (FileSaver as any).saveAs || FileSaver;
+    saveAs(zipContent, `${folderName}.zip`);
+  } catch (error: any) {
+    console.error('Error generating interdisciplinary assessments ZIP:', error);
+    alert("Erreur lors de la génération des évaluations interdisciplinaires : " + error.message);
+  }
+};

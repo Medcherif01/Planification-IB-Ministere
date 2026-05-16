@@ -3,7 +3,7 @@ import { UnitPlan, ServiceActionPlan } from '../types';
 import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput } from '../services/geminiService';
-import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan } from '../services/wordExportService';
+import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
 import AddEditUnitModal from './AddEditUnitModal';
@@ -473,6 +473,15 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   // Déléguer l'export Word IB complet au service dédié
   const handleExportInterdisciplinaryWord = (unit: InterdisciplinaryUnit) => {
     exportInterdisciplinaryToWord(unit);
+  };
+
+  // Export ZIP des évaluations critériées d'une unité interdisciplinaire
+  const handleExportInterdisciplinaryAssessments = async (unit: InterdisciplinaryUnit) => {
+    try {
+      await exportInterdisciplinaryAssessmentsToZip(unit);
+    } catch (e: any) {
+      alert('Erreur export évaluations interdisciplinaires : ' + (e?.message || e));
+    }
   };
 
   // Export overview interdisciplinaire (toutes classes) — tableau synthèse
@@ -1393,13 +1402,20 @@ Chapitre 4 : Algèbre et équations
                                 </p>
                               )}
                             </div>
-                            <div className="flex gap-1 flex-shrink-0">
+                            <div className="flex gap-1 flex-shrink-0 flex-wrap justify-end">
                               <button
                                 onClick={() => handleExportInterdisciplinaryWord(unit)}
                                 className="flex items-center gap-1 px-2 py-1 bg-white border border-fuchsia-300 text-fuchsia-700 rounded text-xs font-medium hover:bg-fuchsia-50 transition"
-                                title="Exporter en Word IB"
+                                title="Exporter le plan IB en Word"
                               >
                                 <Download size={12} /> Word
+                              </button>
+                              <button
+                                onClick={() => handleExportInterdisciplinaryAssessments(unit)}
+                                className="flex items-center gap-1 px-2 py-1 bg-white border border-violet-300 text-violet-700 rounded text-xs font-medium hover:bg-violet-50 transition"
+                                title="Télécharger les évaluations critériées A/B/C (ZIP) — même modèle que les unités classiques"
+                              >
+                                <FileArchive size={12} /> Évaluations
                               </button>
                               <button
                                 onClick={() => handleDeleteSavedInterUnit(unit.id)}

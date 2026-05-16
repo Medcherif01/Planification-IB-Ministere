@@ -3243,6 +3243,32 @@ Retourne UNIQUEMENT ce JSON (en français) :
   };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Mots-clés identifiant les matières à fort potentiel SEA (sciences sociales /
+// naturelles, géographie, histoire, etc.) — ordre de priorité décroissante.
+// ─────────────────────────────────────────────────────────────────────────────
+const SEA_PRIORITY_KEYWORDS: string[] = [
+  'sciences sociales', 'social', 'histoire', 'géographie', 'géo',
+  'sciences de la vie', 'svt', 'svte', 'biologie', 'écologie', 'physique',
+  'chimie', 'sciences naturelles', 'sciences', 'éducation physique', 'eps',
+  'santé', 'français', 'philosophie', 'éthique', 'citoyenneté',
+];
+
+/**
+ * Score de priorité SEA d'une unité : plus élevé = plus prioritaire.
+ * Les matières à forte dimension sociale/naturelle sont favorisées.
+ */
+const seaPriorityScore = (unit: UnitPlan): number => {
+  const subjectLower = (unit.subject || '').toLowerCase();
+  for (let i = 0; i < SEA_PRIORITY_KEYWORDS.length; i++) {
+    if (subjectLower.includes(SEA_PRIORITY_KEYWORDS[i])) {
+      // Higher score for earlier matches (social sciences > exact sciences)
+      return SEA_PRIORITY_KEYWORDS.length - i;
+    }
+  }
+  return 0; // Neutral priority
+};
+
 export const generateServiceActionForGrade = async (
   plans: UnitPlan[],
   grade: string,
@@ -3251,8 +3277,31 @@ export const generateServiceActionForGrade = async (
   if (!plans || plans.length === 0) {
     throw new Error(`Aucune unité trouvée pour ${grade}. Générez d'abord les unités de cette classe.`);
   }
-  // Generate one SEA per unit (or at most 6 to avoid overload)
-  const target = plans.slice(0, 6);
+
+  // ── Sélection des 2 meilleures unités selon la priorité SEA ──────────────
+  // 1) Trier par score décroissant (sciences sociales/naturelles en tête)
+  // 2) Dédupliquer par matière pour garantir la diversité
+  // 3) Prendre exactement 2 unités
+  const sorted = [...plans].sort((a, b) => seaPriorityScore(b) - seaPriorityScore(a));
+
+  const target: UnitPlan[] = [];
+  const usedSubjects = new Set<string>();
+  for (const unit of sorted) {
+    if (target.length >= 2) break;
+    const subjectKey = (unit.subject || 'inconnu').toLowerCase().trim();
+    if (!usedSubjects.has(subjectKey)) {
+      target.push(unit);
+      usedSubjects.add(subjectKey);
+    }
+  }
+  // Fallback: if fewer than 2 distinct subjects, just take the top 2 units
+  if (target.length < 2 && sorted.length >= 2) {
+    const extra = sorted.filter(u => !target.includes(u));
+    while (target.length < 2 && extra.length > 0) {
+      target.push(extra.shift()!);
+    }
+  }
+
   const results: ServiceActionPlan[] = [];
   for (let i = 0; i < target.length; i++) {
     const unit = target[i];
