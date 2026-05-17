@@ -1,4 +1,5 @@
 import { UnitPlan, AssessmentData } from "../types";
+import { getCriteriaSync, buildCriteriaSummaryForPrompt } from './ibCriteriaService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Proxy API helper — tous les appels Gemini passent par /api/generate (Vercel
@@ -350,11 +351,18 @@ const DEFAULT_CRITERIA_INTERDISCIPLINARY = [
 const enforceAssessmentsRules = (
   assessments: AssessmentData[],
   subject: string,
-  isInterdisciplinary = false
+  isInterdisciplinary = false,
+  gradeLevel?: string
 ): AssessmentData[] => {
+  // If the teacher has configured custom criteria for this subject+grade, use them as defaults
+  const customConfig = (!isInterdisciplinary && gradeLevel)
+    ? getCriteriaSync(subject, gradeLevel)
+    : null;
   const defaults = isInterdisciplinary
     ? DEFAULT_CRITERIA_INTERDISCIPLINARY
-    : getDefaultCriteria(subject);
+    : customConfig?.criteria
+      ? customConfig.criteria.map(c => ({ criterion: c.criterion, criterionName: c.criterionName, strands: c.strands }))
+      : getDefaultCriteria(subject);
   let result = [...assessments];
 
   // ── Règle 1 : chaque critère doit avoir ≥ 3 sous-aspects (strands) ─────────
@@ -481,7 +489,7 @@ export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string)
   }
 
   // ── RÈGLE IB OBLIGATOIRE : ≥ 2 critères, ≥ 3 sous-aspects par critère ────
-  assessments = enforceAssessmentsRules(assessments, subject || plan.subject || '');
+  assessments = enforceAssessmentsRules(assessments, subject || plan.subject || '', false, gradeLevel || plan.gradeLevel || '');
   console.log(`✅ Critères après validation IB : ${assessments.map(a => `${a.criterion}(${a.strands.length} sous-aspects)`).join(', ')}`);
 
   return {
@@ -1854,10 +1862,17 @@ export const generateCourseFromChapters = async (
       }
       
       const conceptsRule = (!isDesign && lang !== 'en') ? getConceptsRuleForSubject(subject) : '';
+
+      // ── Injection des critères personnalisés de l'enseignant ────────────────
+      const customCriteriaConfig = (!isDesign && gradeLevel) ? getCriteriaSync(subject, gradeLevel) : null;
+      const customCriteriaSection = customCriteriaConfig
+        ? `\n\n${buildCriteriaSummaryForPrompt(customCriteriaConfig)}\n⚠️ RÈGLE ABSOLUE : utilise EXACTEMENT ces strands et cette grille pour toutes les évaluations critériées générées.\n`
+        : '';
       
       const systemInstruction = `
       ${getSystemInstruction(subject)}
       ${conceptsRule}
+      ${customCriteriaSection}
       ${taskInstruction}
       `;
   
@@ -2070,6 +2085,12 @@ export const generateAssessmentsForUnit = async (plan: UnitPlan): Promise<Assess
     ? 'EXACTEMENT 4 critères A, B, C, D (Dossier de conception IB Design)'
     : 'EXACTEMENT 2 critères choisis parmi A, B, C, D (les plus pertinents pour cette unité)';
 
+  // ── Injection des critères personnalisés saisis par l'enseignant ───────────
+  const customConfig = (!isDesign && gradeLevel) ? getCriteriaSync(subject, gradeLevel) : null;
+  const customCriteriaBlock = customConfig
+    ? `\n${buildCriteriaSummaryForPrompt(customConfig)}\n⚠️ UTILISE EXACTEMENT ces strands et cette grille de notation dans les évaluations générées.\n`
+    : '';
+
   const sysInstruction = getSystemInstruction(subject);
 
   const prompt = lang === 'en'
@@ -2085,7 +2106,7 @@ Related Concepts: ${(plan.relatedConcepts || []).join(', ')}
 Global Context: ${plan.globalContext}
 Chapters/Content: ${plan.chapters || plan.content || ''}
 Objectives: ${(plan.objectives || []).join(', ')}
-
+${customCriteriaBlock}
 MANDATORY RULE: Generate ${criteriaRule}.
 Each criterion must have AT LEAST 3 strands (sub-aspects).
 Each criterion must have at least 1 exercise adapted to this specific unit.
@@ -2127,7 +2148,7 @@ Concepts connexes: ${(plan.relatedConcepts || []).join(', ')}
 Contexte mondial: ${plan.globalContext}
 Chapitres/Contenu: ${plan.chapters || plan.content || ''}
 Objectifs: ${(plan.objectives || []).join(', ')}
-
+${customCriteriaBlock}
 RÈGLE OBLIGATOIRE: Génère ${criteriaRule}.
 Chaque critère doit avoir AU MINIMUM 3 sous-aspects (strands).
 Chaque critère doit avoir au moins 1 exercice adapté à cette unité spécifique.
@@ -2173,7 +2194,7 @@ Retourne UNIQUEMENT un tableau JSON d'objets évaluation (pas d'objet englobant,
       .map(sanitizeAssessmentData)
       .filter((a): a is AssessmentData => !!a);
 
-    return enforceAssessmentsRules(assessments, subject);
+    return enforceAssessmentsRules(assessments, subject, false, gradeLevel);
   } catch (err: any) {
     throw new Error(`Erreur génération évaluations: ${err?.message || err}`);
   }

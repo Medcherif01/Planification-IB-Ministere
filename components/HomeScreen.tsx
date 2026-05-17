@@ -19,7 +19,7 @@ import {
   Globe, Palette, Dumbbell, Cpu, Languages, GitMerge, Heart,
   Loader2, CheckCircle, AlertCircle, Download, RefreshCw,
   Users, Layers, Sparkles, FileText, Eye, Trash2, ChevronDown,
-  ChevronUp, BookMarked, GraduationCap,
+  ChevronUp, BookMarked, GraduationCap, FolderOpen, ExternalLink,
 } from 'lucide-react';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -861,6 +861,62 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
                     ))}
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* ─────────────────────────────────────────────────────────
+                Section: Google Drive — Dépôt des travaux d'élèves
+            ───────────────────────────────────────────────────────── */}
+            <div className="bg-gradient-to-br from-sky-50 to-cyan-50 rounded-2xl border-2 border-sky-200 shadow-sm overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-sky-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-sky-600 flex items-center justify-center shadow">
+                    <FolderOpen size={20} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sky-800 text-base">Dépôt des travaux d'élèves</h3>
+                    <p className="text-sky-500 text-xs">Accès au dossier Google Drive partagé pour {selectedGrade}</p>
+                  </div>
+                </div>
+                <span className="bg-sky-100 text-sky-700 text-xs font-bold px-3 py-1 rounded-full border border-sky-200">
+                  Google Drive
+                </span>
+              </div>
+
+              <div className="p-4 space-y-3">
+                {/* Drive link card */}
+                <div className="bg-white rounded-xl border border-sky-100 shadow-sm p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-700 mb-0.5">
+                      Dossier partagé — Travaux &amp; Productions {selectedGrade}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Déposez les copies, évaluations et portfolios des élèves directement dans le dossier Google Drive de l'établissement.
+                    </p>
+                  </div>
+                  <a
+                    href="https://drive.google.com/drive/folders/1qwx0XnrnRRCcK3o_AMr07n1YHCm4-oJ4"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-sm font-semibold shadow transition whitespace-nowrap flex-shrink-0"
+                  >
+                    <FolderOpen size={16} />
+                    Ouvrir le dossier Drive
+                    <ExternalLink size={13} className="opacity-75" />
+                  </a>
+                </div>
+
+                {/* Upload instructions */}
+                <div className="bg-sky-50 border border-sky-100 rounded-xl p-3 text-xs text-sky-700 space-y-1.5">
+                  <p className="font-semibold text-sky-800">📋 Comment déposer des fichiers :</p>
+                  <ol className="list-decimal list-inside space-y-1 text-sky-700">
+                    <li>Cliquez sur <strong>Ouvrir le dossier Drive</strong> ci-dessus</li>
+                    <li>Créez un sous-dossier par matière ou par élève si nécessaire</li>
+                    <li>Glissez-déposez les fichiers ou cliquez sur <strong>+ Nouveau → Importer des fichiers</strong></li>
+                    <li>Les fichiers sont immédiatement accessibles à toute l'équipe pédagogique</li>
+                  </ol>
+                </div>
               </div>
             </div>
 

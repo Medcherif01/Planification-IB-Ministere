@@ -7,6 +7,7 @@ import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByG
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
 import AddEditUnitModal from './AddEditUnitModal';
+import IbCriteriaEditor from './IbCriteriaEditor';
 
 interface DashboardProps {
   currentSubject: string;
@@ -83,6 +84,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   // ── État : Ajouter/Modifier une unité ─────────────────────────────────────
   const [isAddEditUnitModalOpen, setIsAddEditUnitModalOpen] = useState(false);
   const [editingUnitPlan, setEditingUnitPlan] = useState<UnitPlan | null>(null);
+
+  // ── État : Éditeur des critères IB ─────────────────────────────────────
+  const [isCriteriaEditorOpen, setIsCriteriaEditorOpen] = useState(false);
 
   // ── État : Refaire toutes les unités de l'année ───────────────────────────
   const [isRegenAllModalOpen, setIsRegenAllModalOpen] = useState(false);
@@ -1091,6 +1095,15 @@ Chapitre 4 : Algèbre et équations
               <Layers size={20} />
               Planification Annuelle
             </button>
+             {/* ── Bouton Objectifs IB (éditeur de critères) ─────── */}
+             <button
+               onClick={() => setIsCriteriaEditorOpen(true)}
+               className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
+               title={`Configurer les critères IB officiels pour ${currentSubject} — ${currentGrade}`}
+             >
+               <BookOpen size={20} />
+               Objectifs IB
+             </button>
              {/* ── Bouton Refaire toutes les unités ────────────────── */}
              {plans.length > 0 && (
                <button
@@ -2365,6 +2378,16 @@ Chapitre 4 : Algèbre et équations
       )}
 
     </div>
+
+    {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : ÉDITEUR DES CRITÈRES IB
+        ═══════════════════════════════════════════════════════════════════ */}
+    <IbCriteriaEditor
+      isOpen={isCriteriaEditorOpen}
+      onClose={() => setIsCriteriaEditorOpen(false)}
+      subject={currentSubject}
+      grade={currentGrade}
+    />
 
     {/* ═══════════════════════════════════════════════════════════════════
         MODAL : AJOUTER / MODIFIER UNE UNITÉ
