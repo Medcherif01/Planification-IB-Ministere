@@ -88,6 +88,15 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   // ── État : Éditeur des critères IB ─────────────────────────────────────
   const [isCriteriaEditorOpen, setIsCriteriaEditorOpen] = useState(false);
 
+  // ── État : Mise à jour des objectifs d'une unité ──────────────────────────────
+  const [updatingAssessmentId, setUpdatingAssessmentId] = useState<string | null>(null);
+
+  // ── État : Upload travaux élèves ──────────────────────────────────────────────
+  const [uploadModalPlan, setUploadModalPlan] = useState<UnitPlan | null>(null);
+  const [uploadStudentName, setUploadStudentName] = useState('');
+  const [uploadCriterion, setUploadCriterion] = useState('');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+
   // ── État : Refaire toutes les unités de l'année ───────────────────────────
   const [isRegenAllModalOpen, setIsRegenAllModalOpen] = useState(false);
   const [isRegenAllGenerating, setIsRegenAllGenerating] = useState(false);
@@ -581,6 +590,43 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     }
   };
 
+  // ── Handler : Mise à jour des évaluations critériées d'une unité ────────────
+  const handleUpdateAssessments = async (plan: UnitPlan) => {
+    if (!plan.id) return;
+    setUpdatingAssessmentId(plan.id);
+    try {
+      const newAssessments = await generateAssessmentsForUnit(plan, plan.subject || currentSubject, plan.gradeLevel || currentGrade);
+      const updatedPlan: UnitPlan = { ...plan, assessments: newAssessments };
+      if (onUpdateUnit) {
+        onUpdateUnit(updatedPlan);
+      } else {
+        onAddPlans(plans.map(p => p.id === plan.id ? updatedPlan : p));
+      }
+    } catch (e: any) {
+      alert(`Erreur mise à jour des évaluations : ${e?.message || e}`);
+    } finally {
+      setUpdatingAssessmentId(null);
+    }
+  };
+
+  // ── Handler : onSaved depuis IbCriteriaEditor → met à jour toutes les unités ──
+  const handleCriteriaSaved = async (savedSubject: string, savedGrade: string) => {
+    const toUpdate = plans.filter(
+      p => (p.subject || currentSubject) === savedSubject && (p.gradeLevel || currentGrade) === savedGrade
+    );
+    if (toUpdate.length === 0) return;
+    for (const plan of toUpdate) {
+      try {
+        const newAssessments = await generateAssessmentsForUnit(plan, savedSubject, savedGrade);
+        const updated = { ...plan, assessments: newAssessments };
+        if (onUpdateUnit) onUpdateUnit(updated);
+        else onAddPlans(plans.map(p => p.id === updated.id ? updated : p));
+      } catch (e) {
+        console.warn('Mise à jour auto évaluations échouée pour', plan.title, e);
+      }
+    }
+  };
+
   // ── Handlers : Ajouter / Modifier une unité ──────────────────────────────
   const handleOpenAddUnit = () => {
     setEditingUnitPlan(null);
@@ -1061,33 +1107,7 @@ Chapitre 4 : Algèbre et équations
                  </>
                )}
              </button>
-             {/* ── Bouton Formulaire Drive avec balises ────────────────── */}
-             <button
-               onClick={() => setIsDriveFormModalOpen(true)}
-               className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
-               title="Générer des unités à partir d'un formulaire balisé (type Google Drive)"
-             >
-               <Tag size={20} />
-               Formulaire Drive
-             </button>
-             {/* ── Bouton Service et Action (SEA) ──────────────────────── */}
-             <button
-               onClick={() => { setIsSEAModalOpen(true); setSeaStep('form'); setGeneratedSEAPlans([]); }}
-               className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
-               title="Générer les projets Service et Action (SEA) IB PEI par classe"
-             >
-               <Heart size={20} />
-               Service &amp; Action
-             </button>
-             {/* ── Bouton Unités Interdisciplinaires ───────────────────── */}
-             <button
-               onClick={() => { setIsInterdisciplinaryModalOpen(true); setInterStep('form'); }}
-               className="flex items-center gap-2 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
-               title="Générer des unités interdisciplinaires IB PEI (structure Recherche / Action / Réflexion)"
-             >
-               <GitMerge size={20} />
-               Interdisciplinaire
-             </button>
+             {/* Formulaire Drive, SEA, Interdisciplinaire disponibles depuis HomeScreen uniquement */}
              <button 
               onClick={() => setIsBulkModalOpen(true)}
               className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
@@ -1315,10 +1335,10 @@ Chapitre 4 : Algèbre et équations
                                     onClick={() => handleExportAssessment(plan)}
                                     className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-100 transition"
                                     disabled={exportingId === `eval-${plan.id}`}
-                                    title={"Exporter les évaluations (Zip)"}
+                                    title="Exporter les évaluations critériées (ZIP Word)"
                                 >
                                     {exportingId === `eval-${plan.id}` ? <Loader2 className="animate-spin" size={14}/> : <FileArchive size={14}/>}
-                                    Exams (Zip)
+                                    Évals (Zip)
                                 </button>
                                 <button 
                                     onClick={() => handlePrintUnit(plan)}
@@ -1328,14 +1348,31 @@ Chapitre 4 : Algèbre et équations
                                     <Printer size={14}/>
                                     Imprimer
                                 </button>
-                                {/* ── Bouton rapide SEA pour cette classe ── */}
+                                {/* ── Bouton Mise à jour des objectifs spécifiques ── */}
                                 <button
-                                    onClick={() => handleOpenSEAForGrade(plan.gradeLevel)}
-                                    className="flex items-center gap-1 bg-rose-50 text-rose-700 px-2 py-1 rounded hover:bg-rose-100 transition"
-                                    title={`Générer les projets Service & Action pour ${plan.gradeLevel}`}
+                                    onClick={() => handleUpdateAssessments(plan)}
+                                    disabled={updatingAssessmentId === plan.id}
+                                    className="flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-1 rounded hover:bg-amber-100 transition disabled:opacity-50"
+                                    title="Mettre à jour les évaluations critériées selon les objectifs spécifiques enregistrés (titre et contenu inchangés)"
                                 >
-                                    <Heart size={14}/>
-                                    SEA {plan.gradeLevel}
+                                    {updatingAssessmentId === plan.id
+                                      ? <Loader2 className="animate-spin" size={14}/>
+                                      : <RefreshCcw size={14}/>}
+                                    Mise à jour
+                                </button>
+                                {/* ── Bouton Upload travaux élèves ── */}
+                                <button
+                                    onClick={() => {
+                                      setUploadModalPlan(plan);
+                                      setUploadStudentName('');
+                                      setUploadCriterion(plan.assessments?.[0]?.criterion ? `Critere_${plan.assessments[0].criterion}` : '');
+                                      setUploadFile(null);
+                                    }}
+                                    className="flex items-center gap-1 bg-sky-50 text-sky-700 px-2 py-1 rounded hover:bg-sky-100 transition"
+                                    title="Déposer le travail d'un élève pour cette évaluation critériée"
+                                >
+                                    <Upload size={14}/>
+                                    Travaux élèves
                                 </button>
                             </div>
                         </div>
@@ -2387,6 +2424,7 @@ Chapitre 4 : Algèbre et équations
       onClose={() => setIsCriteriaEditorOpen(false)}
       subject={currentSubject}
       grade={currentGrade}
+      onSaved={handleCriteriaSaved}
     />
 
     {/* ═══════════════════════════════════════════════════════════════════
@@ -2539,6 +2577,133 @@ Chapitre 4 : Algèbre et équations
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    )}
+    {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : DÉPÔT DES TRAVAUX D'ÉLÈVES
+        ═══════════════════════════════════════════════════════════════════ */}
+    {uploadModalPlan && (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-sky-600 to-cyan-600 text-white p-5 rounded-t-2xl flex justify-between items-start">
+            <div>
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Upload size={20} />
+                Dépôt du travail d'élève
+              </h2>
+              <p className="text-sky-100 text-sm mt-1">
+                Unité : <strong>{uploadModalPlan.title}</strong> · {uploadModalPlan.subject || currentSubject}
+              </p>
+            </div>
+            <button onClick={() => setUploadModalPlan(null)} className="text-white/70 hover:text-white p-1">
+              <X size={22} />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="p-6 space-y-4">
+            {/* Student name */}
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">
+                Nom de l'élève <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={uploadStudentName}
+                onChange={e => setUploadStudentName(e.target.value)}
+                placeholder="ex : Ahmed Benali"
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+              />
+            </div>
+
+            {/* Criterion select */}
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">
+                Critère d'évaluation <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={uploadCriterion}
+                onChange={e => setUploadCriterion(e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+              >
+                <option value="">— Choisir un critère —</option>
+                {(uploadModalPlan.assessments && uploadModalPlan.assessments.length > 0
+                  ? uploadModalPlan.assessments
+                  : [{ criterion: 'A', criterionName: 'Critère A' }, { criterion: 'B', criterionName: 'Critère B' },
+                     { criterion: 'C', criterionName: 'Critère C' }, { criterion: 'D', criterionName: 'Critère D' }]
+                ).map(a => (
+                  <option key={a.criterion} value={`Critere_${a.criterion}`}>
+                    Critère {a.criterion}{a.criterionName ? ` — ${a.criterionName}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Subject + Unit auto-display */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-xs text-slate-600 space-y-1">
+              <p><span className="font-semibold">Matière :</span> {uploadModalPlan.subject || currentSubject}</p>
+              <p><span className="font-semibold">Unité :</span> {uploadModalPlan.title}</p>
+              <p><span className="font-semibold">Classe :</span> {uploadModalPlan.gradeLevel || currentGrade}</p>
+              {uploadStudentName && uploadCriterion && (
+                <p className="mt-2 font-bold text-sky-700">
+                  📄 Nom du fichier : {`${(uploadModalPlan.subject || currentSubject).replace(/[^a-z0-9]/gi,'_')}-${(uploadModalPlan.title || '').replace(/[^a-z0-9]/gi,'_').slice(0,20)}-${uploadCriterion}-${uploadStudentName.replace(/[^a-z0-9]/gi,'_')}-${(uploadModalPlan.gradeLevel || currentGrade).replace(/\s/g,'_')}`}
+                </p>
+              )}
+            </div>
+
+            {/* File picker */}
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">
+                Fichier à déposer
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                onChange={e => setUploadFile(e.target.files?.[0] || null)}
+                className="w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-sky-100 file:text-sky-700 file:font-semibold hover:file:bg-sky-200 transition"
+              />
+            </div>
+
+            {/* Drive link notice */}
+            <div className="bg-sky-50 border border-sky-100 rounded-lg p-3 text-xs text-sky-700 space-y-2">
+              <p className="font-semibold">📁 Le fichier sera déposé dans le dossier Google Drive de l'établissement.</p>
+              <a
+                href={`https://drive.google.com/drive/folders/1qwx0XnrnRRCcK3o_AMr07n1YHCm4-oJ4`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-sky-600 hover:text-sky-800 font-medium underline"
+              >
+                <FolderOpen size={13} />
+                Ouvrir le dossier Drive
+                <ExternalLink size={11} />
+              </a>
+              <p className="text-slate-500">
+                Conseil : renommez le fichier avec le nom indiqué ci-dessus avant de le glisser dans Drive, ou utilisez le bouton ci-dessous pour l'ouvrir directement.
+              </p>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-between items-center gap-3">
+            <button
+              onClick={() => setUploadModalPlan(null)}
+              className="px-4 py-2 text-sm text-slate-600 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition font-medium"
+            >
+              Fermer
+            </button>
+            <a
+              href={`https://drive.google.com/drive/folders/1qwx0XnrnRRCcK3o_AMr07n1YHCm4-oJ4`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-sm font-semibold shadow transition"
+            >
+              <FolderOpen size={16} />
+              Ouvrir Drive et déposer
+              <ExternalLink size={13} className="opacity-75" />
+            </a>
           </div>
         </div>
       </div>

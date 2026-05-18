@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   X, Plus, Trash2, Save, ChevronDown, ChevronUp,
-  CheckCircle, Loader2, AlertTriangle, BookOpen, Info,
+  CheckCircle, Loader2, AlertTriangle, BookOpen, Info, Copy,
 } from 'lucide-react';
 import {
   IbCriteriaConfig,
@@ -59,10 +59,18 @@ interface IbCriteriaEditorProps {
   onClose: () => void;
   subject: string;
   grade: string;
+  /** Called after a successful save so the caller can trigger assessment updates */
+  onSaved?: (subject: string, grade: string) => void;
 }
 
+// PEI propagation map: PEI 1 → PEI 2, PEI 3 → PEI 4 (same group level)
+const PROPAGATION_MAP: Record<string, string> = {
+  'PEI 1': 'PEI 2',
+  'PEI 3': 'PEI 4',
+};
+
 const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
-  isOpen, onClose, subject, grade,
+  isOpen, onClose, subject, grade, onSaved,
 }) => {
   const [criteria, setCriteria] = useState<IbCriterion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +78,8 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
   const [expandedCriteria, setExpandedCriteria] = useState<Set<string>>(new Set(['A']));
   const [activeTab, setActiveTab] = useState<Record<string, 'strands' | 'rubric'>>({});
+  const [propagating, setPropagating] = useState(false);
+  const [propagateStatus, setPropagateStatus] = useState<'idle' | 'done' | 'error'>('idle');
 
   // ── Load existing config ────────────────────────────────────────────────────
   useEffect(() => {
@@ -201,10 +211,44 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
       await saveCriteria(config);
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 3000);
+      // Notify parent so it can trigger assessment updates
+      onSaved?.(subject, grade);
     } catch {
       setSaveStatus('error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Propagate current criteria to the paired PEI grade ─────────────────────
+  const targetGrade = PROPAGATION_MAP[grade]; // e.g. PEI 1 → PEI 2
+  const handlePropagate = async () => {
+    if (!targetGrade) return;
+    // Validate same as save
+    for (const c of criteria) {
+      if (c.strands.filter(s => s.trim().length > 3).length < 3) {
+        alert(`Critère ${c.criterion} : veuillez remplir au moins 3 sous-aspects avant d'appliquer.`);
+        return;
+      }
+    }
+    setPropagating(true);
+    setPropagateStatus('idle');
+    try {
+      const config: IbCriteriaConfig = {
+        subject,
+        grade: targetGrade,
+        criteria: criteria.map(c => ({ ...c, rubricRows: c.rubricRows.map(r => ({ ...r })), strands: [...c.strands] })),
+        updatedAt: new Date().toISOString(),
+      };
+      await saveCriteria(config);
+      setPropagateStatus('done');
+      setTimeout(() => setPropagateStatus('idle'), 3500);
+      // Notify parent for the target grade too
+      onSaved?.(subject, targetGrade);
+    } catch {
+      setPropagateStatus('error');
+    } finally {
+      setPropagating(false);
     }
   };
 
@@ -455,11 +499,12 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between gap-3 bg-slate-50 rounded-b-2xl">
-          <div className="text-xs text-slate-500">
+        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl space-y-3">
+          {/* Status row */}
+          <div className="text-xs text-slate-500 min-h-[18px]">
             {saveStatus === 'saved' && (
               <span className="flex items-center gap-1.5 text-green-600 font-semibold">
-                <CheckCircle size={14} /> Enregistré — les générations futures utiliseront ces critères.
+                <CheckCircle size={14} /> Enregistré pour <strong>{grade}</strong> — les générations futures utiliseront ces critères.
               </span>
             )}
             {saveStatus === 'error' && (
@@ -467,25 +512,55 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
                 <AlertTriangle size={14} /> Erreur — critères sauvegardés en local uniquement.
               </span>
             )}
-            {saveStatus === 'idle' && (
+            {propagateStatus === 'done' && (
+              <span className="flex items-center gap-1.5 text-emerald-600 font-semibold">
+                <CheckCircle size={14} /> Critères appliqués à <strong>{targetGrade}</strong> avec succès !
+              </span>
+            )}
+            {propagateStatus === 'error' && (
+              <span className="flex items-center gap-1.5 text-red-500 font-semibold">
+                <AlertTriangle size={14} /> Erreur lors de l'application à {targetGrade}.
+              </span>
+            )}
+            {saveStatus === 'idle' && propagateStatus === 'idle' && (
               <span>Les critères s'appliquent à : <strong>{subject}</strong> — <strong>{grade}</strong></span>
             )}
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm text-slate-600 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition font-medium"
-            >
-              Fermer
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving || loading || criteria.length < 2}
-              className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow transition"
-            >
-              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              Enregistrer
-            </button>
+
+          {/* Buttons row */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Left: propagate button (only for PEI 1 and PEI 3) */}
+            <div>
+              {targetGrade && (
+                <button
+                  onClick={handlePropagate}
+                  disabled={propagating || loading || criteria.length < 2}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow transition"
+                  title={`Copier ces objectifs tels quels vers ${subject} — ${targetGrade}`}
+                >
+                  {propagating ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
+                  Appliquer à {targetGrade}
+                </button>
+              )}
+            </div>
+
+            {/* Right: close + save */}
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm text-slate-600 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition font-medium"
+              >
+                Fermer
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving || loading || criteria.length < 2}
+                className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow transition"
+              >
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Enregistrer
+              </button>
+            </div>
           </div>
         </div>
       </div>

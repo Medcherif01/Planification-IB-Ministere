@@ -390,12 +390,14 @@ const enforceAssessmentsRules = (
     console.warn(`⚠️ Critère ${a.criterion} n'avait aucun exercice → ajout d'un exercice générique`);
     return {
       ...a,
-      exercises: [{
-        title: `Exercice — Critère ${a.criterion} (${a.strands.slice(0, 2).map(s => s.split('.')[0]).join(', ')})`,
-        content: `Réponds aux questions suivantes en lien avec les aspects évalués :\n\n${a.strands.map((s, i) => `${i + 1}. En lien avec « ${s} », explique...\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n................................................................................................................................................................................................`).join('\n\n')}`,
-        criterionReference: `Critère ${a.criterion} : ${a.strands.map(s => s.split('.')[0].trim()).join(', ')}`,
+      exercises: a.strands.slice(0, 3).map((s, i) => ({
+        title: `Analyse et application`,
+        content: `En lien avec l'aspect évalué, réponds à la question suivante.
+
+${i + 1}. En lien avec « ${s} », explique et justifie ta réponse.`,
+        criterionReference: s.split('.')[0].trim(),
         workspaceNeeded: true,
-      }]
+      }))
     };
   });
 
@@ -424,12 +426,14 @@ const enforceAssessmentsRules = (
           { level: '5-6', descriptor: `L'élève est capable de démontrer une bonne compréhension de ${d.criterionName.toLowerCase()}.` },
           { level: '7-8', descriptor: `L'élève est capable de démontrer une compréhension approfondie et nuancée de ${d.criterionName.toLowerCase()}.` },
         ],
-        exercises: [{
-          title: `Exercice — Critère ${d.criterion} : ${d.strands.slice(0, 3).map(s => s.split('.')[0]).join(', ')}`,
-          content: `Réponds aux questions suivantes :\n\n${d.strands.slice(0, 3).map((s, idx) => `${idx + 1}. ${s}\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n................................................................................................................................................................................................`).join('\n\n')}`,
-          criterionReference: `Critère ${d.criterion} : ${d.strands.slice(0, 3).map(s => s.split('.')[0].trim()).join(', ')}`,
+        exercises: d.strands.slice(0, 3).map((s, idx) => ({
+          title: `Analyse et application`,
+          content: `En lien avec l'aspect évalué, réponds à la question suivante.
+
+${idx + 1}. ${s}`,
+          criterionReference: s.split('.')[0].trim(),
           workspaceNeeded: true,
-        }],
+        })),
       });
     }
   }
@@ -1052,15 +1056,15 @@ Structure JSON attendue :
        ],
        "exercises": [
           {
-             "title": "Exercice 1 (Aspects i et iii)",
-             "content": "Question qui évalue à la fois i. et iii...",
-             "criterionReference": "Critère A : i. sélectionner et iii. résoudre",
+             "title": "Analyse et interprétation",
+             "content": "Question ciblant l'aspect i. et iii. simultanément...",
+             "criterionReference": "i. sélectionner et iii. résoudre",
              "workspaceNeeded": true
           },
           {
-             "title": "Exercice 2 (Aspect iv)",
-             "content": "Question qui évalue iv...",
-             "criterionReference": "Critère A : iv. expliquer",
+             "title": "Résolution et explication",
+             "content": "Question ciblant l'aspect iv...",
+             "criterionReference": "iv. expliquer",
              "workspaceNeeded": true
           }
        ]
@@ -1077,6 +1081,15 @@ Structure JSON attendue :
 - Les sous-aspects peuvent être NON-CONSÉCUTIFS selon les besoins
 - Un exercice PEUT évaluer 2-3 sous-aspects simultanément
 - Chaque évaluation doit être faisable en 30 MINUTES
+
+⚠️ RÈGLES FORMAT DES EXERCICES (OBLIGATOIRE) :
+- Le champ "title" NE DOIT PAS commencer par "Exercice N" ni "Critère X" — le modèle Word les ajoute automatiquement
+  ✅ Bon : "Analyse et interprétation", "Résolution de problème", "Synthèse critique"
+  ❌ Mauvais : "Exercice 1 (Aspect i)", "Exercice 2 — Critère C", "Critère A : Exercice 1"
+- Le champ "criterionReference" NE DOIT PAS commencer par "Critère X :" — il doit contenir SEULEMENT le(s) sous-aspect(s) ciblé(s)
+  ✅ Bon : "i. sélectionner et appliquer", "ii. et iv. analyser"
+  ❌ Mauvais : "Critère A : i. sélectionner", "Critère C : ii. et iv."
+- Chaque exercice cible UN sous-aspect spécifique (ou 2 maximum si vraiment liés)
 `;
 
 // Shared System Prompt for Arts/EPS generation (French only, practical tasks)

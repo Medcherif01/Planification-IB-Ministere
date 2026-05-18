@@ -196,12 +196,23 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
     })),
 
     // Exercises List Loop
-    exercices: exercises.map((ex, index) => ({
-        numero: index + 1,
-        titre: clean(ex.title),
-        contenu: clean(ex.content),
-        ref: clean(ex.criterionReference),
-    }))
+    // DOTS: 161 per line × 5 lines, line-spacing 1.5
+    exercices: exercises.map((ex, index) => {
+        // Strip redundant "Exercice N" prefix from title (template already numbers them)
+        const rawTitle = clean(ex.title).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim();
+        // Strip "Critère X :" prefix from criterionReference (template shows criterion header separately)
+        const rawRef = clean(ex.criterionReference).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim();
+        // Answer lines: 5 lines of exactly 161 dots each, separated by \n
+        const DOT_LINE = '·'.repeat(161);
+        const reponse_lines = Array(5).fill(DOT_LINE).join('\n');
+        return {
+            numero: index + 1,
+            titre: rawTitle,
+            contenu: clean(ex.content),
+            ref: rawRef,
+            reponse_lines,
+        };
+    })
   };
   
   // Add Arabic versions if bilingual
@@ -229,12 +240,19 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
       })),
       
       // Exercises Arabic
-      exercices_ar: exercises.map((ex, index) => ({
-        numero: index + 1,
-        titre_ar: (ex as any).title_ar ? clean((ex as any).title_ar) : "(تمرين)",
-        contenu_ar: (ex as any).content_ar ? clean((ex as any).content_ar) : "(المحتوى)",
-        ref_ar: (ex as any).criterionReference_ar ? clean((ex as any).criterionReference_ar) : "",
-      }))
+      exercices_ar: exercises.map((ex, index) => {
+        const rawTitleAr = (ex as any).title_ar ? clean((ex as any).title_ar).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim() : "(تمرين)";
+        const rawRefAr = (ex as any).criterionReference_ar ? clean((ex as any).criterionReference_ar).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim() : "";
+        const DOT_LINE_AR = '·'.repeat(161);
+        const reponse_lines_ar = Array(5).fill(DOT_LINE_AR).join('\n');
+        return {
+          numero: index + 1,
+          titre_ar: rawTitleAr,
+          contenu_ar: (ex as any).content_ar ? clean((ex as any).content_ar) : "(المحتوى)",
+          ref_ar: rawRefAr,
+          reponse_lines: reponse_lines_ar,
+        };
+      })
     };
   }
   
@@ -1761,18 +1779,18 @@ export const exportInterdisciplinaryAssessmentsToZip = async (
         },
       ];
 
-      // Build exercises from the criterion task
+      // Build exercises from the criterion task (titles without "Exercice N :" or "Critère X :" — template adds them)
       const exercises = [
         {
-          title: `Tâche interdisciplinaire — Critère ${c.criterion}`,
+          title: `Tâche interdisciplinaire`,
           content: c.task || `Réaliser une tâche intégrant les apports de ${(unit.disciplines || []).join(', ')} sur le thème "${unit.title}".`,
-          criterionReference: `Critère ${c.criterion} : ${strands[0] || ''}`,
+          criterionReference: strands[0] || '',
           workspaceNeeded: true,
         },
         {
-          title: `Synthèse et argumentation — Critère ${c.criterion}`,
+          title: `Synthèse et argumentation`,
           content: `Présenter une réflexion structurée démontrant votre maîtrise de "${c.name}" en mobilisant les ressources de chaque discipline participante.`,
-          criterionReference: `Critère ${c.criterion} : ${strands[strands.length - 1] || ''}`,
+          criterionReference: strands[strands.length - 1] || '',
           workspaceNeeded: true,
         },
       ];
