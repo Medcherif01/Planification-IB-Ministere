@@ -147,7 +147,7 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
   const removeStrand = (letter: string, idx: number) => {
     setCriteria(prev => prev.map(c => {
       if (c.criterion !== letter) return c;
-      if (c.strands.length <= 3) return c; // min 3 strands
+      if (c.strands.length <= 1) return c; // min 1 strand
       const strands = c.strands.filter((_, i) => i !== idx);
       return { ...c, strands };
     }));
@@ -184,11 +184,11 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
 
   // ── Save ───────────────────────────────────────────────────────────────────
   const handleSave = async () => {
-    // Validate: at least 3 strands per criterion, non-empty
+    // Validate: at least 1 strand per criterion, non-empty
     for (const c of criteria) {
-      const filled = c.strands.filter(s => s.trim().length > 3);
-      if (filled.length < 3) {
-        alert(`Critère ${c.criterion} : veuillez remplir au moins 3 sous-aspects (strands).`);
+      const filled = c.strands.filter(s => s.trim().length > 1);
+      if (filled.length < 1) {
+        alert(`Critère ${c.criterion} : veuillez remplir au moins 1 sous-aspect (strand).`);
         setExpandedCriteria(prev => new Set([...prev, c.criterion]));
         setTab(c.criterion, 'strands');
         return;
@@ -226,8 +226,8 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
     if (!targetGrade) return;
     // Validate same as save
     for (const c of criteria) {
-      if (c.strands.filter(s => s.trim().length > 3).length < 3) {
-        alert(`Critère ${c.criterion} : veuillez remplir au moins 3 sous-aspects avant d'appliquer.`);
+      if (c.strands.filter(s => s.trim().length > 1).length < 1) {
+        alert(`Critère ${c.criterion} : veuillez remplir au moins 1 sous-aspect avant d'appliquer.`);
         return;
       }
     }
@@ -298,7 +298,7 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
                 const colors = CRITERION_COLORS[criterion.criterion];
                 const expanded = expandedCriteria.has(criterion.criterion);
                 const tab = getTab(criterion.criterion);
-                const filledStrands = criterion.strands.filter(s => s.trim().length > 3).length;
+                const filledStrands = criterion.strands.filter(s => s.trim().length > 1).length;
 
                 return (
                   <div key={criterion.criterion} className={`border-2 ${colors.border} rounded-xl overflow-hidden`}>
@@ -320,7 +320,7 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {filledStrands >= 3 && (
+                        {filledStrands >= 1 && (
                           <CheckCircle size={14} className="text-green-500" />
                         )}
                         {criteria.length > 2 && (
@@ -378,7 +378,7 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
                           <div className="space-y-2">
                             <p className="text-xs text-slate-500 bg-slate-50 rounded-lg p-2.5 border border-slate-100">
                               💡 Saisissez les sous-aspects exacts du guide IB officiel pour ce critère.
-                              Minimum 3, maximum 5 sous-aspects. Commencez par les préfixes i., ii., iii., iv., v.
+                              Minimum 1, maximum 5 sous-aspects. Commencez par les préfixes i., ii., iii., iv., v.
                             </p>
                             {criterion.strands.map((strand, si) => (
                               <div key={si} className="flex items-center gap-2">
@@ -395,7 +395,7 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
                                   placeholder={`Sous-aspect ${si + 1}…`}
                                   className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
                                 />
-                                {criterion.strands.length > 3 && (
+                                {criterion.strands.length > 1 && (
                                   <button
                                     onClick={() => removeStrand(criterion.criterion, si)}
                                     className="p-1.5 text-slate-400 hover:text-red-500 transition rounded"

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UnitPlan, ServiceActionPlan } from '../types';
-import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink } from 'lucide-react';
+import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit } from '../services/geminiService';
 import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
@@ -8,6 +8,8 @@ import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
 import AddEditUnitModal from './AddEditUnitModal';
 import IbCriteriaEditor from './IbCriteriaEditor';
+import HoursCalculatorModal from './HoursCalculatorModal';
+import AssessmentViewerModal from './AssessmentViewerModal';
 
 interface DashboardProps {
   currentSubject: string;
@@ -87,6 +89,17 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
 
   // ── État : Éditeur des critères IB ─────────────────────────────────────
   const [isCriteriaEditorOpen, setIsCriteriaEditorOpen] = useState(false);
+
+  // State: Hours Calculator
+  const [isHoursCalculatorOpen, setIsHoursCalculatorOpen] = useState(false);
+
+  // State: Interdisciplinary Criteria Editor
+  const [interCriteriaSubject, setInterCriteriaSubject] = useState('');
+  const [interCriteriaGrade, setInterCriteriaGrade] = useState('');
+  const [isInterCriteriaEditorOpen, setIsInterCriteriaEditorOpen] = useState(false);
+
+  // State: Assessment Viewer/Editor Modal
+  const [viewerPlan, setViewerPlan] = useState<UnitPlan | null>(null);
 
   // ── État : Mise à jour des objectifs d'une unité ──────────────────────────────
   const [updatingAssessmentId, setUpdatingAssessmentId] = useState<string | null>(null);
@@ -590,6 +603,26 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     }
   };
 
+  // Helper: Parse planned hours from unit durations for subject+grade
+  const getPlannedHoursForSubjectGrade = (): number => {
+    const subjectPlans = plans.filter(
+      p => (p.subject || currentSubject) === currentSubject &&
+           (p.gradeLevel || currentGrade) === currentGrade
+    );
+    let total = 0;
+    for (const p of subjectPlans) {
+      if (!p.duration) continue;
+      const heureMatch = p.duration.match(/(\d+(?:[.,]\d+)?)\s*(?:heures?|h\b)/i);
+      const semaineMatch = p.duration.match(/(\d+(?:[.,]\d+)?)\s*semaines?/i);
+      if (heureMatch) {
+        total += parseFloat(heureMatch[1].replace(',', '.'));
+      } else if (semaineMatch) {
+        total += parseFloat(semaineMatch[1].replace(',', '.')) * 2;
+      }
+    }
+    return total;
+  };
+
   // ── Handler : Mise à jour des évaluations critériées d'une unité ────────────
   const handleUpdateAssessments = async (plan: UnitPlan) => {
     if (!plan.id) return;
@@ -1016,9 +1049,9 @@ Chapitre 4 : Algèbre et équations
       
       <div className="max-w-7xl mx-auto p-6 space-y-8">
         
-        <header className="flex flex-col md:flex-row justify-between items-end border-b border-slate-200 pb-6 gap-4">
+        <header className="flex flex-col md:flex-row justify-between items-end bg-gradient-to-r from-slate-800 via-blue-900 to-indigo-900 rounded-2xl px-6 py-5 mb-2 gap-4 shadow-xl">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-white shadow-md overflow-hidden border border-slate-100">
+          <div className="w-14 h-14 rounded-2xl bg-white/10 shadow-lg overflow-hidden border-2 border-white/20 flex-shrink-0">
              <img 
                 src="/logo-alkawtar.png" 
                 alt="Logo Al Kawthar" 
@@ -1027,17 +1060,17 @@ Chapitre 4 : Algèbre et équations
              />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Planificateur PEI - {currentGrade}</h1>
-            <div className="flex items-center gap-2 text-slate-500 mt-1">
-              <FileText size={16} />
-              <span className="font-medium">{currentSubject}</span>
+            <h1 className="text-2xl font-black text-white tracking-tight">Planificateur PEI — {currentGrade}</h1>
+            <div className="flex items-center gap-2 text-blue-200 mt-0.5">
+              <FileText size={14} />
+              <span className="font-semibold text-sm">{currentSubject}</span>
             </div>
           </div>
         </div>
         <div className="flex gap-3 flex-wrap">
              <button 
               onClick={onLogout}
-              className="flex items-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-3 rounded-lg font-semibold shadow transition"
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white border border-white/20 px-4 py-3 rounded-xl font-semibold shadow transition"
               title="Changer de matière/classe"
             >
               <ArrowLeft size={20} />
@@ -1082,7 +1115,7 @@ Chapitre 4 : Algèbre et équations
              {filteredPlans.length > 0 && (
                <button 
                  onClick={handlePrintSubjectUnits}
-                 className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
+                 className="flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white border border-white/20 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
                  title="Imprimer les descriptifs des unités"
                >
                  <Printer size={20} />
@@ -1092,7 +1125,7 @@ Chapitre 4 : Algèbre et équations
              <button 
                onClick={handleExportConsolidated}
                disabled={exportingId === 'consolidated'}
-               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed"
+               className="flex items-center gap-2 bg-emerald-500/80 hover:bg-emerald-500 text-white border border-emerald-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed"
                title="Exporter toutes les matières de cette classe en un seul document"
              >
                {exportingId === 'consolidated' ? (
@@ -1110,7 +1143,7 @@ Chapitre 4 : Algèbre et équations
              {/* Formulaire Drive, SEA, Interdisciplinaire disponibles depuis HomeScreen uniquement */}
              <button 
               onClick={() => setIsBulkModalOpen(true)}
-              className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
+              className="flex items-center gap-2 bg-violet-500/80 hover:bg-violet-500 text-white border border-violet-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
             >
               <Layers size={20} />
               Planification Annuelle
@@ -1118,17 +1151,26 @@ Chapitre 4 : Algèbre et équations
              {/* ── Bouton Objectifs IB (éditeur de critères) ─────── */}
              <button
                onClick={() => setIsCriteriaEditorOpen(true)}
-               className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
+               className="flex items-center gap-2 bg-indigo-500/80 hover:bg-indigo-500 text-white border border-indigo-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
                title={`Configurer les critères IB officiels pour ${currentSubject} — ${currentGrade}`}
              >
                <BookOpen size={20} />
                Objectifs IB
              </button>
+             {/* ── Bouton Calculateur d'heures ──────────────────── */}
+             <button
+               onClick={() => setIsHoursCalculatorOpen(true)}
+               className="flex items-center gap-2 bg-teal-500/80 hover:bg-teal-500 text-white border border-teal-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
+               title="Calculer le volume horaire annuel et vérifier la conformité IB (50h minimum)"
+             >
+               <Clock size={20} />
+               Heures
+             </button>
              {/* ── Bouton Refaire toutes les unités ────────────────── */}
              {plans.length > 0 && (
                <button
                  onClick={handleOpenRegenAll}
-                 className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
+                 className="flex items-center gap-2 bg-amber-500/80 hover:bg-amber-500 text-white border border-amber-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
                  title="Refaire toutes les unités de l'année (basé sur titre + énoncé + chapitres + critères)"
                >
                  <RotateCcw size={20} />
@@ -1137,7 +1179,7 @@ Chapitre 4 : Algèbre et équations
              )}
             <button 
               onClick={handleOpenAddUnit}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5"
+              className="flex items-center gap-2 bg-blue-500/80 hover:bg-blue-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
             >
               <Plus size={20} />
               Ajouter une unité
@@ -1146,19 +1188,49 @@ Chapitre 4 : Algèbre et équations
       </header>
 
       {/* Stats Section */}
-      {plans.length > 0 && (
+      {plans.length > 0 && (() => {
+        const ph = getPlannedHoursForSubjectGrade();
+        const hasHoursData = ph > 0;
+        const hoursOk = ph >= 50;
+        return (
         <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col">
-                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Unités pour {currentGrade}</h3>
+            {/* Hours alert banner — only shown when durations are parsed */}
+            {hasHoursData && (
+              <div className={`md:col-span-3 rounded-xl px-4 py-3 flex items-center justify-between gap-4 border text-sm ${
+                hoursOk
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : 'bg-amber-50 border-amber-200 text-amber-700'
+              }`}>
+                <div className="flex items-center gap-2">
+                  {hoursOk
+                    ? <CheckCircle size={16} className="flex-shrink-0 text-emerald-500" />
+                    : <AlertTriangle size={16} className="flex-shrink-0 text-amber-500" />}
+                  <span>
+                    <strong>Volume horaire planifié : {ph.toFixed(1)}h</strong>
+                    {hoursOk
+                      ? ` — Conforme IB (≥ 50h) ✅`
+                      : ` — Il manque ${(50 - ph).toFixed(1)}h pour atteindre le minimum IB de 50h ⚠️`}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setIsHoursCalculatorOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition whitespace-nowrap flex-shrink-0 bg-white hover:bg-teal-50 border-teal-300 text-teal-700"
+                >
+                  <Clock size={13} /> Calculateur
+                </button>
+              </div>
+            )}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-6 rounded-2xl shadow-sm border border-blue-100 flex flex-col hover:shadow-md transition-all duration-300">
+                <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">Unités pour {currentGrade}</h3>
                 <div className="flex items-center gap-4">
-                    <div className="p-4 bg-blue-50 rounded-full text-blue-600">
+                    <div className="p-4 bg-blue-100 rounded-2xl text-blue-600 shadow-sm">
                         <FileText size={32} />
                     </div>
-                    <span className="text-4xl font-bold text-slate-800">{plans.length}</span>
+                    <span className="text-5xl font-black text-blue-700">{plans.length}</span>
                 </div>
             </div>
             
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col md:col-span-2">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:col-span-2 hover:shadow-md transition-all duration-300">
                 <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Répartition par matière</h3>
                 <div className="h-40 w-full">
                      <ResponsiveContainer width="100%" height="100%">
@@ -1172,14 +1244,20 @@ Chapitre 4 : Algèbre et équations
                 </div>
             </div>
         </section>
-      )}
+        );
+      })()}
 
       {/* Plans List */}
       <section>
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <Calendar size={20} className="text-slate-500" />
-                Unités récentes
+            <h2 className="text-xl font-extrabold text-slate-800 flex items-center gap-2">
+                <Calendar size={20} className="text-indigo-500" />
+                Unités planifiées
+                {plans.length > 0 && (
+                  <span className="ml-1 bg-indigo-100 text-indigo-700 text-sm font-bold px-2.5 py-0.5 rounded-full">
+                    {plans.length}
+                  </span>
+                )}
             </h2>
 
             {/* Filters */}
@@ -1245,8 +1323,10 @@ Chapitre 4 : Algèbre et équations
         ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {filteredPlans.map(plan => (
-                    <div key={plan.id} className="print-card bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition group flex flex-col h-full">
-                        <div className="flex justify-between items-start mb-4">
+                    <div key={plan.id} className="print-card bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:shadow-xl hover:-translate-y-1 hover:border-blue-200 transition-all duration-300 group flex flex-col h-full relative overflow-hidden">
+                      {/* animated gradient shimmer on hover */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-50/0 via-indigo-50/0 to-violet-50/0 group-hover:from-blue-50/60 group-hover:via-indigo-50/30 group-hover:to-violet-50/20 transition-all duration-500 rounded-2xl pointer-events-none" />
+                        <div className="relative z-10 flex justify-between items-start mb-4">
                             <div>
                                 <span className="inline-block px-2 py-1 text-xs font-bold bg-blue-100 text-blue-700 rounded mb-2">
                                     {plan.subject || 'Sans matière'}
@@ -1272,7 +1352,7 @@ Chapitre 4 : Algèbre et équations
                             </div>
                         </div>
                         
-                        <div className="flex-grow space-y-3">
+                        <div className="relative z-10 flex-grow space-y-3">
                             {plan.statementOfInquiry ? (
                                 <div className="bg-slate-50 p-3 rounded-lg">
                                     <p className="text-xs font-bold text-slate-400 uppercase mb-1">Énoncé de recherche</p>
@@ -1321,7 +1401,7 @@ Chapitre 4 : Algèbre et équations
                             )}
                         </div>
 
-                        <div className="flex items-center justify-between text-xs text-slate-500 mt-4 pt-4 border-t border-slate-100">
+                        <div className="relative z-10 flex items-center justify-between text-xs text-slate-500 mt-4 pt-4 border-t border-slate-100">
                             <div className="flex items-center gap-2 flex-wrap">
                                 <button 
                                     onClick={() => handleExportPlan(plan)}
@@ -1348,6 +1428,17 @@ Chapitre 4 : Algèbre et équations
                                     <Printer size={14}/>
                                     Imprimer
                                 </button>
+                                {/* ── Bouton Voir / Éditer les évaluations critériées ── */}
+                                {plan.assessments && plan.assessments.length > 0 && (
+                                  <button
+                                    onClick={() => setViewerPlan(plan)}
+                                    className="flex items-center gap-1 bg-purple-50 text-purple-700 px-2 py-1 rounded hover:bg-purple-100 transition"
+                                    title="Voir et modifier les évaluations critériées générées"
+                                  >
+                                    <Eye size={14}/>
+                                    Voir Évals
+                                  </button>
+                                )}
                                 {/* ── Bouton Mise à jour des objectifs spécifiques ── */}
                                 <button
                                     onClick={() => handleUpdateAssessments(plan)}
@@ -1399,6 +1490,20 @@ Chapitre 4 : Algèbre et équations
               </span>
             </h2>
             <div className="flex items-center gap-3">
+              {/* Objectifs IB pour l'interdisciplinaire */}
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  setInterCriteriaSubject('Interdisciplinaire');
+                  setInterCriteriaGrade(currentGrade);
+                  setIsInterCriteriaEditorOpen(true);
+                }}
+                className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow transition"
+                title="Configurer les objectifs IB pour les unités interdisciplinaires"
+              >
+                <BookOpen size={12} />
+                Objectifs IB
+              </button>
               <button
                 onClick={e => { e.stopPropagation(); handleExportCompleteInterPlan(); }}
                 className="flex items-center gap-1 px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-xs font-semibold shadow transition"
@@ -1453,6 +1558,17 @@ Chapitre 4 : Algèbre et équations
                               )}
                             </div>
                             <div className="flex gap-1 flex-shrink-0 flex-wrap justify-end">
+                              <button
+                                onClick={() => {
+                                  setInterCriteriaSubject(unit.disciplines.join(' + '));
+                                  setInterCriteriaGrade(unit.grade || currentGrade);
+                                  setIsInterCriteriaEditorOpen(true);
+                                }}
+                                className="flex items-center gap-1 px-2 py-1 bg-white border border-indigo-300 text-indigo-700 rounded text-xs font-medium hover:bg-indigo-50 transition"
+                                title="Configurer les objectifs IB pour ce thème interdisciplinaire"
+                              >
+                                <BookOpen size={12} /> Obj. IB
+                              </button>
                               <button
                                 onClick={() => handleExportInterdisciplinaryWord(unit)}
                                 className="flex items-center gap-1 px-2 py-1 bg-white border border-fuchsia-300 text-fuchsia-700 rounded text-xs font-medium hover:bg-fuchsia-50 transition"
@@ -2428,6 +2544,42 @@ Chapitre 4 : Algèbre et équations
     />
 
     {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : VISIONNEUSE / ÉDITEUR DES ÉVALUATIONS CRITÉRIÉES
+        ═══════════════════════════════════════════════════════════════════ */}
+    <AssessmentViewerModal
+      isOpen={viewerPlan !== null}
+      onClose={() => setViewerPlan(null)}
+      plan={viewerPlan}
+      onUpdateUnit={plan => {
+        if (onUpdateUnit) onUpdateUnit(plan);
+        else onAddPlans(plans.map(p => p.id === plan.id ? plan : p));
+        setViewerPlan(plan);
+      }}
+    />
+
+    {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : ÉDITEUR CRITÈRES IB INTERDISCIPLINAIRE
+        ═══════════════════════════════════════════════════════════════════ */}
+    <IbCriteriaEditor
+      isOpen={isInterCriteriaEditorOpen}
+      onClose={() => setIsInterCriteriaEditorOpen(false)}
+      subject={interCriteriaSubject}
+      grade={interCriteriaGrade}
+      onSaved={handleCriteriaSaved}
+    />
+
+    {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : CALCULATEUR D'HEURES
+        ═══════════════════════════════════════════════════════════════════ */}
+    <HoursCalculatorModal
+      isOpen={isHoursCalculatorOpen}
+      onClose={() => setIsHoursCalculatorOpen(false)}
+      subject={currentSubject}
+      grade={currentGrade}
+      plannedHours={getPlannedHoursForSubjectGrade()}
+    />
+
+    {/* ═══════════════════════════════════════════════════════════════════
         MODAL : AJOUTER / MODIFIER UNE UNITÉ
         ═══════════════════════════════════════════════════════════════════ */}
     <AddEditUnitModal
@@ -2642,11 +2794,26 @@ Chapitre 4 : Algèbre et équations
               </select>
             </div>
 
-            {/* Subject + Unit auto-display */}
+            {/* Subject + Unit auto-display + folder path */}
             <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-xs text-slate-600 space-y-1">
               <p><span className="font-semibold">Matière :</span> {uploadModalPlan.subject || currentSubject}</p>
               <p><span className="font-semibold">Unité :</span> {uploadModalPlan.title}</p>
               <p><span className="font-semibold">Classe :</span> {uploadModalPlan.gradeLevel || currentGrade}</p>
+              {/* Folder path structure */}
+              <div className="mt-2 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 space-y-1">
+                <p className="font-bold text-sky-800 text-xs">📁 Arborescence Drive recommandée :</p>
+                <div className="flex items-center gap-1 text-sky-700 font-mono text-xs flex-wrap">
+                  <span className="bg-sky-100 px-1.5 py-0.5 rounded">{uploadModalPlan.gradeLevel || currentGrade}</span>
+                  <span className="text-slate-400">/</span>
+                  <span className="bg-sky-100 px-1.5 py-0.5 rounded">{(uploadModalPlan.subject || currentSubject).replace(/\s/g, '_')}</span>
+                  <span className="text-slate-400">/</span>
+                  <span className="bg-sky-100 px-1.5 py-0.5 rounded">{(uploadModalPlan.title || 'Unite').replace(/[^a-z0-9\s]/gi,'').trim().replace(/\s+/g,'_').slice(0,25)}</span>
+                  <span className="text-slate-400">/</span>
+                  <span className={`px-1.5 py-0.5 rounded ${uploadStudentName ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
+                    {uploadStudentName || 'Eleve'}
+                  </span>
+                </div>
+              </div>
               {uploadStudentName && uploadCriterion && (
                 <p className="mt-2 font-bold text-sky-700">
                   📄 Nom du fichier : {`${(uploadModalPlan.subject || currentSubject).replace(/[^a-z0-9]/gi,'_')}-${(uploadModalPlan.title || '').replace(/[^a-z0-9]/gi,'_').slice(0,20)}-${uploadCriterion}-${uploadStudentName.replace(/[^a-z0-9]/gi,'_')}-${(uploadModalPlan.gradeLevel || currentGrade).replace(/\s/g,'_')}`}
@@ -2669,7 +2836,13 @@ Chapitre 4 : Algèbre et équations
 
             {/* Drive link notice */}
             <div className="bg-sky-50 border border-sky-100 rounded-lg p-3 text-xs text-sky-700 space-y-2">
-              <p className="font-semibold">📁 Le fichier sera déposé dans le dossier Google Drive de l'établissement.</p>
+              <p className="font-semibold">📁 Instructions de dépôt Google Drive :</p>
+              <ol className="list-decimal list-inside space-y-1 text-sky-700">
+                <li>Ouvrez le dossier Drive ci-dessous</li>
+                <li>Naviguez vers : <strong>{uploadModalPlan.gradeLevel || currentGrade}</strong> → <strong>{(uploadModalPlan.subject || currentSubject).replace(/\s/g, '_')}</strong> → <strong>{(uploadModalPlan.title || 'Unite').replace(/[^a-z0-9\s]/gi,'').trim().replace(/\s+/g,'_').slice(0,25)}</strong></li>
+                <li>Créez un sous-dossier avec le nom de l'élève si nécessaire</li>
+                <li>Glissez-déposez le fichier renommé avec le nom indiqué ci-dessus</li>
+              </ol>
               <a
                 href={`https://drive.google.com/drive/folders/1qwx0XnrnRRCcK3o_AMr07n1YHCm4-oJ4`}
                 target="_blank"
@@ -2680,9 +2853,6 @@ Chapitre 4 : Algèbre et équations
                 Ouvrir le dossier Drive
                 <ExternalLink size={11} />
               </a>
-              <p className="text-slate-500">
-                Conseil : renommez le fichier avec le nom indiqué ci-dessus avant de le glisser dans Drive, ou utilisez le bouton ci-dessous pour l'ouvrir directement.
-              </p>
             </div>
           </div>
 
