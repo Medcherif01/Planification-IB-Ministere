@@ -1,9 +1,10 @@
 import type { UnitPlan } from '../types';
 
-// URL de l'API - en développement local ou en production
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? '/api' 
-  : 'http://localhost:3000/api';
+// URL de l'API — toujours relative en production (Vercel) pour éviter les problèmes CORS.
+// En développement local, pointe vers le serveur vite/vercel dev sur le port 3000.
+const API_BASE_URL = (typeof window !== 'undefined')
+  ? '/api'  // Navigateur : toujours relatif (fonctionne en prod et en dev avec vercel dev)
+  : (process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:3000/api');
 
 export interface PlanificationData {
   key: string;

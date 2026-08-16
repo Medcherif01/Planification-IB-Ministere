@@ -3,42 +3,38 @@ import Docxtemplater from "docxtemplater";
 import FileSaver from "file-saver";
 import JSZip from "jszip";
 import { UnitPlan, AssessmentData, ServiceActionPlan } from "../types";
-import { PLAN_TEMPLATE_URL, EVAL_TEMPLATE_URL } from "../constants";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
 import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit } from "./geminiService";
 
-// Helper function to fetch the template with retries and different proxies
-const loadFile = async (url: string): Promise<ArrayBuffer> => {
-  // Add timestamp to bypass cache
-  const uniqueUrl = url + (url.includes('?') ? '&' : '?') + 't=' + new Date().getTime();
-  
-  // List of proxies to try in order
-  const proxies = [
-    (u: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-    (u: string) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    (u: string) => `https://cors-anywhere.herokuapp.com/${u}` // Fallback
-  ];
+// ─────────────────────────────────────────────────────────────────────────────
+// Chargement des templates Word via l'API backend (évite les problèmes CORS)
+// L'API /api/template?type=plan|eval|exam télécharge le fichier côté serveur
+// et le renvoie directement au frontend — aucun proxy tiers requis.
+// ─────────────────────────────────────────────────────────────────────────────
+const loadFile = async (templateType: 'plan' | 'eval' | 'exam'): Promise<ArrayBuffer> => {
+  console.log(`[WORD] Chargement du template "${templateType}" via l'API backend...`);
 
-  for (const proxyGen of proxies) {
+  const response = await fetch(`/api/template?type=${templateType}&t=${Date.now()}`, {
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    let errMsg = `Erreur HTTP ${response.status}`;
     try {
-      const proxyUrl = proxyGen(uniqueUrl);
-      const response = await fetch(proxyUrl);
-      if (!response.ok) {
-        console.warn(`Proxy failed: ${proxyUrl}`);
-        continue;
-      }
-      const buffer = await response.arrayBuffer();
-      // Basic check: if buffer is too small, it might be an empty error file
-      if (buffer.byteLength < 100) {
-         continue;
-      }
-      return buffer;
-    } catch (error) {
-      console.warn("Error loading template with proxy:", error);
-    }
+      const json = await response.json();
+      errMsg = json.error || json.message || errMsg;
+    } catch (_) { /* ignore */ }
+    throw new Error(errMsg);
   }
-  
-  throw new Error("Impossible de télécharger le modèle Word. Vérifiez votre connexion ou réessayez plus tard.");
+
+  const buffer = await response.arrayBuffer();
+
+  if (buffer.byteLength < 100) {
+    throw new Error("Le template téléchargé est vide ou invalide. Veuillez réessayer.");
+  }
+
+  console.log(`[WORD] Template "${templateType}" chargé avec succès (${buffer.byteLength} bytes)`);
+  return buffer;
 };
 
 // Helper to remove characters that break Docxtemplater
@@ -137,9 +133,9 @@ const generateDocumentBlob = (templateContent: ArrayBuffer, data: any): Blob => 
     });
 };
 
-const generateDocument = async (templateUrl: string, data: any, fileName: string) => {
+const generateDocument = async (templateType: 'plan' | 'eval' | 'exam', data: any, fileName: string) => {
   try {
-    const content = await loadFile(templateUrl);
+    const content = await loadFile(templateType);
     const blob = generateDocumentBlob(content, data);
     const saveAs = (FileSaver as any).saveAs || FileSaver;
     saveAs(blob, fileName);
@@ -339,7 +335,7 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     };
   }
 
-  await generateDocument(PLAN_TEMPLATE_URL, data, `Plan_Unite_${(plan.title || 'Sans_Titre').replace(/[^a-z0-9]/gi, '_')}.docx`);
+  await generateDocument('plan', data, `Plan_Unite_${(plan.title || 'Sans_Titre').replace(/[^a-z0-9]/gi, '_')}.docx`);
 };
 
 export const exportAssessmentsToZip = async (plan: UnitPlan) => {
@@ -358,7 +354,7 @@ export const exportAssessmentsToZip = async (plan: UnitPlan) => {
     }
 
     // 2. Load Template Once
-    const templateContent = await loadFile(EVAL_TEMPLATE_URL);
+    const templateContent = await loadFile('eval');
     
     // 3. Create Zip
     const zip = new JSZip();
@@ -1806,7 +1802,7 @@ export const exportInterdisciplinaryAssessmentsToZip = async (
     });
 
     // Load template and build ZIP
-    const templateContent = await loadFile(EVAL_TEMPLATE_URL);
+    const templateContent = await loadFile('eval');
     const zip = new JSZip();
     const folderName = `Evaluations_Interdisc_${clean(unit.title).replace(/ /g, '_').substring(0, 30)}_${clean(unit.grade).replace(/ /g, '')}`;
     const folder = zip.folder(folderName);

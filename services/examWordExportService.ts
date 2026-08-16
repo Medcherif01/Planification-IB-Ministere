@@ -2,52 +2,37 @@ import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import { saveAs } from 'file-saver';
 import { Exam, QuestionType } from '../types';
-import { WORD_TEMPLATE_URL } from '../constants';
 
-// Charger le template Word depuis la variable d'environnement Vercel UNIQUEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+// Chargement du template Word via l'API backend (évite les problèmes CORS).
+// L'API /api/template?type=exam télécharge le fichier côté serveur Vercel et
+// le renvoie directement — aucun proxy tiers requis.
+// ─────────────────────────────────────────────────────────────────────────────
 const loadTemplate = async (): Promise<ArrayBuffer> => {
-  // URL du template Google Docs (définie dans constants.ts)
-  // Cette URL correspond à la variable d'environnement WORD_TEMPLATE_URL configurée dans Vercel
-  const templateUrl = WORD_TEMPLATE_URL;
-  
-  // Ajouter un timestamp pour éviter le cache navigateur
-  const urlWithCacheBust = `${templateUrl}&t=${Date.now()}`;
-  
-  console.log('📄 [WORD EXPORT] Chargement du template depuis Google Docs (Vercel config)');
-  console.log('🔗 [WORD EXPORT] URL:', templateUrl);
-  console.log('🔄 [WORD EXPORT] Cache-busting activé');
-  
-  try {
-    const response = await fetch(urlWithCacheBust, {
-      cache: 'no-cache',
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache'
-      }
-    });
-    
-    if (!response.ok) {
-      console.error(`❌ [WORD EXPORT] Erreur HTTP ${response.status}: ${response.statusText}`);
-      throw new Error(`Impossible de charger le template (HTTP ${response.status})`);
-    }
-    
-    const arrayBuffer = await response.arrayBuffer();
-    console.log('✅ [WORD EXPORT] Template Google Docs chargé avec succès');
-    console.log(`📊 [WORD EXPORT] Taille: ${arrayBuffer.byteLength} bytes`);
-    console.log(`🎯 [WORD EXPORT] Taille attendue: 68644 bytes (template Vercel correct)`);
-    
-    // Vérification de la taille pour s'assurer qu'on a le bon template
-    if (arrayBuffer.byteLength === 68644) {
-      console.log('✅ [WORD EXPORT] Template Vercel CORRECT détecté');
-    } else {
-      console.warn(`⚠️ [WORD EXPORT] Taille différente: ${arrayBuffer.byteLength} bytes au lieu de 68644`);
-    }
-    
-    return arrayBuffer;
-  } catch (error) {
-    console.error('❌ [WORD EXPORT] Erreur lors du chargement du template:', error);
-    throw new Error(`Échec chargement template: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+  console.log('📄 [WORD EXPORT] Chargement du template via l\'API backend /api/template?type=exam');
+
+  const response = await fetch(`/api/template?type=exam&t=${Date.now()}`, {
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    let errMsg = `Erreur HTTP ${response.status}`;
+    try {
+      const json = await response.json();
+      errMsg = json.error || json.message || errMsg;
+    } catch (_) { /* ignore */ }
+    console.error(`❌ [WORD EXPORT] ${errMsg}`);
+    throw new Error(`Impossible de charger le template examen: ${errMsg}`);
   }
+
+  const arrayBuffer = await response.arrayBuffer();
+
+  if (arrayBuffer.byteLength < 100) {
+    throw new Error('Le template examen téléchargé est vide ou invalide. Veuillez réessayer.');
+  }
+
+  console.log(`✅ [WORD EXPORT] Template examen chargé avec succès (${arrayBuffer.byteLength} bytes)`);
+  return arrayBuffer;
 };
 
 // Convertir / nettoyer les notations LaTeX résiduelles en notation mathématique standard lisible.

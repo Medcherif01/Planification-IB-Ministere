@@ -12,6 +12,9 @@
     },
     "api/exams.ts": {
       "maxDuration": 60
+    },
+    "api/template.ts": {
+      "maxDuration": 30
     }
   },
   "rewrites": [

@@ -1,31 +1,61 @@
 import { MongoClient, ServerApiVersion } from 'mongodb';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const MONGO_URL = process.env.MONGO_URL || '';
+// Accepte MONGO_URL ou MONGODB_URI (les deux noms sont courants)
+const MONGO_URL = (process.env.MONGO_URL || process.env.MONGODB_URI || '').trim();
 const DB_NAME = 'planpei';
 const COLLECTION_NAME = 'planifications';
+
+// Timeout de connexion réduit pour éviter des blocages trop longs
+const CONNECT_TIMEOUT_MS = 10_000;
+const SOCKET_TIMEOUT_MS  = 20_000;
 
 let cachedClient: MongoClient | null = null;
 
 async function connectToDatabase() {
+  // Réutiliser le client s'il est déjà connecté
   if (cachedClient) {
-    return cachedClient;
+    try {
+      // Vérifier que la connexion est toujours vivante
+      await cachedClient.db('admin').command({ ping: 1 });
+      return cachedClient;
+    } catch (_) {
+      // Connexion perdue — on en recrée une
+      console.warn('[MongoDB] Connexion cached perdue, reconnexion...');
+      try { await cachedClient.close(); } catch (_) {}
+      cachedClient = null;
+    }
   }
 
   if (!MONGO_URL) {
-    throw new Error('MONGO_URL non définie dans les variables d\'environnement');
+    throw new Error(
+      'Variable d\'environnement MONGO_URL (ou MONGODB_URI) non définie sur Vercel. ' +
+      'Allez dans Project Settings > Environment Variables et ajoutez votre chaîne de connexion MongoDB Atlas.'
+    );
   }
 
-  // Utilise l'API stable ServerApiVersion pour éviter url.parse() deprecation
+  // Valider le format basique de l'URL
+  if (!MONGO_URL.startsWith('mongodb://') && !MONGO_URL.startsWith('mongodb+srv://')) {
+    throw new Error(
+      'MONGO_URL invalide : doit commencer par "mongodb://" ou "mongodb+srv://". ' +
+      'Vérifiez votre chaîne de connexion MongoDB Atlas.'
+    );
+  }
+
   const client = new MongoClient(MONGO_URL, {
     serverApi: {
       version: ServerApiVersion.v1,
       strict: false,
       deprecationErrors: false,
-    }
+    },
+    connectTimeoutMS: CONNECT_TIMEOUT_MS,
+    socketTimeoutMS: SOCKET_TIMEOUT_MS,
+    serverSelectionTimeoutMS: CONNECT_TIMEOUT_MS,
   });
+
   await client.connect();
   cachedClient = client;
+  console.log('[MongoDB] Connexion établie avec succès');
   return client;
 }
 
@@ -143,9 +173,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (error: any) {
     console.error('Erreur API MongoDB:', error);
-    return res.status(500).json({ 
-      error: 'Erreur serveur',
-      message: error.message 
+
+    // Fournir des messages d'erreur lisibles selon le type d'erreur
+    let userMessage = error.message || 'Erreur serveur inconnue';
+
+    if (
+      error.code === 'ENOTFOUND' ||
+      (error.message && error.message.includes('ENOTFOUND'))
+    ) {
+      userMessage =
+        'Impossible de résoudre le nom d\'hôte MongoDB. ' +
+        'Vérifiez que MONGO_URL est correctement configurée dans les variables d\'environnement Vercel ' +
+        'et que l\'IP de Vercel est autorisée dans MongoDB Atlas (Network Access > Allow from anywhere : 0.0.0.0/0).';
+      // Invalider le cache pour forcer une nouvelle tentative de connexion
+      if (cachedClient) {
+        try { await cachedClient.close(); } catch (_) {}
+        cachedClient = null;
+      }
+    } else if (
+      error.message &&
+      (error.message.includes('authentication failed') || error.message.includes('AuthenticationFailed'))
+    ) {
+      userMessage =
+        'Échec d\'authentification MongoDB. ' +
+        'Vérifiez le nom d\'utilisateur et le mot de passe dans votre chaîne MONGO_URL.';
+      if (cachedClient) {
+        try { await cachedClient.close(); } catch (_) {}
+        cachedClient = null;
+      }
+    } else if (
+      error.message &&
+      (error.message.includes('MONGO_URL') || error.message.includes('MONGODB_URI'))
+    ) {
+      userMessage = error.message; // Message d'erreur de configuration déjà lisible
+    }
+
+    return res.status(500).json({
+      error: 'Erreur serveur MongoDB',
+      message: userMessage,
     });
   }
 }

@@ -1,9 +1,9 @@
 import type { Exam } from '../types';
 
-// URL de l'API - en développement local ou en production
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? '/api' 
-  : 'http://localhost:3000/api';
+// URL de l'API — toujours relative en navigateur pour éviter les problèmes CORS.
+const API_BASE_URL = (typeof window !== 'undefined')
+  ? '/api'
+  : (process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:3000/api');
 
 /**
  * Sauvegarde un examen généré dans MongoDB
