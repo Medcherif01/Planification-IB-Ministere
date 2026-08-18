@@ -15,6 +15,12 @@
     },
     "api/template.ts": {
       "maxDuration": 30
+    },
+    "api/users.ts": {
+      "maxDuration": 30
+    },
+    "api/modification-requests.ts": {
+      "maxDuration": 30
     }
   },
   "rewrites": [

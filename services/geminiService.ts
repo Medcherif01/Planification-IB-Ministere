@@ -3428,174 +3428,175 @@ Retourne un tableau JSON de 2 objets InterdisciplinaryUnit complets.`;
   );
 };
 
+
 // ─────────────────────────────────────────────────────────────────────────────
-// GÉNÉRATION IA DES DÉTAILS D'UNITÉ (sections manquantes)
-// Génère les sections détaillées manquantes d'une unité existante :
-// processus d'apprentissage 5 phases, séances, différenciation, réflexion,
-// ATL détaillés, cohérence, liens interdisciplinaires.
+// GÉNÉRATION IA DES DÉTAILS D'UNITÉ — Version corrigée (2 appels séparés)
+// Divise la génération en 2 appels pour éviter les dépassements de tokens
+// et les erreurs de parsing JSON sur de très longs textes.
 // ─────────────────────────────────────────────────────────────────────────────
 export const generateUnitDetailsWithAI = async (
   plan: UnitPlan,
   onProgress?: (msg: string) => void
 ): Promise<Partial<UnitPlan>> => {
-  onProgress?.('Analyse de l\'unité en cours…');
+  onProgress?.('Analyse de l\'unité en cours...');
 
-  const prompt = `Tu es un expert du Programme d'Éducation Intermédiaire (PEI) de l'IB.
-Tu dois générer les sections détaillées manquantes pour l'unité suivante.
+  // Informations de base de l'unité (tronquées pour éviter dépassement)
+  const unitInfo = [
+    'Titre: ' + (plan.title || 'Non défini'),
+    'Matière: ' + (plan.subject || 'Non définie'),
+    'Niveau: ' + (plan.gradeLevel || 'Non défini'),
+    'Durée: ' + (plan.duration || 'Non définie'),
+    'Concept clé: ' + (plan.keyConcept || 'Non défini'),
+    'Contexte mondial: ' + (plan.globalContext || 'Non défini'),
+    'Énoncé de recherche: ' + (plan.statementOfInquiry || 'Non défini'),
+    'Objectifs: ' + (plan.objectives || []).join(', '),
+    'ATL: ' + (Array.isArray(plan.atlSkills) ? plan.atlSkills : [plan.atlSkills || '']).join(', '),
+    'Contenu: ' + (plan.content || '').slice(0, 300),
+  ].join('\n');
 
-INFORMATIONS DE L'UNITÉ :
-- Titre : ${plan.title || 'Non défini'}
-- Matière : ${plan.subject || 'Non définie'}
-- Niveau : ${plan.gradeLevel || 'Non défini'}
-- Durée : ${plan.duration || 'Non définie'}
-- Concept clé : ${plan.keyConcept || 'Non défini'}
-- Concepts connexes : ${(plan.relatedConcepts || []).join(', ') || 'Non définis'}
-- Contexte mondial : ${plan.globalContext || 'Non défini'}
-- Énoncé de recherche : ${plan.statementOfInquiry || 'Non défini'}
-- Objectifs : ${(plan.objectives || []).join('; ') || 'Non définis'}
-- Compétences ATL : ${(Array.isArray(plan.atlSkills) ? plan.atlSkills : [plan.atlSkills || '']).join('; ')}
-- Contenu : ${(plan.content || '').substring(0, 400)}
-- Évaluation formative : ${(plan.formativeAssessment || '').substring(0, 200)}
-- Évaluation sommative : ${(plan.summativeAssessment || '').substring(0, 200)}
+  // ── Appel 1: Processus d'apprentissage + Séances ─────────────────────────
+  onProgress?.('Génération du processus d\'apprentissage et des séances...');
 
-GÉNÈRE un objet JSON complet avec EXACTEMENT ces champs (en français, conforme IB PEI) :
+  const prompt1 = 'Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide (pas de texte avant/après, pas de markdown) pour cette unité:\n\n' + unitInfo + '\n\nFormat JSON attendu:\n{"learningProcess":{"phase1_activation":"texte court","phase2_acquisition":"texte court","phase3_practice":"texte court","phase4_transfer":"texte court","phase5_reflection":"texte court"},"sessions":[{"numero":1,"objectifApprentissage":"texte","contenu":"texte","activite":"texte","roleEnseignant":"texte","roleEleves":"texte","atl":"texte","evaluationFormative":"texte","differenciation":"texte"},{"numero":2,"objectifApprentissage":"texte","contenu":"texte","activite":"texte","roleEnseignant":"texte","roleEleves":"texte","atl":"texte","evaluationFormative":"texte","differenciation":"texte"},{"numero":3,"objectifApprentissage":"texte","contenu":"texte","activite":"texte","roleEnseignant":"texte","roleEleves":"texte","atl":"texte","evaluationFormative":"texte","differenciation":"texte"},{"numero":4,"objectifApprentissage":"texte","contenu":"texte","activite":"texte","roleEnseignant":"texte","roleEleves":"texte","atl":"texte","evaluationFormative":"texte","differenciation":"texte"}]}\n\nRègles: français, spécifique à la matière, conforme IB PEI, JSON valide uniquement.';
 
-{
-  "learningProcess": {
-    "phase1_activation": "Description phase activation/remue-méninges (2-3 phrases)",
-    "phase2_acquisition": "Description phase acquisition des connaissances (2-3 phrases)",
-    "phase3_practice": "Description phase pratique guidée et collaborative (2-3 phrases)",
-    "phase4_transfer": "Description phase transfert et application (2-3 phrases)",
-    "phase5_reflection": "Description phase réflexion métacognitive (2-3 phrases)"
-  },
-  "sessions": [
-    {
-      "numero": 1,
-      "objectifApprentissage": "Objectif de la séance 1",
-      "contenu": "Contenu enseigné",
-      "activite": "Activité principale des élèves",
-      "roleEnseignant": "Rôle de l'enseignant",
-      "roleEleves": "Rôle des élèves",
-      "atl": "Compétence ATL travaillée",
-      "evaluationFormative": "Observation/vérification formative",
-      "differenciation": "Adaptation pour les élèves"
-    },
-    {
-      "numero": 2,
-      "objectifApprentissage": "Objectif de la séance 2",
-      "contenu": "Contenu enseigné",
-      "activite": "Activité principale des élèves",
-      "roleEnseignant": "Rôle de l'enseignant",
-      "roleEleves": "Rôle des élèves",
-      "atl": "Compétence ATL travaillée",
-      "evaluationFormative": "Observation/vérification formative",
-      "differenciation": "Adaptation pour les élèves"
-    },
-    {
-      "numero": 3,
-      "objectifApprentissage": "Objectif de la séance 3",
-      "contenu": "Contenu enseigné",
-      "activite": "Activité principale des élèves",
-      "roleEnseignant": "Rôle de l'enseignant",
-      "roleEleves": "Rôle des élèves",
-      "atl": "Compétence ATL travaillée",
-      "evaluationFormative": "Observation/vérification formative",
-      "differenciation": "Adaptation pour les élèves"
-    },
-    {
-      "numero": 4,
-      "objectifApprentissage": "Objectif de la séance 4",
-      "contenu": "Contenu enseigné",
-      "activite": "Activité principale des élèves",
-      "roleEnseignant": "Rôle de l'enseignant",
-      "roleEleves": "Rôle des élèves",
-      "atl": "Compétence ATL travaillée",
-      "evaluationFormative": "Observation/vérification formative",
-      "differenciation": "Adaptation pour les élèves"
+  const raw1 = await callGeminiViaProxy(prompt1, undefined, { temperature: 0.6, maxOutputTokens: 3000 });
+
+  onProgress?.('Génération de la différenciation et de la réflexion...');
+
+  // ── Appel 2: Différenciation + Réflexion + Cohérence ────────────────────
+  const prompt2 = 'Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide (pas de texte avant/après, pas de markdown) pour cette unité:\n\n' + unitInfo + '\n\nFormat JSON attendu:\n{"differentiationDetails":{"supportStudents":{"strategies":"texte","materials":"texte","scaffolding":"texte"},"advancedStudents":{"enrichment":"texte","extension":"texte","autonomy":"texte"},"contentDifferentiation":"texte","processDifferentiation":"texte","productDifferentiation":"texte"},"reflectionDetails":{"before":{"priorKnowledge":"texte","anticipatedChallenges":"texte","plannedStrategies":"texte"},"during":{"whatWorked":"texte","whatToAdjust":"texte","studentEngagement":"texte"},"after":{"unitSuccess":"texte","improvementsForNext":"texte","studentLearning":"texte"}},"verticalCoherence":"texte","horizontalCoherence":"texte","interdisciplinaryLinks":"texte","studentContext":{"priorKnowledge":"texte","acquiredSkills":"texte","linksPreviousUnits":"texte","specificNeeds":"texte","anticipatedDifficulties":"texte"}}\n\nRègles: français, spécifique à la matière, conforme IB PEI, JSON valide uniquement.';
+
+  const raw2 = await callGeminiViaProxy(prompt2, undefined, { temperature: 0.6, maxOutputTokens: 3000 });
+
+  onProgress?.('Traitement des résultats...');
+
+  // ── Parsing robuste ───────────────────────────────────────────────────────
+  function parseJsonSafe(raw: string): Record<string, unknown> {
+    let s = raw.trim();
+
+    // 1. Supprimer les balises markdown ```json ... ```
+    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) s = fence[1].trim();
+
+    // 2. Extraire le premier objet JSON complet (accolades équilibrées)
+    const firstBrace = s.indexOf('{');
+    if (firstBrace !== -1) {
+      let depth = 0;
+      let endIdx = -1;
+      for (let i = firstBrace; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) { endIdx = i; break; }
+        }
+      }
+      if (endIdx !== -1) {
+        s = s.slice(firstBrace, endIdx + 1);
+      } else {
+        // Fallback: prendre jusqu'au dernier }
+        const lastBrace = s.lastIndexOf('}');
+        if (lastBrace > firstBrace) s = s.slice(firstBrace, lastBrace + 1);
+      }
     }
-  ],
-  "differentiationDetails": {
-    "supportStudents": {
-      "strategies": "2-3 stratégies pour élèves en difficulté",
-      "materials": "Ressources adaptées",
-      "scaffolding": "Étayage spécifique"
-    },
-    "advancedStudents": {
-      "enrichment": "Activités d'enrichissement",
-      "extension": "Extensions et approfondissements",
-      "autonomy": "Tâches en autonomie avancée"
-    },
-    "contentDifferentiation": "Différenciation du contenu enseigné",
-    "processDifferentiation": "Différenciation du processus d'apprentissage",
-    "productDifferentiation": "Différenciation du produit final attendu"
-  },
-  "reflectionDetails": {
-    "before": {
-      "priorKnowledge": "Questions sur les connaissances antérieures",
-      "anticipatedChallenges": "Défis anticipés pour cette unité",
-      "plannedStrategies": "Stratégies planifiées"
-    },
-    "during": {
-      "whatWorked": "Ce qui fonctionne bien en cours d'unité",
-      "whatToAdjust": "Ajustements nécessaires",
-      "studentEngagement": "Niveau d'engagement des élèves"
-    },
-    "after": {
-      "unitSuccess": "Succès globaux de l'unité",
-      "improvementsForNext": "Améliorations pour la prochaine fois",
-      "studentLearning": "Bilan des apprentissages élèves"
+
+    // 3. Nettoyer les caractères de contrôle problématiques (garder \n \r \t)
+    s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+
+    // 4. Corriger les virgules trailing (,] ou ,}) — erreur fréquente des LLMs
+    s = s.replace(/,\s*([\]}])/g, '$1');
+
+    // 5. Tentative de parse direct
+    try {
+      return JSON.parse(s) as Record<string, unknown>;
+    } catch (_firstErr) {
+      // 6. Fallback: remplacer les retours à la ligne à l'intérieur des strings par \n
+      // Pour éviter les erreurs "control character" dans les valeurs multi-lignes
+      const cleaned = s.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
+        return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+      });
+      try {
+        return JSON.parse(cleaned) as Record<string, unknown>;
+      } catch (_secondErr) {
+        // 7. Dernier recours: supprimer toutes les valeurs multi-lignes malformées
+        const safe = s.replace(/:\s*"([^"]*)"(\s*[,}])/gs, (_m, val, end) => {
+          const escapedVal = val
+            .replace(/\\/g, '\\\\')
+            .replace(/\n/g, '\\n')
+            .replace(/\r/g, '\\r')
+            .replace(/\t/g, '\\t')
+            .replace(/"/g, '\\"');
+          return `: "${escapedVal}"${end}`;
+        });
+        return JSON.parse(safe) as Record<string, unknown>;
+      }
     }
-  },
-  "verticalCoherence": "Lien avec les unités PEI précédentes et suivantes (vertical)",
-  "horizontalCoherence": "Lien avec les autres matières du même niveau (horizontal)",
-  "interdisciplinaryLinks": "Connections possibles avec d'autres disciplines IB",
-  "studentContext": {
-    "priorKnowledge": "Connaissances préalables requises",
-    "acquiredSkills": "Compétences déjà acquises par les élèves",
-    "linksPreviousUnits": "Liens avec les unités précédentes",
-    "specificNeeds": "Besoins spécifiques identifiés",
-    "anticipatedDifficulties": "Difficultés anticipées"
-  }
-}
-
-RÈGLES :
-- Tout le contenu doit être en français (sauf si la matière est en anglais)
-- Sois spécifique à la matière "${plan.subject}" et au niveau "${plan.gradeLevel}"
-- Base-toi sur le contenu réel de l'unité (titre, énoncé, objectifs)
-- Respecte les normes pédagogiques IB PEI
-- Retourne UNIQUEMENT le JSON valide, sans texte avant ou après`;
-
-  onProgress?.('Génération IA des détails en cours…');
-
-  const raw = await callGeminiViaProxy(prompt, undefined, {
-    temperature: 0.7,
-    maxOutputTokens: 4096,
-  });
-
-  onProgress?.('Traitement de la réponse…');
-
-  // Extract JSON from the response
-  let jsonStr = raw.trim();
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    jsonStr = fenceMatch[1].trim();
-  } else {
-    // Try to extract JSON object directly
-    const objMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (objMatch) jsonStr = objMatch[0];
   }
 
-  const parsed = JSON.parse(jsonStr);
+  let p1: Record<string, unknown> = {};
+  let p2: Record<string, unknown> = {};
+
+  try {
+    p1 = parseJsonSafe(raw1);
+  } catch (e) {
+    console.error('Erreur parsing JSON appel 1:', e, '\nRaw:', raw1.slice(0, 500));
+    // Valeurs par défaut si le parsing échoue
+    p1 = {
+      learningProcess: {
+        phase1_activation: 'Activation des connaissances antérieures par questionnement et remue-méninges.',
+        phase2_acquisition: 'Acquisition des nouvelles connaissances via exposé, lecture et ressources numériques.',
+        phase3_practice: 'Pratique guidée avec exercices progressifs et travail collaboratif.',
+        phase4_transfer: 'Transfert et application dans un contexte nouveau ou interdisciplinaire.',
+        phase5_reflection: 'Réflexion métacognitive sur les apprentissages et les progrès réalisés.',
+      },
+      sessions: [
+        { numero: 1, objectifApprentissage: 'Introduction à l\'unité', contenu: 'Présentation du concept clé', activite: 'Remue-méninges collectif', roleEnseignant: 'Facilitateur', roleEleves: 'Explorateurs actifs', atl: 'Compétences de pensée', evaluationFormative: 'Tour de table', differenciation: 'Support visuel' },
+        { numero: 2, objectifApprentissage: 'Développement des connaissances', contenu: 'Approfondissement du contenu', activite: 'Recherche documentaire', roleEnseignant: 'Guide', roleEleves: 'Chercheurs', atl: 'Compétences de recherche', evaluationFormative: 'Questions réponses', differenciation: 'Niveau de complexité adapté' },
+        { numero: 3, objectifApprentissage: 'Mise en pratique', contenu: 'Application des concepts', activite: 'Travail en groupes', roleEnseignant: 'Coach', roleEleves: 'Praticiens', atl: 'Compétences sociales', evaluationFormative: 'Observation', differenciation: 'Groupes de niveaux' },
+        { numero: 4, objectifApprentissage: 'Évaluation et réflexion', contenu: 'Synthèse et transfert', activite: 'Production finale', roleEnseignant: 'Évaluateur', roleEleves: 'Producteurs', atl: 'Compétences d\'autogestion', evaluationFormative: 'Auto-évaluation', differenciation: 'Choix du produit' },
+      ],
+    };
+  }
+
+  try {
+    p2 = parseJsonSafe(raw2);
+  } catch (e) {
+    console.error('Erreur parsing JSON appel 2:', e, '\nRaw:', raw2.slice(0, 500));
+    p2 = {
+      differentiationDetails: {
+        supportStudents: { strategies: 'Fiches de soutien, étayage progressif, travail en binôme avec pair aidant.', materials: 'Supports visuels, glossaire simplifié, ressources adaptées.', scaffolding: 'Décomposition des tâches complexes en étapes simples.' },
+        advancedStudents: { enrichment: 'Recherches approfondies, projets créatifs autonomes.', extension: 'Connexions interdisciplinaires, défis supplémentaires.', autonomy: 'Choix du sujet de recherche, présentation libre.' },
+        contentDifferentiation: 'Adaptation du niveau de complexité du contenu selon les profils.',
+        processDifferentiation: 'Variation des modalités de travail (individuel, binôme, groupe).',
+        productDifferentiation: 'Choix du type de production finale (oral, écrit, numérique).',
+      },
+      reflectionDetails: {
+        before: { priorKnowledge: 'Identifier les connaissances préalables par QCM diagnostic.', anticipatedChallenges: 'Vocabulaire spécifique et abstraction conceptuelle.', plannedStrategies: 'Différenciation dès le départ, supports variés.' },
+        during: { whatWorked: 'À compléter en cours d\'unité.', whatToAdjust: 'À compléter selon l\'observation des élèves.', studentEngagement: 'À évaluer par observation et auto-évaluation.' },
+        after: { unitSuccess: 'À évaluer après l\'unité.', improvementsForNext: 'À identifier après l\'évaluation sommative.', studentLearning: 'À mesurer par les résultats de l\'évaluation.' },
+      },
+      verticalCoherence: 'Cette unité s\'inscrit dans la progression du programme PEI, préparant les compétences pour les niveaux suivants.',
+      horizontalCoherence: 'Liens possibles avec les matières du même niveau partageant des concepts communs.',
+      interdisciplinaryLinks: 'Connexions identifiées avec d\'autres disciplines IB pour enrichir l\'apprentissage.',
+      studentContext: {
+        priorKnowledge: 'Connaissances de base acquises dans les unités précédentes.',
+        acquiredSkills: 'Compétences ATL et disciplinaires développées antérieurement.',
+        linksPreviousUnits: 'Cette unité s\'appuie sur les unités précédentes de la même matière.',
+        specificNeeds: 'Besoins d\'étayage pour certains élèves, enrichissement pour d\'autres.',
+        anticipatedDifficulties: 'Abstraction conceptuelle et transfert dans de nouveaux contextes.',
+      },
+    };
+  }
 
   return {
-    learningProcess: parsed.learningProcess,
-    sessions: parsed.sessions,
-    differentiationDetails: parsed.differentiationDetails,
-    reflectionDetails: parsed.reflectionDetails,
-    verticalCoherence: parsed.verticalCoherence,
-    horizontalCoherence: parsed.horizontalCoherence,
-    interdisciplinaryLinks: parsed.interdisciplinaryLinks,
-    studentContext: parsed.studentContext,
+    learningProcess: p1.learningProcess as UnitPlan['learningProcess'],
+    sessions: p1.sessions as UnitPlan['sessions'],
+    differentiationDetails: p2.differentiationDetails as UnitPlan['differentiationDetails'],
+    reflectionDetails: p2.reflectionDetails as UnitPlan['reflectionDetails'],
+    verticalCoherence: p2.verticalCoherence as string,
+    horizontalCoherence: p2.horizontalCoherence as string,
+    interdisciplinaryLinks: p2.interdisciplinaryLinks as string,
+    studentContext: p2.studentContext as UnitPlan['studentContext'],
     lastDetailUpdate: new Date().toISOString().slice(0, 10),
     isDetailUpdate: true,
   };

@@ -7,23 +7,20 @@ import HomeScreen from './components/HomeScreen';
 import ExamsWizard from './components/ExamsWizard';
 import { sanitizeUnitPlan } from './services/geminiService';
 import { loadPlansFromDatabase, savePlansToDatabase, migrateLocalStorageToMongoDB, needsMigration, cleanupInvalidLocalStorageKeys } from './services/databaseService';
+import { getCurrentUser, setCurrentUser, type AppUser } from './services/authService';
 
 // ─── Initialisation synchrone depuis localStorage ───────────────────────────
 function getInitialAuthState(): boolean {
   try {
     return localStorage.getItem('isAuthenticated') === 'true';
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 function getInitialSession(): { subject: string; grade: string; mode?: AppMode } | null {
   try {
     const raw = localStorage.getItem('userSession');
     return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function getInitialView(
@@ -33,7 +30,6 @@ function getInitialView(
   if (!authenticated) return AppView.LOGIN;
   try {
     const savedView = localStorage.getItem('currentView') as AppView | null;
-    // EDITOR n'est pas restaurable → HOME
     if (savedView && savedView !== AppView.LOGIN && savedView !== AppView.EDITOR) {
       return savedView;
     }
@@ -42,16 +38,16 @@ function getInitialView(
       return AppView.DASHBOARD;
     }
     return AppView.HOME;
-  } catch {
-    return AppView.HOME;
-  }
+  } catch { return AppView.HOME; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 const App: React.FC = () => {
-  // Initialisation SYNCHRONE → zéro flash au rechargement
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => getInitialAuthState());
+  const [currentUser, setCurrentUserState] = useState<AppUser | null>(() =>
+    getInitialAuthState() ? getCurrentUser() : null
+  );
   const [session, setSession] = useState<{ subject: string; grade: string; mode?: AppMode } | null>(
     () => (getInitialAuthState() ? getInitialSession() : null)
   );
@@ -72,62 +68,42 @@ const App: React.FC = () => {
       try {
         cleanupInvalidLocalStorageKeys();
         if (needsMigration()) {
-          console.log('🚀 Démarrage de la migration automatique localStorage → MongoDB');
           const result = await migrateLocalStorageToMongoDB();
-          if (result.migrated > 0) {
-            console.log(`✅ Migration réussie : ${result.migrated} planification(s) migrée(s) vers MongoDB`);
-          }
-          if (result.errors > 0) {
-            console.warn(`⚠️ ${result.errors} erreur(s) lors de la migration`);
-          }
-        } else {
-          console.log('✅ Aucune migration nécessaire');
+          console.log(`✅ Migration: ${result.migrated} planification(s) migrée(s)`);
         }
         setMigrationDone(true);
       } catch (error) {
-        console.error('❌ Erreur lors de la migration automatique:', error);
+        console.error('❌ Erreur migration:', error);
         setMigrationDone(true);
       }
     };
     runMigration();
   }, []);
 
-  // Charger les plans quand la session change (depuis MongoDB)
+  // Charger les plans quand la session change
   useEffect(() => {
     if (session && session.subject && session.grade) {
       const loadPlans = async () => {
         try {
-          console.log(`🔄 Chargement des plans depuis MongoDB pour ${session.subject} - ${session.grade}`);
           const plans = await loadPlansFromDatabase(session.subject, session.grade);
           const sanitizedPlans = plans.map(p => sanitizeUnitPlan(p, session.subject, session.grade));
           setCurrentPlans(sanitizedPlans);
-          if (sanitizedPlans.length > 0) {
-            console.log(`✅ ${sanitizedPlans.length} plan(s) chargé(s) depuis MongoDB`);
-          } else {
-            console.log('ℹ️ Aucun plan trouvé pour cette matière/classe');
-          }
         } catch (error) {
-          console.error('❌ Erreur lors du chargement des plans:', error);
+          console.error('❌ Erreur chargement plans:', error);
         }
       };
       loadPlans();
     }
   }, [session]);
 
-  // Sauvegarder automatiquement quand les plans changent (vers MongoDB)
+  // Sauvegarder automatiquement quand les plans changent
   useEffect(() => {
     if (session && session.subject && session.grade && currentPlans.length > 0) {
       const savePlans = async () => {
         try {
-          console.log(`💾 Sauvegarde de ${currentPlans.length} plan(s) dans MongoDB...`);
-          const success = await savePlansToDatabase(session.subject, session.grade, currentPlans);
-          if (success) {
-            console.log('✅ Plans sauvegardés avec succès dans MongoDB');
-          } else {
-            console.warn('⚠️ Sauvegarde dans localStorage seulement (fallback)');
-          }
+          await savePlansToDatabase(session.subject, session.grade, currentPlans);
         } catch (error) {
-          console.error('❌ Erreur lors de la sauvegarde des plans:', error);
+          console.error('❌ Erreur sauvegarde plans:', error);
         }
       };
       savePlans();
@@ -136,9 +112,10 @@ const App: React.FC = () => {
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
-  /** Appelé par AuthenticationScreen après connexion réussie */
   const handleAuthenticated = () => {
     setIsAuthenticated(true);
+    const user = getCurrentUser();
+    setCurrentUserState(user);
     const savedSession = getInitialSession();
     const savedView = localStorage.getItem('currentView') as AppView | null;
 
@@ -146,23 +123,29 @@ const App: React.FC = () => {
       setSession(savedSession);
       setView(AppView.EXAMS_WIZARD);
     } else if (
-      savedSession &&
-      savedSession.mode === AppMode.PEI_PLANNER &&
-      savedSession.subject &&
-      savedSession.grade &&
-      savedView === AppView.DASHBOARD
+      savedSession && savedSession.mode === AppMode.PEI_PLANNER &&
+      savedSession.subject && savedSession.grade && savedView === AppView.DASHBOARD
     ) {
-      setSession(savedSession);
-      setView(AppView.DASHBOARD);
+      // Check if teacher can access this subject
+      if (user?.role === 'admin' || user?.subjects?.includes(savedSession.subject)) {
+        setSession(savedSession);
+        setView(AppView.DASHBOARD);
+      } else {
+        setView(AppView.HOME);
+        localStorage.setItem('currentView', AppView.HOME);
+      }
     } else {
-      // Toujours aller vers le HomeScreen PEI après connexion
       setView(AppView.HOME);
       localStorage.setItem('currentView', AppView.HOME);
     }
   };
 
-  /** Appelé par HomeScreen quand l'utilisateur choisit matière / classe */
   const handleSelectSubjectGrade = (subject: string, grade: string, mode: AppMode) => {
+    // Check permission for teachers
+    if (currentUser?.role === 'teacher' && !currentUser.subjects.includes(subject)) {
+      alert(`Accès refusé : vous n'êtes pas autorisé à accéder à la matière "${subject}".`);
+      return;
+    }
     if (mode === AppMode.EXAMS) {
       const sessionData = { subject: '', grade: '', mode };
       setSession(sessionData);
@@ -178,7 +161,6 @@ const App: React.FC = () => {
     }
   };
 
-  /** Retour au HomeScreen SANS déconnecter */
   const handleBackToHome = () => {
     setSession(null);
     setCurrentPlans([]);
@@ -187,20 +169,21 @@ const App: React.FC = () => {
     localStorage.setItem('currentView', AppView.HOME);
   };
 
-  /** Déconnexion complète */
   const handleLogout = () => {
-    console.log('🚪 Déconnexion de l\'utilisateur...');
+    setCurrentUser(null);
     localStorage.removeItem('isAuthenticated');
     localStorage.removeItem('authTimestamp');
     localStorage.removeItem('userRole');
     localStorage.removeItem('userName');
+    localStorage.removeItem('userUsername');
+    localStorage.removeItem('currentUser');
     localStorage.removeItem('userSession');
     localStorage.removeItem('currentView');
     setIsAuthenticated(false);
+    setCurrentUserState(null);
     setSession(null);
     setCurrentPlans([]);
     setView(AppView.LOGIN);
-    console.log('✅ Déconnexion complète effectuée');
   };
 
   const handleGoToExams = () => {
@@ -212,9 +195,10 @@ const App: React.FC = () => {
   };
 
   const handleCreateNew = () => {
+    // Only admin can create freely; teachers need approval (but we allow for now via request flow)
     setEditingPlan({
       ...sanitizeUnitPlan({}, session?.subject || '', session?.grade || ''),
-      teacherName: '',
+      teacherName: currentUser?.displayName || '',
       subject: session?.subject || '',
       gradeLevel: session?.grade || '',
     });
@@ -252,13 +236,12 @@ const App: React.FC = () => {
   const handleAddPlans = (newPlans: UnitPlan[]) => {
     if (!session) return;
     if (currentPlans.length > 0) {
-      const confirm = window.confirm(
+      const confirmReplace = window.confirm(
         `⚠️ Une planification existe déjà pour ${session.subject} - ${session.grade}.\n\n` +
         `Voulez-vous REMPLACER l'ancienne planification par la nouvelle ?\n\n` +
-        `- OUI: Remplacer complètement\n` +
-        `- NON: Annuler`
+        `- OUI: Remplacer complètement\n- NON: Annuler`
       );
-      if (!confirm) return;
+      if (!confirmReplace) return;
     }
     const signedPlans = newPlans.map(p => ({
       ...p,
@@ -268,19 +251,16 @@ const App: React.FC = () => {
     setCurrentPlans(signedPlans);
     alert(
       `✅ Planification enregistrée pour ${session.subject} - ${session.grade}\n\n` +
-      `${signedPlans.length} unités créées.\n\n` +
-      `Cette planification est maintenant disponible pour tous les enseignants de cette matière/classe.`
+      `${signedPlans.length} unités créées.`
     );
   };
 
-  /** Ajouter une seule nouvelle unité (sans remplacement) */
   const handleAddSingleUnit = (plan: UnitPlan) => {
     if (!session) return;
     const signed = { ...plan, subject: session.subject, gradeLevel: session.grade };
     setCurrentPlans(prev => [...prev, signed]);
   };
 
-  /** Mettre à jour une unité existante */
   const handleUpdateUnit = (plan: UnitPlan) => {
     if (!session) return;
     const signed = { ...plan, subject: session.subject, gradeLevel: session.grade };
@@ -292,30 +272,27 @@ const App: React.FC = () => {
     localStorage.setItem('currentView', AppView.DASHBOARD);
   };
 
-  // ── Rendu ─────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
 
-  // Non authentifié → écran de connexion
   if (!isAuthenticated) {
     return <AuthenticationScreen onAuthenticated={handleAuthenticated} />;
   }
 
-  // Authentifié → HomeScreen PEI (sélection classe → matière)
   if (view === AppView.HOME) {
     return (
       <HomeScreen
         onSelectSubjectGrade={handleSelectSubjectGrade}
         onLogout={handleLogout}
         onGoToExams={handleGoToExams}
+        currentUser={currentUser}
       />
     );
   }
 
-  // Mode Examens
   if (view === AppView.EXAMS_WIZARD) {
     return <ExamsWizard onBack={handleBackToHome} />;
   }
 
-  // Mode PEI Planner — Dashboard + Editor
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {view === AppView.DASHBOARD && session ? (
@@ -330,6 +307,7 @@ const App: React.FC = () => {
           onAddSingleUnit={handleAddSingleUnit}
           onUpdateUnit={handleUpdateUnit}
           onLogout={handleBackToHome}
+          currentUser={currentUser}
         />
       ) : (
         <div className="p-4 md:p-8">

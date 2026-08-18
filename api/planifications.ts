@@ -66,13 +66,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, X-User-Role, X-Username, X-Import-Mode'
   );
 
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
+
+  // Rôle utilisateur depuis les headers
+  const userRole = (req.headers['x-user-role'] as string || '').toLowerCase();
+  const isAdminUser = userRole === 'admin';
 
   try {
     const client = await connectToDatabase();

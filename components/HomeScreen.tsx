@@ -20,14 +20,17 @@ import {
   Loader2, CheckCircle, AlertCircle, Download, RefreshCw,
   Users, Layers, Sparkles, FileText, Eye, Trash2, ChevronDown,
   ChevronUp, BookMarked, GraduationCap, FolderOpen, ExternalLink,
-  Table,
+  Table, Shield, Lock,
 } from 'lucide-react';
+import AdminPanel from './AdminPanel';
+import type { AppUser } from '../services/authService';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface HomeScreenProps {
   onSelectSubjectGrade: (subject: string, grade: string, mode: AppMode) => void;
   onLogout: () => void;
   onGoToExams: () => void;
+  currentUser?: AppUser | null;
 }
 
 // ─── Subject metadata ─────────────────────────────────────────────────────────
@@ -126,11 +129,15 @@ const GRADE_CONFIG: Record<string, { emoji: string; color: string; textColor: st
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout, onGoToExams }) => {
+const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout, onGoToExams, currentUser }) => {
 
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
-  const [userName, setUserName] = useState('Administrateur');
-  const [userRole, setUserRole] = useState('admin');
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+
+  // Dériver les infos user depuis currentUser prop (avec fallback localStorage)
+  const userName = currentUser?.displayName || localStorage.getItem('userName') || 'Administrateur';
+  const userRole = currentUser?.role || localStorage.getItem('userRole') || 'admin';
+  const isAdmin = userRole === 'admin';
 
   // Grade stats: unit count per grade
   const [gradeUnitCounts, setGradeUnitCounts] = useState<Record<string, number>>({});
@@ -155,12 +162,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
 
   // Special counts per grade (for grade cards)
   const [specialCounts, setSpecialCounts] = useState<Record<string, { inter: number; sea: number }>>({});
-
-  // ── Load user info ────────────────────────────────────────────────────────
-  useEffect(() => {
-    setUserName(localStorage.getItem('userName') || 'Administrateur');
-    setUserRole(localStorage.getItem('userRole') || 'admin');
-  }, []);
 
   // ── Load grade stats ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -431,7 +432,24 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
   const unitValues: number[] = Object.values(gradeUnitCounts);
   const totalUnits = unitValues.reduce((s, v) => s + v, 0);
 
+  // ── Import CSV handler ────────────────────────────────────────────────────
+  const handleImportCSV = async (file: File) => {
+    // Délégué à AdminPanel — ici on rafraîchit juste les stats
+    setTimeout(() => {
+      window.location.reload();
+    }, 500);
+  };
+
   return (
+    <>
+    {/* Admin Panel Modal */}
+    {showAdminPanel && isAdmin && (
+      <AdminPanel
+        onClose={() => setShowAdminPanel(false)}
+        onExportCSV={handleExportAllCSV}
+        onImportCSV={handleImportCSV}
+      />
+    )}
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100">
 
       {/* ══ HEADER ══ */}
@@ -476,21 +494,40 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
           <div className="flex items-center gap-2 flex-shrink-0">
             <div className="hidden sm:block text-right">
               <p className="text-blue-100 text-xs">Connecté en tant que</p>
-              <p className="text-white text-xs font-semibold">{userName}</p>
+              <p className="text-white text-xs font-semibold">
+                {userName}
+                {isAdmin && <span className="ml-1 text-yellow-300 text-xs">★ Admin</span>}
+              </p>
             </div>
-            {/* Bouton Export CSV — toutes les données BDD */}
-            <button
-              onClick={handleExportAllCSV}
-              disabled={isExportingCSV}
-              title="Exporter toutes les données en CSV (Excel)"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/80 hover:bg-emerald-400 disabled:opacity-60 text-white rounded-lg text-xs font-semibold transition border border-emerald-300/40 shadow-sm"
-            >
-              {isExportingCSV
-                ? <Loader2 size={13} className="animate-spin" />
-                : <Table size={13} />
-              }
-              <span className="hidden sm:inline">{isExportingCSV ? 'Export…' : 'Export CSV'}</span>
-            </button>
+
+            {/* Bouton Export CSV — admin seulement */}
+            {isAdmin && (
+              <button
+                onClick={handleExportAllCSV}
+                disabled={isExportingCSV}
+                title="Exporter toutes les données en CSV (Excel)"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/80 hover:bg-emerald-400 disabled:opacity-60 text-white rounded-lg text-xs font-semibold transition border border-emerald-300/40 shadow-sm"
+              >
+                {isExportingCSV
+                  ? <Loader2 size={13} className="animate-spin" />
+                  : <Table size={13} />
+                }
+                <span className="hidden sm:inline">{isExportingCSV ? 'Export…' : 'Export CSV'}</span>
+              </button>
+            )}
+
+            {/* Bouton Admin Panel — admin seulement */}
+            {isAdmin && (
+              <button
+                onClick={() => setShowAdminPanel(true)}
+                title="Panneau d'administration"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/80 hover:bg-amber-400 text-white rounded-lg text-xs font-semibold transition border border-amber-300/40 shadow-sm"
+              >
+                <Shield size={13} />
+                <span className="hidden sm:inline">Admin</span>
+              </button>
+            )}
+
             {userRole !== 'exams_only' && (
               <button
                 onClick={onGoToExams}
@@ -511,6 +548,20 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-8">
+
+        {/* ══ Bandeau enseignant ══ */}
+        {!isAdmin && currentUser && (
+          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center gap-3 text-sm text-blue-800">
+            <Lock size={16} className="flex-shrink-0 text-blue-500" />
+            <div>
+              <span className="font-semibold">Mode enseignant</span> — Vous avez accès à{' '}
+              {currentUser.subjects.length > 0
+                ? <><span className="font-bold">{currentUser.subjects.join(', ')}</span>, aux unités interdisciplinaires et aux planifications SEA.</>
+                : 'toutes les matières (aucune restriction configurée).'}
+              <span className="ml-2 text-blue-600">Pour modifier des données, utilisez « Demander une modification ».</span>
+            </div>
+          </div>
+        )}
 
         {/* ══════════════════════════════════════════════════════════════
             VUE 1 — Sélection de la classe
@@ -646,6 +697,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                 {SUBJECTS.map(subject => {
+                  // Filtrer les matières pour les enseignants
+                  const canAccess = isAdmin || !currentUser || currentUser.subjects.length === 0 || currentUser.subjects.includes(subject);
+
                   const meta = SUBJECT_META[subject] || {
                     label: subject,
                     icon: <Globe size={28} />,
@@ -656,6 +710,26 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
                     badge: 'bg-slate-600',
                   };
                   const count = subjectCounts[subject] ?? 0;
+
+                  if (!canAccess) {
+                    // Afficher la carte verrouillée pour les enseignants sans accès
+                    return (
+                      <div
+                        key={subject}
+                        className="relative flex flex-col items-center gap-2 p-4 bg-slate-100 rounded-2xl border-2 border-slate-200 opacity-50 cursor-not-allowed"
+                        title="Vous n'avez pas accès à cette matière"
+                      >
+                        <Lock size={20} className="text-slate-400 mt-1" />
+                        <span className="text-xs font-bold text-center leading-tight text-slate-400 whitespace-pre-line">
+                          {meta.label}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-200 text-slate-400">
+                          Accès refusé
+                        </span>
+                      </div>
+                    );
+                  }
+
                   return (
                     <button
                       key={subject}
@@ -1020,6 +1094,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
         )}
       </main>
     </div>
+    </>
   );
 };
 

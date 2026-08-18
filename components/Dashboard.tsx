@@ -3,6 +3,8 @@ import { UnitPlan, ServiceActionPlan } from '../types';
 import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI } from '../services/geminiService';
+import type { AppUser } from '../services/authService';
+import ModificationRequestModal from './ModificationRequestModal';
 import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
@@ -23,9 +25,12 @@ interface DashboardProps {
   onAddSingleUnit?: (plan: UnitPlan) => void;
   onUpdateUnit?: (plan: UnitPlan) => void;
   onLogout: () => void;
+  currentUser?: AppUser | null;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, plans, onCreateNew, onEdit, onDelete, onAddPlans, onAddSingleUnit, onUpdateUnit, onLogout }) => {
+const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, plans, onCreateNew, onEdit, onDelete, onAddPlans, onAddSingleUnit, onUpdateUnit, onLogout, currentUser }) => {
+  // Permissions basées sur le rôle
+  const isAdmin = currentUser?.role === 'admin' || !currentUser || localStorage.getItem('userRole') === 'admin';
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   // Pre-fill subject and grade from session
   const [bulkSubject, setBulkSubject] = useState(currentSubject);
@@ -125,6 +130,10 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   const [regenAllProgress, setRegenAllProgress] = useState('');
   // Editable summaries for regen
   const [regenSummaries, setRegenSummaries] = useState<UnitSummaryInput[]>([]);
+
+  // ── État : Demande de modification (enseignant) ───────────────────────────
+  const [modRequestPlan, setModRequestPlan] = useState<UnitPlan | null>(null);
+  const [showModRequestModal, setShowModRequestModal] = useState(false);
 
   // Vérifier la complétude de la matière sur tous les PEI au montage
   useEffect(() => {
@@ -1365,8 +1374,8 @@ Chapitre 4 : Algèbre et équations
                <Clock size={20} />
                Heures
              </button>
-             {/* ── Bouton Refaire toutes les unités ────────────────── */}
-             {plans.length > 0 && (
+             {/* ── Bouton Refaire toutes les unités ─ admin seulement ─── */}
+             {isAdmin && plans.length > 0 && (
                <button
                  onClick={handleOpenRegenAll}
                  className="flex items-center gap-2 bg-amber-500/80 hover:bg-amber-500 text-white border border-amber-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
@@ -1376,18 +1385,20 @@ Chapitre 4 : Algèbre et équations
                  Refaire Toutes les Unités
                </button>
              )}
-            {/* ── Bouton Export Excel Global ─────────────────────── */}
-            <button
-              onClick={handleExportAllExcel}
-              disabled={isExportingExcel}
-              className="flex items-center gap-2 bg-green-500/80 hover:bg-green-500 text-white border border-green-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70"
-              title="Télécharger toutes les données en format Excel/CSV"
-            >
-              {isExportingExcel ? <Loader2 className="animate-spin" size={20} /> : <Table size={20} />}
-              Export Excel
-            </button>
-            {/* ── Bouton Export ZIP Classe ───────────────────────── */}
-            {plans.length > 0 && (
+            {/* ── Bouton Export Excel Global ─ admin seulement ─── */}
+            {isAdmin && (
+              <button
+                onClick={handleExportAllExcel}
+                disabled={isExportingExcel}
+                className="flex items-center gap-2 bg-green-500/80 hover:bg-green-500 text-white border border-green-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70"
+                title="Télécharger toutes les données en format Excel/CSV"
+              >
+                {isExportingExcel ? <Loader2 className="animate-spin" size={20} /> : <Table size={20} />}
+                Export CSV
+              </button>
+            )}
+            {/* ── Bouton Export ZIP Classe ─ admin seulement ─── */}
+            {isAdmin && plans.length > 0 && (
               <button
                 onClick={handleExportClassZip}
                 disabled={isExportingZip}
@@ -1398,13 +1409,30 @@ Chapitre 4 : Algèbre et équations
                 ZIP Classe
               </button>
             )}
-            <button 
-              onClick={handleOpenAddUnit}
-              className="flex items-center gap-2 bg-blue-500/80 hover:bg-blue-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
-            >
-              <Plus size={20} />
-              Ajouter une unité
-            </button>
+            {/* ── Bouton Demander une modification ─ enseignant seulement ─ */}
+            {!isAdmin && plans.length > 0 && (
+              <button
+                onClick={() => {
+                  setModRequestPlan(plans[0]);
+                  setShowModRequestModal(true);
+                }}
+                className="flex items-center gap-2 bg-blue-500/80 hover:bg-blue-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
+                title="Envoyer une demande de modification à l'administrateur"
+              >
+                <PenLine size={20} />
+                Demander une modification
+              </button>
+            )}
+            {/* ── Bouton Ajouter une unité ─ admin seulement ─── */}
+            {isAdmin && (
+              <button 
+                onClick={handleOpenAddUnit}
+                className="flex items-center gap-2 bg-blue-500/80 hover:bg-blue-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
+              >
+                <Plus size={20} />
+                Ajouter une unité
+              </button>
+            )}
         </div>
       </header>
 
@@ -3165,6 +3193,19 @@ Chapitre 4 : Algèbre et équations
           </div>
         </div>
       </div>
+    )}
+    {/* ── Modale Demande de Modification (enseignant) ───────────────────── */}
+    {showModRequestModal && modRequestPlan && (
+      <ModificationRequestModal
+        plan={modRequestPlan}
+        currentUser={currentUser || null}
+        onClose={() => { setShowModRequestModal(false); setModRequestPlan(null); }}
+        onSuccess={() => {
+          setShowModRequestModal(false);
+          setModRequestPlan(null);
+          alert('✅ Votre demande a été envoyée à l\'administrateur. Vous serez notifié dès qu\'elle sera traitée.');
+        }}
+      />
     )}
     </>
   );
