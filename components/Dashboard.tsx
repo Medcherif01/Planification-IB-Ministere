@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UnitPlan, ServiceActionPlan } from '../types';
-import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save } from 'lucide-react';
+import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit } from '../services/geminiService';
 import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
@@ -10,6 +10,7 @@ import AddEditUnitModal from './AddEditUnitModal';
 import IbCriteriaEditor from './IbCriteriaEditor';
 import HoursCalculatorModal from './HoursCalculatorModal';
 import AssessmentViewerModal from './AssessmentViewerModal';
+import UnitPlanFormImport from './UnitPlanForm';
 
 interface DashboardProps {
   currentSubject: string;
@@ -103,6 +104,11 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
 
   // ── État : Mise à jour des objectifs d'une unité ──────────────────────────────
   const [updatingAssessmentId, setUpdatingAssessmentId] = useState<string | null>(null);
+  // ── État : Mise à jour des détails d'une unité (mode détails) ────────────────
+  const [detailUpdatePlan, setDetailUpdatePlan] = useState<UnitPlan | null>(null);
+  const [isDetailUpdateMode, setIsDetailUpdateMode] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isExportingZip, setIsExportingZip] = useState(false);
 
   // ── État : Upload travaux élèves ──────────────────────────────────────────────
   const [uploadModalPlan, setUploadModalPlan] = useState<UnitPlan | null>(null);
@@ -628,7 +634,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     if (!plan.id) return;
     setUpdatingAssessmentId(plan.id);
     try {
-      const newAssessments = await generateAssessmentsForUnit(plan, plan.subject || currentSubject, plan.gradeLevel || currentGrade);
+      const newAssessments = await generateAssessmentsForUnit(plan);
       const updatedPlan: UnitPlan = { ...plan, assessments: newAssessments };
       if (onUpdateUnit) {
         onUpdateUnit(updatedPlan);
@@ -650,13 +656,158 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     if (toUpdate.length === 0) return;
     for (const plan of toUpdate) {
       try {
-        const newAssessments = await generateAssessmentsForUnit(plan, savedSubject, savedGrade);
+        const newAssessments = await generateAssessmentsForUnit(plan);
         const updated = { ...plan, assessments: newAssessments };
         if (onUpdateUnit) onUpdateUnit(updated);
         else onAddPlans(plans.map(p => p.id === updated.id ? updated : p));
       } catch (e) {
         console.warn('Mise à jour auto évaluations échouée pour', plan.title, e);
       }
+    }
+  };
+
+  // ── Handler : Sauvegarder la mise à jour des détails ─────────────────────
+  const handleSaveDetailUpdate = (updatedPlan: UnitPlan) => {
+    if (onUpdateUnit) {
+      onUpdateUnit(updatedPlan);
+    } else {
+      const updated = plans.map(p => p.id === updatedPlan.id ? updatedPlan : p);
+      onAddPlans(updated);
+    }
+    setDetailUpdatePlan(null);
+    setIsDetailUpdateMode(false);
+  };
+
+  // ── Handler : Export Excel global (toutes les données) ───────────────────
+  const handleExportAllExcel = async () => {
+    setIsExportingExcel(true);
+    try {
+      const response = await fetch(`/api/planifications?export=excel&t=${Date.now()}`);
+      if (!response.ok) {
+        throw new Error(`Erreur HTTP: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `export_toutes_donnees_PEI_${new Date().toISOString().slice(0,10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      // Fallback: export CSV local depuis les plans chargés
+      exportPlansToCSV(plans, `plans_${currentSubject}_${currentGrade}`);
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
+  // ── Helper : Export CSV local ─────────────────────────────────────────────
+  const exportPlansToCSV = (plansToExport: UnitPlan[], filename: string) => {
+    const headers = [
+      'Titre', 'Matière', 'Niveau', 'Enseignant', 'Durée', 'Année scolaire',
+      'Concept clé', 'Concepts connexes', 'Contexte mondial', 'Énoncé de recherche',
+      'Questions factuelles', 'Questions conceptuelles', 'Questions débattables',
+      'Objectifs', 'ATL', 'Contenu', 'Activités d\'apprentissage',
+      'Évaluation formative', 'Évaluation sommative', 'Différenciation',
+      'Ressources', 'Réflexion avant', 'Réflexion pendant', 'Réflexion après',
+      'Critères évaluation', 'Date création'
+    ];
+    
+    const rows = plansToExport.map(p => [
+      p.title || '',
+      p.subject || '',
+      p.gradeLevel || '',
+      p.teacherName || '',
+      p.duration || '',
+      p.schoolYear || '',
+      p.keyConcept || '',
+      (p.relatedConcepts || []).join('; '),
+      p.globalContext || '',
+      p.statementOfInquiry || '',
+      (p.inquiryQuestions?.factual || []).join(' | '),
+      (p.inquiryQuestions?.conceptual || []).join(' | '),
+      (p.inquiryQuestions?.debatable || []).join(' | '),
+      (p.objectives || []).join('; '),
+      (Array.isArray(p.atlSkills) ? p.atlSkills : [p.atlSkills || '']).join('; '),
+      (p.content || '').replace(/\n/g, ' '),
+      (p.learningExperiences || '').replace(/\n/g, ' '),
+      (p.formativeAssessment || '').replace(/\n/g, ' '),
+      (p.summativeAssessment || '').replace(/\n/g, ' '),
+      (p.differentiation || '').replace(/\n/g, ' '),
+      (p.resources || '').replace(/\n/g, ' '),
+      (p.reflection?.prior || '').replace(/\n/g, ' '),
+      (p.reflection?.during || '').replace(/\n/g, ' '),
+      (p.reflection?.after || '').replace(/\n/g, ' '),
+      (p.assessments || []).map(a => `Critère ${a.criterion}: ${a.criterionName}`).join('; '),
+      p.lastDetailUpdate || new Date().toISOString().slice(0,10),
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    
+    const BOM = '\uFEFF'; // BOM for Excel UTF-8
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Handler : Export ZIP des plans d'une classe ───────────────────────────
+  const handleExportClassZip = async () => {
+    setIsExportingZip(true);
+    try {
+      // Import JSZip dynamically
+      const JSZip = (await import('jszip')).default;
+      const FileSaver = await import('file-saver');
+      const zip = new JSZip();
+
+      // Créer un dossier pour cette classe
+      const folder = zip.folder(`Plans_${currentSubject}_${currentGrade}`) || zip;
+      
+      // Ajouter un fichier CSV récapitulatif
+      const headers = [
+        'Titre', 'Matière', 'Niveau', 'Durée', 'Concept clé', 'Contexte mondial',
+        'Énoncé de recherche', 'Objectifs', 'ATL', 'Évaluation sommative',
+        'Réflexion avant', 'Réflexion pendant', 'Réflexion après', 'Dernière mise à jour'
+      ];
+      const rows = plans.map(p => [
+        p.title || '', p.subject || '', p.gradeLevel || '', p.duration || '',
+        p.keyConcept || '', p.globalContext || '', p.statementOfInquiry || '',
+        (p.objectives || []).join('; '),
+        (Array.isArray(p.atlSkills) ? p.atlSkills : []).join('; '),
+        (p.summativeAssessment || '').replace(/\n/g, ' '),
+        (p.reflection?.prior || '').replace(/\n/g, ' '),
+        (p.reflection?.during || '').replace(/\n/g, ' '),
+        (p.reflection?.after || '').replace(/\n/g, ' '),
+        p.lastDetailUpdate || ''
+      ]);
+      const csvContent = '\uFEFF' + [headers, ...rows]
+        .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+      folder.file(`recapitulatif_${currentGrade}.csv`, csvContent);
+
+      // Ajouter un fichier JSON complet pour chaque plan
+      plans.forEach((plan, idx) => {
+        const safeTitle = (plan.title || `unite_${idx + 1}`).replace(/[^a-zA-Z0-9_\u00C0-\u017E\s-]/g, '').trim().replace(/\s+/g, '_');
+        folder.file(`${idx + 1}_${safeTitle}.json`, JSON.stringify(plan, null, 2));
+      });
+
+      // Générer et télécharger le ZIP
+      const content = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+      const saveAs = (FileSaver as any).saveAs || FileSaver;
+      saveAs(content, `Plans_${currentSubject}_${currentGrade}_${new Date().toISOString().slice(0,10)}.zip`);
+    } catch (e: any) {
+      alert('Erreur export ZIP: ' + (e?.message || e));
+    } finally {
+      setIsExportingZip(false);
     }
   };
 
@@ -1177,6 +1328,28 @@ Chapitre 4 : Algèbre et équations
                  Refaire Toutes les Unités
                </button>
              )}
+            {/* ── Bouton Export Excel Global ─────────────────────── */}
+            <button
+              onClick={handleExportAllExcel}
+              disabled={isExportingExcel}
+              className="flex items-center gap-2 bg-green-500/80 hover:bg-green-500 text-white border border-green-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70"
+              title="Télécharger toutes les données en format Excel/CSV"
+            >
+              {isExportingExcel ? <Loader2 className="animate-spin" size={20} /> : <Table size={20} />}
+              Export Excel
+            </button>
+            {/* ── Bouton Export ZIP Classe ───────────────────────── */}
+            {plans.length > 0 && (
+              <button
+                onClick={handleExportClassZip}
+                disabled={isExportingZip}
+                className="flex items-center gap-2 bg-rose-500/80 hover:bg-rose-500 text-white border border-rose-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70"
+                title="Télécharger tous les plans de cette classe en ZIP (JSON + CSV)"
+              >
+                {isExportingZip ? <Loader2 className="animate-spin" size={20} /> : <FileArchive size={20} />}
+                ZIP Classe
+              </button>
+            )}
             <button 
               onClick={handleOpenAddUnit}
               className="flex items-center gap-2 bg-blue-500/80 hover:bg-blue-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
@@ -1449,7 +1622,19 @@ Chapitre 4 : Algèbre et équations
                                     {updatingAssessmentId === plan.id
                                       ? <Loader2 className="animate-spin" size={14}/>
                                       : <RefreshCw size={14}/>}
-                                    Mise à jour
+                                    Mise à jour Évals
+                                </button>
+                                {/* ── Bouton Mise à jour des détails (sans toucher titre/objectifs/critères/ATL) ── */}
+                                <button
+                                    onClick={() => {
+                                      setDetailUpdatePlan(plan);
+                                      setIsDetailUpdateMode(true);
+                                    }}
+                                    className="flex items-center gap-1 bg-teal-50 text-teal-700 px-2 py-1 rounded hover:bg-teal-100 transition"
+                                    title="Ajouter des détails (séances, contexte élèves, réflexion, différenciation) sans modifier titre/objectifs/critères/ATL"
+                                >
+                                    <PenLine size={14}/>
+                                    Ajouter Détails
                                 </button>
                                 {/* ── Bouton Upload travaux élèves ── */}
                                 <button
@@ -2578,6 +2763,25 @@ Chapitre 4 : Algèbre et équations
       grade={currentGrade}
       plannedHours={getPlannedHoursForSubjectGrade()}
     />
+
+    {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : MISE À JOUR DES DÉTAILS D'UNE UNITÉ
+        (Sans toucher titre / objectifs / critères / ATL)
+        ═══════════════════════════════════════════════════════════════════ */}
+    {isDetailUpdateMode && detailUpdatePlan && (
+      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] overflow-y-auto">
+        <div className="min-h-screen p-4 flex items-start justify-center">
+          <div className="w-full max-w-5xl">
+            <UnitPlanFormImport
+              initialPlan={detailUpdatePlan}
+              onSave={handleSaveDetailUpdate}
+              onCancel={() => { setDetailUpdatePlan(null); setIsDetailUpdateMode(false); }}
+              detailUpdateMode={true}
+            />
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* ═══════════════════════════════════════════════════════════════════
         MODAL : AJOUTER / MODIFIER UNE UNITÉ

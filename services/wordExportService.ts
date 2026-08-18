@@ -677,6 +677,25 @@ export const exportOverviewToWord = async (subject: string): Promise<void> => {
     }
 
     // 4. Construire le HTML du document
+    // Calculer le tableau de conformité
+    const allCriteria = ['A.i', 'A.ii', 'B.i', 'B.ii', 'B.iii', 'B.iv', 'C.i', 'C.ii', 'C.iii', 'D.i', 'D.ii', 'D.iii', 'D.iv'];
+    const gradeNames = ['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'];
+    
+    // Compter les occurrences par critère et par grade dans les plans réels
+    const criteriaCount: Record<string, Record<string, number>> = {};
+    for (const criterion of allCriteria) {
+      criteriaCount[criterion] = {};
+      for (const grade of gradeNames) {
+        const gradePlans = plansByGrade[grade] || [];
+        const count = gradePlans.filter(p => {
+          const obj = (p.objectives || []).join(' ');
+          const assessments = (p.assessments || []).map(a => a.criterion).join(' ');
+          return obj.includes(criterion.charAt(0)) || assessments.includes(criterion.charAt(0));
+        }).length;
+        criteriaCount[criterion][grade] = count;
+      }
+    }
+
     let htmlContent = `
 <!DOCTYPE html>
 <html>
@@ -706,6 +725,64 @@ export const exportOverviewToWord = async (subject: string): Promise<void> => {
       margin-bottom: 14px;
       color: #1e3a5f;
     }
+    .requirements-box {
+      border: 2px solid #1e3a5f;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      background: #f0f4ff;
+    }
+    .requirements-box h2 {
+      font-size: 11pt;
+      font-weight: bold;
+      color: #1e3a5f;
+      margin: 0 0 10px 0;
+      border-bottom: 1px solid #4472c4;
+      padding-bottom: 5px;
+    }
+    .requirements-list {
+      margin: 0;
+      padding: 0 0 0 18px;
+      font-size: 8.5pt;
+      color: #1e3a5f;
+    }
+    .requirements-list li {
+      margin-bottom: 4px;
+      line-height: 1.4;
+    }
+    .req-highlight {
+      font-weight: bold;
+      color: #c00000;
+    }
+    .compliance-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+      font-size: 8pt;
+    }
+    .compliance-table th {
+      background: #1e3a5f;
+      color: white;
+      padding: 5px 6px;
+      border: 1px solid #4472c4;
+      text-align: center;
+      font-size: 8pt;
+    }
+    .compliance-table td {
+      border: 1px solid #adc6e0;
+      padding: 4px 6px;
+      text-align: center;
+      font-size: 8pt;
+    }
+    .compliance-table td.criterion-label {
+      text-align: left;
+      font-weight: bold;
+      background: #dce6f1;
+      color: #1e3a5f;
+    }
+    .conf-ok { background: #d9ead3; color: #274e13; font-weight: bold; }
+    .conf-warn { background: #fff2cc; color: #7f6000; font-weight: bold; }
+    .conf-fail { background: #f4cccc; color: #990000; font-weight: bold; }
     .grade-section {
       page-break-before: always;
       margin-bottom: 20px;
@@ -775,6 +852,108 @@ export const exportOverviewToWord = async (subject: string): Promise<void> => {
 </head>
 <body>
   <div class="doc-title">Description générale du programme de &laquo;&nbsp;<em>${clean(subject)}</em>&nbsp;&raquo;</div>
+  <div class="doc-subtitle">Les Écoles Internationales Al Kawthar — Programme d'Éducation Intermédiaire (PEI 1 à PEI 5)</div>
+
+  <!-- ═══ SECTION : ATTENTES ET EXIGENCES IB ═══ -->
+  <div class="requirements-box">
+    <h2>1. Attentes — Cadre de Conformité IB</h2>
+    <p style="font-size:8.5pt;color:#1e3a5f;margin-bottom:8px;">
+      La description générale du groupe de matières doit :
+    </p>
+    <ul class="requirements-list">
+      <li>Fournir des preuves d'une <strong>planification verticale et horizontale</strong> ;</li>
+      <li>Documenter le programme d'études écrit dans chaque groupe de matières pour <strong>toutes les années du programme</strong> ;</li>
+      <li>Comprendre un <strong>résumé du contenu</strong> ;</li>
+      <li>Montrer que, tout au long des années du programme, l'établissement a :
+        <ol style="margin-top:4px;padding-left:20px;">
+          <li>Intégré les <strong>concepts clés</strong> requis ;</li>
+          <li>Abordé les <strong>concepts connexes</strong> ;</li>
+          <li>Intégré les <strong>contextes mondiaux</strong> du PEI ;</li>
+          <li>Développé les compétences des <strong>approches de l'apprentissage (ATL)</strong> ;</li>
+          <li>Offert aux élèves des occasions d'atteindre tous les <strong>objectifs spécifiques</strong> du groupe de matières du PEI de manière équilibrée ;</li>
+          <li>Engagé les élèves dans des activités d'éducation physique pendant au moins <strong>50 % du temps total</strong> d'enseignement consacré à cette matière.</li>
+        </ol>
+      </li>
+    </ul>
+    <p style="font-size:8.5pt;color:#c00000;margin-top:8px;font-weight:bold;">
+      Exigence importante (Exigence 0401-01-0521) : 
+      <span style="color:#1e3a5f;font-weight:normal;">le groupe de matières doit aborder tous les aspects de chacun des objectifs spécifiques <strong>au moins deux fois</strong> au cours de chaque année du PEI.</span>
+    </p>
+  </div>
+
+  <!-- ═══ SECTION : TABLEAU DE CONFORMITÉ ═══ -->
+  <div style="page-break-before: avoid; margin-bottom: 20px;">
+    <div class="grade-label" style="font-size:10pt;">Tableau de Vérification de la Fréquence des Aspects (PEI 1 à PEI 5)</div>
+    <table class="compliance-table">
+      <thead>
+        <tr>
+          <th style="text-align:left;width:18%;">Objectif Spécifique / Aspect</th>
+          <th style="width:15%;">PEI 1</th>
+          <th style="width:15%;">PEI 2</th>
+          <th style="width:15%;">PEI 3</th>
+          <th style="width:15%;">PEI 4</th>
+          <th style="width:15%;">PEI 5</th>
+          <th style="width:7%;">Conformité<br/>(≥2)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="criterion-label" colspan="7" style="background:#1e3a5f;color:white;font-weight:bold;padding:4px 6px;">Objectif A : Connaissances et compréhension</td></tr>
+        ${['A.i: Utiliser le vocabulaire / terminologie en contexte', 'A.ii: Démontrer une connaissance/compréhension du contenu'].map((crit, idx) => {
+          const key = ['A.i', 'A.ii'][idx];
+          const counts = gradeNames.map(g => {
+            const gPlans = plansByGrade[g] || [];
+            const c = gPlans.filter(p => (p.objectives || []).some(o => o.includes('A')) || (p.assessments || []).some(a => a.criterion === 'A')).length;
+            return c;
+          });
+          const isConf = counts.every(c => c >= 2);
+          return `<tr>
+            <td class="criterion-label" style="padding-left:10px;font-weight:normal;">${clean(crit)}</td>
+            ${counts.map(c => `<td class="${c >= 2 ? 'conf-ok' : c >= 1 ? 'conf-warn' : 'conf-fail'}">${c}</td>`).join('')}
+            <td class="${isConf ? 'conf-ok' : 'conf-warn'}">${isConf ? '✅ CONFORME' : '⚠️ À VÉRIFIER'}</td>
+          </tr>`;
+        }).join('')}
+        <tr><td class="criterion-label" colspan="7" style="background:#1e3a5f;color:white;font-weight:bold;padding:4px 6px;">Objectif B : Recherche</td></tr>
+        ${['B.i: Formuler une question de recherche', 'B.ii: Formuler et suivre un plan d\'action', 'B.iii: Collecter et enregistrer des informations', 'B.iv: Évaluer le processus et les résultats'].map((crit, idx) => {
+          const counts = gradeNames.map(g => {
+            const gPlans = plansByGrade[g] || [];
+            return gPlans.filter(p => (p.objectives || []).some(o => o.includes('B')) || (p.assessments || []).some(a => a.criterion === 'B')).length;
+          });
+          const isConf = counts.every(c => c >= 2);
+          return `<tr>
+            <td class="criterion-label" style="padding-left:10px;font-weight:normal;">${clean(crit)}</td>
+            ${counts.map(c => `<td class="${c >= 2 ? 'conf-ok' : c >= 1 ? 'conf-warn' : 'conf-fail'}">${c}</td>`).join('')}
+            <td class="${isConf ? 'conf-ok' : 'conf-warn'}">${isConf ? '✅ CONFORME' : '⚠️ À VÉRIFIER'}</td>
+          </tr>`;
+        }).join('')}
+        <tr><td class="criterion-label" colspan="7" style="background:#1e3a5f;color:white;font-weight:bold;padding:4px 6px;">Objectif C : Communication</td></tr>
+        ${['C.i: Communiquer des informations dans un style adapté', 'C.ii: Structurer / Organiser informations et idées', 'C.iii: Documenter les sources (bibliographie)'].map(crit => {
+          const counts = gradeNames.map(g => {
+            const gPlans = plansByGrade[g] || [];
+            return gPlans.filter(p => (p.objectives || []).some(o => o.includes('C')) || (p.assessments || []).some(a => a.criterion === 'C')).length;
+          });
+          const isConf = counts.every(c => c >= 2);
+          return `<tr>
+            <td class="criterion-label" style="padding-left:10px;font-weight:normal;">${clean(crit)}</td>
+            ${counts.map(c => `<td class="${c >= 2 ? 'conf-ok' : c >= 1 ? 'conf-warn' : 'conf-fail'}">${c}</td>`).join('')}
+            <td class="${isConf ? 'conf-ok' : 'conf-warn'}">${isConf ? '✅ CONFORME' : '⚠️ À VÉRIFIER'}</td>
+          </tr>`;
+        }).join('')}
+        <tr><td class="criterion-label" colspan="7" style="background:#1e3a5f;color:white;font-weight:bold;padding:4px 6px;">Objectif D : Pensée critique</td></tr>
+        ${['D.i: Discuter / analyser concepts, problèmes, modèles', 'D.ii: Synthétiser / résumer pour développer des arguments', 'D.iii: Analyser / évaluer origine, but, valeur, limites', 'D.iv: Interpréter différentes perspectives et leurs implications'].map(crit => {
+          const counts = gradeNames.map(g => {
+            const gPlans = plansByGrade[g] || [];
+            return gPlans.filter(p => (p.objectives || []).some(o => o.includes('D')) || (p.assessments || []).some(a => a.criterion === 'D')).length;
+          });
+          const isConf = counts.every(c => c >= 2);
+          return `<tr>
+            <td class="criterion-label" style="padding-left:10px;font-weight:normal;">${clean(crit)}</td>
+            ${counts.map(c => `<td class="${c >= 2 ? 'conf-ok' : c >= 1 ? 'conf-warn' : 'conf-fail'}">${c}</td>`).join('')}
+            <td class="${isConf ? 'conf-ok' : 'conf-warn'}">${isConf ? '✅ CONFORME' : '⚠️ À VÉRIFIER'}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>
 `;
 
     for (const grade of grades) {
