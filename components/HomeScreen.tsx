@@ -20,6 +20,7 @@ import {
   Loader2, CheckCircle, AlertCircle, Download, RefreshCw,
   Users, Layers, Sparkles, FileText, Eye, Trash2, ChevronDown,
   ChevronUp, BookMarked, GraduationCap, FolderOpen, ExternalLink,
+  Table,
 } from 'lucide-react';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -332,6 +333,80 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
     }
   };
 
+  // ── Export CSV global (toutes données BDD) ───────────────────────────────
+  const [isExportingCSV, setIsExportingCSV] = useState(false);
+
+  const handleExportAllCSV = async () => {
+    setIsExportingCSV(true);
+    try {
+      const response = await fetch(`/api/planifications?export=excel&t=${Date.now()}`);
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `export_toutes_donnees_PEI_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        // Fallback : export local depuis localStorage
+        const rawPlans: Record<string, unknown>[] = [];
+        const PEI_GRADES_LOCAL = ['PEI 1', 'PEI 2', 'PEI 3', 'PEI 4', 'PEI 5'];
+        const SUBJECTS_LOCAL = [
+          'Langue et littérature', 'Acquisition de langues', 'Individus et sociétés',
+          'Sciences', 'Mathématiques', 'Arts', 'Éducation physique et à la santé', 'Design'
+        ];
+        for (const grade of PEI_GRADES_LOCAL) {
+          for (const subject of SUBJECTS_LOCAL) {
+            const key = `plans_${subject}_${grade}`;
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              try {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) rawPlans.push(...parsed);
+              } catch { /* ignore */ }
+            }
+          }
+        }
+        if (rawPlans.length === 0) {
+          alert('Aucune donnée disponible pour l\'export.');
+          return;
+        }
+        const headers = [
+          'Titre', 'Matière', 'Niveau', 'Enseignant', 'Durée',
+          'Concept clé', 'Contexte mondial', 'Énoncé de recherche',
+          'Objectifs', 'ATL', 'Évaluation formative', 'Évaluation sommative',
+        ];
+        const rows = rawPlans.map((p: any) => [
+          p.title || '', p.subject || '', p.gradeLevel || '', p.teacherName || '', p.duration || '',
+          p.keyConcept || '', p.globalContext || '', p.statementOfInquiry || '',
+          (p.objectives || []).join('; '),
+          (Array.isArray(p.atlSkills) ? p.atlSkills : [p.atlSkills || '']).join('; '),
+          (p.formativeAssessment || '').replace(/\n/g, ' '),
+          (p.summativeAssessment || '').replace(/\n/g, ' '),
+        ]);
+        const csv = '\uFEFF' + [headers, ...rows]
+          .map(row => row.map((c: string) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+          .join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `export_local_PEI_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (e: unknown) {
+      alert('Erreur lors de l\'export : ' + (e as Error)?.message);
+    } finally {
+      setIsExportingCSV(false);
+    }
+  };
+
   // ── Export helpers ────────────────────────────────────────────────────────
   const handleExportInter = () => {
     if (savedInter.length === 0) { alert('Aucune unité interdisciplinaire sauvegardée.'); return; }
@@ -403,6 +478,19 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
               <p className="text-blue-100 text-xs">Connecté en tant que</p>
               <p className="text-white text-xs font-semibold">{userName}</p>
             </div>
+            {/* Bouton Export CSV — toutes les données BDD */}
+            <button
+              onClick={handleExportAllCSV}
+              disabled={isExportingCSV}
+              title="Exporter toutes les données en CSV (Excel)"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/80 hover:bg-emerald-400 disabled:opacity-60 text-white rounded-lg text-xs font-semibold transition border border-emerald-300/40 shadow-sm"
+            >
+              {isExportingCSV
+                ? <Loader2 size={13} className="animate-spin" />
+                : <Table size={13} />
+              }
+              <span className="hidden sm:inline">{isExportingCSV ? 'Export…' : 'Export CSV'}</span>
+            </button>
             {userRole !== 'exams_only' && (
               <button
                 onClick={onGoToExams}

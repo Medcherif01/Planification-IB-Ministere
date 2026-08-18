@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { UnitPlan, ServiceActionPlan } from '../types';
 import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit } from '../services/geminiService';
+import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI } from '../services/geminiService';
 import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
@@ -109,6 +109,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   const [isDetailUpdateMode, setIsDetailUpdateMode] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingZip, setIsExportingZip] = useState(false);
+  // ── État : Génération IA des détails ─────────────────────────────────────────
+  const [isGeneratingAIDetails, setIsGeneratingAIDetails] = useState(false);
+  const [aiDetailsProgress, setAIDetailsProgress] = useState('');
 
   // ── État : Upload travaux élèves ──────────────────────────────────────────────
   const [uploadModalPlan, setUploadModalPlan] = useState<UnitPlan | null>(null);
@@ -678,6 +681,51 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     setIsDetailUpdateMode(false);
   };
 
+  // ── Handler : Génération IA des détails manquants ────────────────────────
+  const handleGenerateAIDetails = async () => {
+    if (!detailUpdatePlan) return;
+    if (!window.confirm(
+      `Générer automatiquement les détails manquants pour "${detailUpdatePlan.title}" avec Gemini ?\n\n` +
+      `Sections générées : Processus d'apprentissage (5 phases), Séances (4 séances), ` +
+      `Différenciation, Réflexion, Contexte élèves, Cohérence verticale/horizontale, Liens interdisciplinaires.\n\n` +
+      `Les champs déjà remplis ne seront pas écrasés.`
+    )) return;
+
+    setIsGeneratingAIDetails(true);
+    setAIDetailsProgress('Initialisation…');
+    try {
+      const generatedDetails = await generateUnitDetailsWithAI(
+        detailUpdatePlan,
+        (msg) => setAIDetailsProgress(msg)
+      );
+      // Merge: only fill fields that are currently empty
+      const merged: UnitPlan = {
+        ...detailUpdatePlan,
+        // Only set if not already defined
+        learningProcess: detailUpdatePlan.learningProcess || generatedDetails.learningProcess,
+        sessions: (detailUpdatePlan.sessions && detailUpdatePlan.sessions.length > 0)
+          ? detailUpdatePlan.sessions
+          : generatedDetails.sessions,
+        differentiationDetails: detailUpdatePlan.differentiationDetails || generatedDetails.differentiationDetails,
+        reflectionDetails: detailUpdatePlan.reflectionDetails || generatedDetails.reflectionDetails,
+        verticalCoherence: detailUpdatePlan.verticalCoherence || generatedDetails.verticalCoherence,
+        horizontalCoherence: detailUpdatePlan.horizontalCoherence || generatedDetails.horizontalCoherence,
+        interdisciplinaryLinks: detailUpdatePlan.interdisciplinaryLinks || generatedDetails.interdisciplinaryLinks,
+        studentContext: detailUpdatePlan.studentContext || generatedDetails.studentContext,
+        lastDetailUpdate: new Date().toISOString().slice(0, 10),
+        isDetailUpdate: true,
+      };
+      setDetailUpdatePlan(merged);
+      setAIDetailsProgress('✅ Détails générés avec succès !');
+      setTimeout(() => setAIDetailsProgress(''), 3000);
+    } catch (e: any) {
+      setAIDetailsProgress('');
+      alert(`❌ Erreur lors de la génération IA :\n${e?.message || String(e)}`);
+    } finally {
+      setIsGeneratingAIDetails(false);
+    }
+  };
+
   // ── Handler : Export Excel global (toutes les données) ───────────────────
   const handleExportAllExcel = async () => {
     setIsExportingExcel(true);
@@ -690,7 +738,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `export_toutes_donnees_PEI_${new Date().toISOString().slice(0,10)}.xlsx`;
+      a.download = `export_toutes_donnees_PEI_${new Date().toISOString().slice(0,10)}.csv`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -2772,6 +2820,42 @@ Chapitre 4 : Algèbre et équations
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] overflow-y-auto">
         <div className="min-h-screen p-4 flex items-start justify-center">
           <div className="w-full max-w-5xl">
+            {/* Barre d'outils IA en haut du modal */}
+            <div className="mb-3 bg-gradient-to-r from-violet-700 to-indigo-700 rounded-2xl shadow-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-white font-bold text-sm flex items-center gap-2">
+                  <span className="text-lg">✨</span>
+                  Mode Mise à Jour Détaillée
+                </p>
+                <p className="text-violet-200 text-xs mt-0.5 truncate">
+                  Unité : <span className="font-semibold text-white">{detailUpdatePlan.title}</span>
+                </p>
+                {aiDetailsProgress && (
+                  <p className={`text-xs mt-1 font-medium flex items-center gap-1.5 ${
+                    aiDetailsProgress.startsWith('✅') ? 'text-green-300' : 'text-yellow-200'
+                  }`}>
+                    {!aiDetailsProgress.startsWith('✅') && (
+                      <Loader2 size={11} className="animate-spin flex-shrink-0" />
+                    )}
+                    {aiDetailsProgress}
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={handleGenerateAIDetails}
+                  disabled={isGeneratingAIDetails}
+                  className="flex items-center gap-2 px-4 py-2 bg-yellow-400 hover:bg-yellow-300 disabled:opacity-60 text-yellow-900 rounded-xl text-sm font-bold shadow-lg transition whitespace-nowrap"
+                  title="Générer automatiquement les sections détaillées manquantes avec Gemini"
+                >
+                  {isGeneratingAIDetails
+                    ? <><Loader2 size={14} className="animate-spin" /> Génération IA…</>
+                    : <><span className="text-base">🤖</span> Générer avec IA</>
+                  }
+                </button>
+                <span className="text-violet-300 text-xs hidden sm:block">ou remplissez manuellement ↓</span>
+              </div>
+            </div>
             <UnitPlanFormImport
               initialPlan={detailUpdatePlan}
               onSave={handleSaveDetailUpdate}

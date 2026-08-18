@@ -3427,3 +3427,176 @@ Retourne un tableau JSON de 2 objets InterdisciplinaryUnit complets.`;
     []
   );
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GÉNÉRATION IA DES DÉTAILS D'UNITÉ (sections manquantes)
+// Génère les sections détaillées manquantes d'une unité existante :
+// processus d'apprentissage 5 phases, séances, différenciation, réflexion,
+// ATL détaillés, cohérence, liens interdisciplinaires.
+// ─────────────────────────────────────────────────────────────────────────────
+export const generateUnitDetailsWithAI = async (
+  plan: UnitPlan,
+  onProgress?: (msg: string) => void
+): Promise<Partial<UnitPlan>> => {
+  onProgress?.('Analyse de l\'unité en cours…');
+
+  const prompt = `Tu es un expert du Programme d'Éducation Intermédiaire (PEI) de l'IB.
+Tu dois générer les sections détaillées manquantes pour l'unité suivante.
+
+INFORMATIONS DE L'UNITÉ :
+- Titre : ${plan.title || 'Non défini'}
+- Matière : ${plan.subject || 'Non définie'}
+- Niveau : ${plan.gradeLevel || 'Non défini'}
+- Durée : ${plan.duration || 'Non définie'}
+- Concept clé : ${plan.keyConcept || 'Non défini'}
+- Concepts connexes : ${(plan.relatedConcepts || []).join(', ') || 'Non définis'}
+- Contexte mondial : ${plan.globalContext || 'Non défini'}
+- Énoncé de recherche : ${plan.statementOfInquiry || 'Non défini'}
+- Objectifs : ${(plan.objectives || []).join('; ') || 'Non définis'}
+- Compétences ATL : ${(Array.isArray(plan.atlSkills) ? plan.atlSkills : [plan.atlSkills || '']).join('; ')}
+- Contenu : ${(plan.content || '').substring(0, 400)}
+- Évaluation formative : ${(plan.formativeAssessment || '').substring(0, 200)}
+- Évaluation sommative : ${(plan.summativeAssessment || '').substring(0, 200)}
+
+GÉNÈRE un objet JSON complet avec EXACTEMENT ces champs (en français, conforme IB PEI) :
+
+{
+  "learningProcess": {
+    "phase1_activation": "Description phase activation/remue-méninges (2-3 phrases)",
+    "phase2_acquisition": "Description phase acquisition des connaissances (2-3 phrases)",
+    "phase3_practice": "Description phase pratique guidée et collaborative (2-3 phrases)",
+    "phase4_transfer": "Description phase transfert et application (2-3 phrases)",
+    "phase5_reflection": "Description phase réflexion métacognitive (2-3 phrases)"
+  },
+  "sessions": [
+    {
+      "numero": 1,
+      "objectifApprentissage": "Objectif de la séance 1",
+      "contenu": "Contenu enseigné",
+      "activite": "Activité principale des élèves",
+      "roleEnseignant": "Rôle de l'enseignant",
+      "roleEleves": "Rôle des élèves",
+      "atl": "Compétence ATL travaillée",
+      "evaluationFormative": "Observation/vérification formative",
+      "differenciation": "Adaptation pour les élèves"
+    },
+    {
+      "numero": 2,
+      "objectifApprentissage": "Objectif de la séance 2",
+      "contenu": "Contenu enseigné",
+      "activite": "Activité principale des élèves",
+      "roleEnseignant": "Rôle de l'enseignant",
+      "roleEleves": "Rôle des élèves",
+      "atl": "Compétence ATL travaillée",
+      "evaluationFormative": "Observation/vérification formative",
+      "differenciation": "Adaptation pour les élèves"
+    },
+    {
+      "numero": 3,
+      "objectifApprentissage": "Objectif de la séance 3",
+      "contenu": "Contenu enseigné",
+      "activite": "Activité principale des élèves",
+      "roleEnseignant": "Rôle de l'enseignant",
+      "roleEleves": "Rôle des élèves",
+      "atl": "Compétence ATL travaillée",
+      "evaluationFormative": "Observation/vérification formative",
+      "differenciation": "Adaptation pour les élèves"
+    },
+    {
+      "numero": 4,
+      "objectifApprentissage": "Objectif de la séance 4",
+      "contenu": "Contenu enseigné",
+      "activite": "Activité principale des élèves",
+      "roleEnseignant": "Rôle de l'enseignant",
+      "roleEleves": "Rôle des élèves",
+      "atl": "Compétence ATL travaillée",
+      "evaluationFormative": "Observation/vérification formative",
+      "differenciation": "Adaptation pour les élèves"
+    }
+  ],
+  "differentiationDetails": {
+    "supportStudents": {
+      "strategies": "2-3 stratégies pour élèves en difficulté",
+      "materials": "Ressources adaptées",
+      "scaffolding": "Étayage spécifique"
+    },
+    "advancedStudents": {
+      "enrichment": "Activités d'enrichissement",
+      "extension": "Extensions et approfondissements",
+      "autonomy": "Tâches en autonomie avancée"
+    },
+    "contentDifferentiation": "Différenciation du contenu enseigné",
+    "processDifferentiation": "Différenciation du processus d'apprentissage",
+    "productDifferentiation": "Différenciation du produit final attendu"
+  },
+  "reflectionDetails": {
+    "before": {
+      "priorKnowledge": "Questions sur les connaissances antérieures",
+      "anticipatedChallenges": "Défis anticipés pour cette unité",
+      "plannedStrategies": "Stratégies planifiées"
+    },
+    "during": {
+      "whatWorked": "Ce qui fonctionne bien en cours d'unité",
+      "whatToAdjust": "Ajustements nécessaires",
+      "studentEngagement": "Niveau d'engagement des élèves"
+    },
+    "after": {
+      "unitSuccess": "Succès globaux de l'unité",
+      "improvementsForNext": "Améliorations pour la prochaine fois",
+      "studentLearning": "Bilan des apprentissages élèves"
+    }
+  },
+  "verticalCoherence": "Lien avec les unités PEI précédentes et suivantes (vertical)",
+  "horizontalCoherence": "Lien avec les autres matières du même niveau (horizontal)",
+  "interdisciplinaryLinks": "Connections possibles avec d'autres disciplines IB",
+  "studentContext": {
+    "priorKnowledge": "Connaissances préalables requises",
+    "acquiredSkills": "Compétences déjà acquises par les élèves",
+    "linksPreviousUnits": "Liens avec les unités précédentes",
+    "specificNeeds": "Besoins spécifiques identifiés",
+    "anticipatedDifficulties": "Difficultés anticipées"
+  }
+}
+
+RÈGLES :
+- Tout le contenu doit être en français (sauf si la matière est en anglais)
+- Sois spécifique à la matière "${plan.subject}" et au niveau "${plan.gradeLevel}"
+- Base-toi sur le contenu réel de l'unité (titre, énoncé, objectifs)
+- Respecte les normes pédagogiques IB PEI
+- Retourne UNIQUEMENT le JSON valide, sans texte avant ou après`;
+
+  onProgress?.('Génération IA des détails en cours…');
+
+  const raw = await callGeminiViaProxy(prompt, undefined, {
+    temperature: 0.7,
+    maxOutputTokens: 4096,
+  });
+
+  onProgress?.('Traitement de la réponse…');
+
+  // Extract JSON from the response
+  let jsonStr = raw.trim();
+  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    jsonStr = fenceMatch[1].trim();
+  } else {
+    // Try to extract JSON object directly
+    const objMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (objMatch) jsonStr = objMatch[0];
+  }
+
+  const parsed = JSON.parse(jsonStr);
+
+  return {
+    learningProcess: parsed.learningProcess,
+    sessions: parsed.sessions,
+    differentiationDetails: parsed.differentiationDetails,
+    reflectionDetails: parsed.reflectionDetails,
+    verticalCoherence: parsed.verticalCoherence,
+    horizontalCoherence: parsed.horizontalCoherence,
+    interdisciplinaryLinks: parsed.interdisciplinaryLinks,
+    studentContext: parsed.studentContext,
+    lastDetailUpdate: new Date().toISOString().slice(0, 10),
+    isDetailUpdate: true,
+  };
+};
