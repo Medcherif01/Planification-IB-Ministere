@@ -1584,20 +1584,32 @@ Chapitre 4 : Algèbre et équations
                                 <p className="text-sm text-slate-500">{plan.gradeLevel} • {plan.duration}</p>
                             </div>
                             <div className="flex flex-col gap-2">
-                                <button 
-                                    onClick={() => handleOpenEditUnit(plan)}
+                                {isAdmin ? (
+                                  <>
+                                    <button 
+                                        onClick={() => handleOpenEditUnit(plan)}
+                                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition ml-auto"
+                                        title="Modifier l'unité"
+                                    >
+                                        <Edit2 size={18} />
+                                    </button>
+                                    <button 
+                                        onClick={() => onDelete(plan.id)}
+                                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition ml-auto"
+                                        title="Supprimer"
+                                    >
+                                        <Trash2 size={18} />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => { setModRequestPlan(plan); setShowModRequestModal(true); }}
                                     className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition ml-auto"
-                                    title="Modifier l'unité"
-                                >
-                                    <Edit2 size={18} />
-                                </button>
-                                <button 
-                                    onClick={() => onDelete(plan.id)}
-                                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition ml-auto"
-                                    title="Supprimer"
-                                >
-                                    <Trash2 size={18} />
-                                </button>
+                                    title="Demander une modification à l'administrateur"
+                                  >
+                                    <PenLine size={18} />
+                                  </button>
+                                )}
                             </div>
                         </div>
                         
@@ -1688,30 +1700,44 @@ Chapitre 4 : Algèbre et équations
                                     Voir Évals
                                   </button>
                                 )}
-                                {/* ── Bouton Mise à jour des objectifs spécifiques ── */}
-                                <button
-                                    onClick={() => handleUpdateAssessments(plan)}
-                                    disabled={updatingAssessmentId === plan.id}
-                                    className="flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-1 rounded hover:bg-amber-100 transition disabled:opacity-50"
-                                    title="Mettre à jour les évaluations critériées selon les objectifs spécifiques enregistrés (titre et contenu inchangés)"
-                                >
-                                    {updatingAssessmentId === plan.id
-                                      ? <Loader2 className="animate-spin" size={14}/>
-                                      : <RefreshCw size={14}/>}
-                                    Mise à jour Évals
-                                </button>
-                                {/* ── Bouton Mise à jour des détails (sans toucher titre/objectifs/critères/ATL) ── */}
-                                <button
-                                    onClick={() => {
-                                      setDetailUpdatePlan(plan);
-                                      setIsDetailUpdateMode(true);
-                                    }}
-                                    className="flex items-center gap-1 bg-teal-50 text-teal-700 px-2 py-1 rounded hover:bg-teal-100 transition"
-                                    title="Ajouter des détails (séances, contexte élèves, réflexion, différenciation) sans modifier titre/objectifs/critères/ATL"
-                                >
+                                {/* ── Boutons admin uniquement : Mise à jour Évals + Ajouter Détails ── */}
+                                {isAdmin && (
+                                  <>
+                                    <button
+                                        onClick={() => handleUpdateAssessments(plan)}
+                                        disabled={updatingAssessmentId === plan.id}
+                                        className="flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-1 rounded hover:bg-amber-100 transition disabled:opacity-50"
+                                        title="Mettre à jour les évaluations critériées selon les objectifs spécifiques enregistrés (titre et contenu inchangés)"
+                                    >
+                                        {updatingAssessmentId === plan.id
+                                          ? <Loader2 className="animate-spin" size={14}/>
+                                          : <RefreshCw size={14}/>}
+                                        Mise à jour Évals
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                          setDetailUpdatePlan(plan);
+                                          setIsDetailUpdateMode(true);
+                                        }}
+                                        className="flex items-center gap-1 bg-teal-50 text-teal-700 px-2 py-1 rounded hover:bg-teal-100 transition"
+                                        title="Ajouter des détails (séances, contexte élèves, réflexion, différenciation) sans modifier titre/objectifs/critères/ATL"
+                                    >
+                                        <PenLine size={14}/>
+                                        Ajouter Détails
+                                    </button>
+                                  </>
+                                )}
+                                {/* ── Bouton Demander une modification ─ enseignant seulement ─ */}
+                                {!isAdmin && (
+                                  <button
+                                    onClick={() => { setModRequestPlan(plan); setShowModRequestModal(true); }}
+                                    className="flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-1 rounded hover:bg-blue-100 transition"
+                                    title="Demander une modification à l'administrateur"
+                                  >
                                     <PenLine size={14}/>
-                                    Ajouter Détails
-                                </button>
+                                    Demander modif.
+                                  </button>
+                                )}
                                 {/* ── Bouton Upload travaux élèves ── */}
                                 <button
                                     onClick={() => {

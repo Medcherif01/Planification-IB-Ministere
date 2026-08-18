@@ -207,12 +207,24 @@ const App: React.FC = () => {
   };
 
   const handleEdit = (plan: UnitPlan) => {
+    // Protection côté serveur : seul admin peut modifier directement
+    const user = getCurrentUser();
+    if (user?.role === 'teacher') {
+      alert('Action refusée : utilisez le bouton "Demander une modification" pour soumettre une demande à l\'administrateur.');
+      return;
+    }
     setEditingPlan(plan);
     setView(AppView.EDITOR);
     localStorage.setItem('currentView', AppView.EDITOR);
   };
 
   const handleDelete = (id: string) => {
+    // Protection côté serveur : seul admin peut supprimer directement
+    const user = getCurrentUser();
+    if (user?.role === 'teacher') {
+      alert('Action refusée : vous ne pouvez pas supprimer d\'unité directement. Demandez une suppression via "Demander une modification".');
+      return;
+    }
     if (window.confirm('Êtes-vous sûr de vouloir supprimer ce plan ?')) {
       setCurrentPlans(prev => prev.filter(p => p.id !== id));
     }
