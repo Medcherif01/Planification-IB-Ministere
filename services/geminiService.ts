@@ -3808,13 +3808,62 @@ Règles: JSON valide uniquement, pas de markdown, français, spécifique à "${p
   // ── Construire le résultat complet fusionné ───────────────────────────────
   onProgress?.('Finalisation et sauvegarde automatique...');
 
+  // ── Lire les dates depuis le calendrier annuel sauvegardé ─────────────────
+  let calStartDate = (p1.startDate as string) || '';
+  let calEndDate   = (p1.endDate   as string) || '';
+  try {
+    const grade = plan.gradeLevel || '';
+    const calRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(`annual_calendar_${grade}`) : null;
+    if (calRaw) {
+      const cal = JSON.parse(calRaw);
+      const entries: any[] = cal.entries || [];
+      const subject = plan.subject || '';
+      const titleKey = (plan.title || '').toLowerCase().slice(0, 20);
+      const matching = entries.filter(e =>
+        e.type === 'unit' && e.subject === subject &&
+        (e.unitTitle?.toLowerCase().includes(titleKey) || titleKey.includes(e.unitTitle?.toLowerCase().slice(0, 15)))
+      );
+      if (matching.length > 0) {
+        const WEEKS_START: Record<number, string> = {
+          1:'30 Août 2026', 2:'06 Sept. 2026', 3:'13 Sept. 2026', 4:'20 Sept. 2026',
+          5:'27 Sept. 2026', 6:'04 Oct. 2026', 7:'11 Oct. 2026', 8:'18 Oct. 2026',
+          9:'25 Oct. 2026', 10:'01 Nov. 2026', 11:'08 Nov. 2026', 12:'15 Nov. 2026',
+          13:'29 Nov. 2026', 14:'06 Déc. 2026', 15:'13 Déc. 2026', 16:'20 Déc. 2026',
+          17:'27 Déc. 2026', 18:'03 Jan. 2027', 19:'17 Jan. 2027', 20:'24 Jan. 2027',
+          21:'31 Jan. 2027', 22:'07 Fév. 2027', 23:'14 Fév. 2027', 24:'21 Fév. 2027',
+          25:'14 Mars 2027', 26:'21 Mars 2027', 27:'28 Mars 2027', 28:'04 Avr. 2027',
+          29:'11 Avr. 2027', 30:'18 Avr. 2027', 31:'25 Avr. 2027', 32:'02 Mai 2027',
+          33:'23 Mai 2027', 34:'30 Mai 2027', 35:'06 Juin 2027', 36:'13 Juin 2027',
+          37:'20 Juin 2027', 38:'27 Juin 2027',
+        };
+        const WEEKS_END: Record<number, string> = {
+          1:'03 Sept. 2026', 2:'10 Sept. 2026', 3:'17 Sept. 2026', 4:'24 Sept. 2026',
+          5:'01 Oct. 2026', 6:'08 Oct. 2026', 7:'15 Oct. 2026', 8:'22 Oct. 2026',
+          9:'29 Oct. 2026', 10:'05 Nov. 2026', 11:'12 Nov. 2026', 12:'19 Nov. 2026',
+          13:'03 Déc. 2026', 14:'10 Déc. 2026', 15:'17 Déc. 2026', 16:'24 Déc. 2026',
+          17:'31 Déc. 2026', 18:'07 Jan. 2027', 19:'21 Jan. 2027', 20:'28 Jan. 2027',
+          21:'04 Fév. 2027', 22:'11 Fév. 2027', 23:'18 Fév. 2027', 24:'25 Fév. 2027',
+          25:'18 Mars 2027', 26:'25 Mars 2027', 27:'01 Avr. 2027', 28:'08 Avr. 2027',
+          29:'15 Avr. 2027', 30:'22 Avr. 2027', 31:'29 Avr. 2027', 32:'06 Mai 2027',
+          33:'27 Mai 2027', 34:'03 Juin 2027', 35:'10 Juin 2027', 36:'17 Juin 2027',
+          37:'24 Juin 2027', 38:'30 Juin 2027',
+        };
+        const weekNums = matching.map(e => e.weekNum as number).sort((a, b) => a - b);
+        const minW = weekNums[0];
+        const maxW = weekNums[weekNums.length - 1];
+        if (WEEKS_START[minW]) calStartDate = WEEKS_START[minW];
+        if (WEEKS_END[maxW])   calEndDate   = WEEKS_END[maxW];
+      }
+    }
+  } catch { /* calendrier non disponible, on garde les dates IA */ }
+
   return {
     // Infos générales mises à jour
     schoolYear: (p1.schoolYear as string) || '2026-2027',
     numberOfPeriods: (p1.numberOfPeriods as string) || '',
     numberOfHours: (p1.numberOfHours as string) || plan.duration || '',
-    startDate: (p1.startDate as string) || '',
-    endDate: (p1.endDate as string) || '',
+    startDate: calStartDate || (p1.startDate as string) || '',
+    endDate:   calEndDate   || (p1.endDate   as string) || '',
     prerequisites: (p1.prerequisites as string) || '',
     // Contexte élèves
     studentContext: (p1.studentContext as UnitPlan['studentContext']) || undefined,

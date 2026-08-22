@@ -255,281 +255,302 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
   return baseData;
 };
 
-export const exportUnitPlanToWord = async (plan: UnitPlan) => {
-  // Génère un document HTML complet portrait avec TOUS les champs IB PEI (sections A→R)
-  const s = (v: string | undefined | null) => (v || '—').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const arr = (v: string[] | string | undefined) => {
-    if (!v) return '—';
-    const a = Array.isArray(v) ? v : [v];
-    return a.map(x => `• ${x.replace(/</g,'&lt;').replace(/>/g,'&gt;')}`).join('<br>') || '—';
-  };
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers pour construire les champs texte du template plan.docx
+// ─────────────────────────────────────────────────────────────────────────────
+const c = (v: any): string => {
+  if (v === null || v === undefined) return '';
+  return String(v).replace(/{/g, '[').replace(/}/g, ']');
+};
 
+const listTxt = (v: string[] | string | undefined): string => {
+  if (!v) return '';
+  const a = Array.isArray(v) ? v : [v];
+  return a.filter(Boolean).join('\n');
+};
+
+// Lit les dates depuis le calendrier annuel sauvegardé en localStorage
+const getCalendarDates = (plan: UnitPlan): { startDate: string; endDate: string } => {
+  try {
+    const grade = plan.gradeLevel || '';
+    const calKey = `annual_calendar_${grade}`;
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(calKey) : null;
+    if (!raw) return { startDate: plan.startDate || '', endDate: plan.endDate || '' };
+    const cal = JSON.parse(raw);
+    const entries: any[] = cal.entries || [];
+
+    // Trouver toutes les semaines de cette unité (par titre)
+    const title = (plan.title || '').toLowerCase().slice(0, 20);
+    const subject = plan.subject || '';
+    const matching = entries.filter(e =>
+      e.subject === subject &&
+      (e.unitTitle?.toLowerCase().includes(title) || title.includes(e.unitTitle?.toLowerCase().slice(0, 15)))
+    );
+
+    if (matching.length === 0) return { startDate: plan.startDate || '', endDate: plan.endDate || '' };
+
+    const SCHOOL_WEEKS: Record<number, string> = {
+      1:'30 Août 2026', 2:'06 Sept. 2026', 3:'13 Sept. 2026', 4:'20 Sept. 2026',
+      5:'27 Sept. 2026', 6:'04 Oct. 2026', 7:'11 Oct. 2026', 8:'18 Oct. 2026',
+      9:'25 Oct. 2026', 10:'01 Nov. 2026', 11:'08 Nov. 2026', 12:'15 Nov. 2026',
+      13:'29 Nov. 2026', 14:'06 Déc. 2026', 15:'13 Déc. 2026', 16:'20 Déc. 2026',
+      17:'27 Déc. 2026', 18:'03 Jan. 2027', 19:'17 Jan. 2027', 20:'24 Jan. 2027',
+      21:'31 Jan. 2027', 22:'07 Fév. 2027', 23:'14 Fév. 2027', 24:'21 Fév. 2027',
+      25:'14 Mars 2027', 26:'21 Mars 2027', 27:'28 Mars 2027', 28:'04 Avr. 2027',
+      29:'11 Avr. 2027', 30:'18 Avr. 2027', 31:'25 Avr. 2027', 32:'02 Mai 2027',
+      33:'23 Mai 2027', 34:'30 Mai 2027', 35:'06 Juin 2027', 36:'13 Juin 2027',
+      37:'20 Juin 2027', 38:'27 Juin 2027',
+    };
+    const SCHOOL_WEEKS_END: Record<number, string> = {
+      1:'03 Sept. 2026', 2:'10 Sept. 2026', 3:'17 Sept. 2026', 4:'24 Sept. 2026',
+      5:'01 Oct. 2026', 6:'08 Oct. 2026', 7:'15 Oct. 2026', 8:'22 Oct. 2026',
+      9:'29 Oct. 2026', 10:'05 Nov. 2026', 11:'12 Nov. 2026', 12:'19 Nov. 2026',
+      13:'03 Déc. 2026', 14:'10 Déc. 2026', 15:'17 Déc. 2026', 16:'24 Déc. 2026',
+      17:'31 Déc. 2026', 18:'07 Jan. 2027', 19:'21 Jan. 2027', 20:'28 Jan. 2027',
+      21:'04 Fév. 2027', 22:'11 Fév. 2027', 23:'18 Fév. 2027', 24:'25 Fév. 2027',
+      25:'18 Mars 2027', 26:'25 Mars 2027', 27:'01 Avr. 2027', 28:'08 Avr. 2027',
+      29:'15 Avr. 2027', 30:'22 Avr. 2027', 31:'29 Avr. 2027', 32:'06 Mai 2027',
+      33:'27 Mai 2027', 34:'03 Juin 2027', 35:'10 Juin 2027', 36:'17 Juin 2027',
+      37:'24 Juin 2027', 38:'30 Juin 2027',
+    };
+
+    const weekNums = matching.filter(e => e.type === 'unit').map(e => e.weekNum).sort((a: number, b: number) => a - b);
+    const minWeek = weekNums[0];
+    const maxWeek = weekNums[weekNums.length - 1];
+
+    return {
+      startDate: SCHOOL_WEEKS[minWeek] || plan.startDate || '',
+      endDate: SCHOOL_WEEKS_END[maxWeek] || plan.endDate || '',
+    };
+  } catch {
+    return { startDate: plan.startDate || '', endDate: plan.endDate || '' };
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT PLAN D'UNITÉ → template plan.docx via docxtemplater
+// Remplit EXACTEMENT les champs du template IB PEI officiel
+// + champs étendus pour les données IA générées (sections A→R)
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportUnitPlanToWord = async (plan: UnitPlan) => {
+  // ── 1. Récupérer les dates depuis le calendrier annuel ────────────────────
+  const calDates = getCalendarDates(plan);
+  const startDate = calDates.startDate || plan.startDate || '';
+  const endDate   = calDates.endDate   || plan.endDate   || '';
+
+  // ── 2. Préparer les champs agrégés pour le template ──────────────────────
   const objectives = Array.isArray(plan.objectives) ? plan.objectives : [];
-  const atl = Array.isArray(plan.atlSkills) ? plan.atlSkills : (plan.atlSkills ? [plan.atlSkills] : []);
+  const atl = Array.isArray(plan.atlSkills) ? plan.atlSkills : (plan.atlSkills ? [plan.atlSkills as string] : []);
   const related = Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts : [];
 
-  const sectionStyle = 'background:#1e3a5f;color:white;font-size:10pt;font-weight:bold;padding:6px 10px;margin:0;';
-  const subSectionStyle = 'background:#d6e4f0;color:#1e3a5f;font-size:9pt;font-weight:bold;padding:4px 8px;margin:0;';
-  const cellStyle = 'padding:6px 10px;font-size:9pt;color:#222;vertical-align:top;border-bottom:1px solid #dde3ea;';
-  const labelStyle = 'font-weight:bold;color:#1e3a5f;font-size:8pt;white-space:nowrap;width:180px;';
+  // Objectifs spécifiques : "Critère A – aspects ; Critère B – aspects …"
+  const objectifsTxt = objectives.map(cr => {
+    const d = plan.objectivesDetails?.find(x => x.criterion === cr);
+    return `Critère ${cr}${d?.aspects ? ' – ' + d.aspects : ''}${d?.expectedLevel ? ' (niveau attendu : ' + d.expectedLevel + ')' : ''}`;
+  }).join('\n') || c(plan.content?.slice(0, 200));
 
-  // Helper pour une ligne de champ
-  const row = (label: string, value: string) =>
-    `<tr><td style="${cellStyle}${labelStyle}">${label}</td><td style="${cellStyle}">${value}</td></tr>`;
+  // Contenu enrichi : plan général + détails IA
+  const contenuTxt = [
+    c(plan.content),
+    plan.contentDetails?.knowledges      ? 'Connaissances : ' + c(plan.contentDetails.knowledges) : '',
+    plan.contentDetails?.notions         ? 'Notions/Vocabulaire : ' + c(plan.contentDetails.notions || plan.contentDetails.vocabulary) : '',
+    plan.contentDetails?.methods         ? 'Méthodes : ' + c(plan.contentDetails.methods) : '',
+    plan.contentDetails?.disciplinarySkills ? 'Compétences disciplinaires : ' + c(plan.contentDetails.disciplinarySkills) : '',
+    plan.contentDetails?.mandatoryContent   ? 'Contenu obligatoire IB : ' + c(plan.contentDetails.mandatoryContent) : '',
+    plan.contentDetails?.nationalLinks      ? 'Liens programme national : ' + c(plan.contentDetails.nationalLinks) : '',
+  ].filter(Boolean).join('\n\n');
 
-  const html = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<style>
-  @page { size: A4; margin: 15mm 12mm 15mm 15mm; }
-  body { font-family: Calibri, Arial, sans-serif; font-size: 9pt; color: #222; margin: 0; padding: 0; }
-  .logo-header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #1e3a5f; padding-bottom: 8px; margin-bottom: 10px; }
-  .logo-header h1 { font-size: 14pt; color: #1e3a5f; margin: 0; }
-  .logo-header p { font-size: 8pt; color: #555; margin: 2px 0 0 0; }
-  .badge { background: #1e3a5f; color: white; border-radius: 4px; padding: 3px 10px; font-size: 9pt; font-weight: bold; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; border: 1px solid #b0c4d8; }
-  .section-header { ${sectionStyle} }
-  .sub-header { ${subSectionStyle} }
-  .sessions-table { font-size: 8pt; }
-  .sessions-table th { background: #1e3a5f; color: white; padding: 4px 6px; border: 1px solid #4472c4; text-align: center; }
-  .sessions-table td { border: 1px solid #b0c4d8; padding: 3px 5px; vertical-align: top; }
-  .sessions-table tr:nth-child(even) { background: #f5f9ff; }
-  @media print { .no-print { display:none; } }
-  .tag { display:inline-block; background:#e8f0fe; color:#1e3a5f; border-radius:10px; padding:2px 8px; margin:2px; font-size:8pt; font-weight:bold; }
-  .obj-table td { border: 1px solid #b0c4d8; padding:4px 6px; vertical-align:top; font-size:8pt; }
-  .obj-table th { background:#2d5986; color:white; padding:4px 6px; font-size:8pt; }
-</style>
-</head>
-<body>
+  // Processus d'apprentissage enrichi avec les 5 phases + stratégies + séances
+  const processusBlocs: string[] = [];
+  if (plan.learningProcess) {
+    const lp = plan.learningProcess;
+    if (lp.phase1_activation)  processusBlocs.push('Phase 1 – Activation des connaissances :\n' + c(lp.phase1_activation));
+    if (lp.phase2_acquisition) processusBlocs.push('Phase 2 – Acquisition :\n' + c(lp.phase2_acquisition));
+    if (lp.phase3_practice)    processusBlocs.push('Phase 3 – Mise en pratique :\n' + c(lp.phase3_practice));
+    if (lp.phase4_transfer)    processusBlocs.push('Phase 4 – Transfert et application :\n' + c(lp.phase4_transfer));
+    if (lp.phase5_reflection)  processusBlocs.push('Phase 5 – Réflexion :\n' + c(lp.phase5_reflection));
+  }
+  if (plan.teachingStrategies)  processusBlocs.push('Stratégies de l\'enseignant :\n' + c(plan.teachingStrategies));
+  if (plan.studentActivities)   processusBlocs.push('Activités des élèves :\n' + c(plan.studentActivities));
+  if (plan.learningExperiences) processusBlocs.push('Expériences d\'apprentissage :\n' + c(plan.learningExperiences));
 
-<!-- EN-TÊTE -->
-<div class="logo-header">
-  <div>
-    <h1>📘 Plan d'Unité IB PEI — ${s(plan.title)}</h1>
-    <p>Les Écoles Internationales Al-Kawthar · Programme IB MYP/PEI</p>
-  </div>
-  <div>
-    <span class="badge">${s(plan.subject)}</span><br>
-    <span class="badge" style="margin-top:4px;display:inline-block;">${s(plan.gradeLevel)}</span>
-  </div>
-</div>
+  // Séances détaillées → texte structuré
+  if (plan.sessions && plan.sessions.length > 0) {
+    const sessionsText = plan.sessions.map(sess =>
+      `Séance ${sess.numero} (${c(sess.duree)}) :\n` +
+      `  Objectif : ${c(sess.objectifApprentissage)}\n` +
+      `  Contenu : ${c(sess.contenu)}\n` +
+      `  Activité : ${c(sess.activite)}\n` +
+      `  ATL : ${c(sess.atl)}\n` +
+      `  Éval. formative : ${c(sess.evaluationFormative)}\n` +
+      `  Différenciation : ${c(sess.differenciation)}\n` +
+      `  Ressources : ${c(sess.ressources)}`
+    ).join('\n\n');
+    processusBlocs.push('Séances détaillées :\n' + sessionsText);
+  }
 
-<!-- A. INFORMATIONS GÉNÉRALES -->
-<table>
-  <tr><td colspan="2" class="section-header">A. Informations générales</td></tr>
-  ${row('Enseignant(e)', s(plan.teacherName))}
-  ${row('Groupe / Matière', s(plan.subject))}
-  ${row('Titre de l\'unité', s(plan.title))}
-  ${row('Niveau (PEI)', s(plan.gradeLevel))}
-  ${row('Durée', s(plan.duration))}
-  ${row('Année scolaire', s(plan.schoolYear || '2026-2027'))}
-  ${row('Nombre de périodes', s(plan.numberOfPeriods || ''))}
-  ${row('Nombre d\'heures', s(plan.numberOfHours || plan.duration))}
-  ${row('Date de début', s(plan.startDate || ''))}
-  ${row('Date de fin', s(plan.endDate || ''))}
-  ${row('Prérequis', s(plan.prerequisites || plan.content?.slice(0, 150)))}
-</table>
+  const processusTxt = processusBlocs.join('\n\n') || c(plan.learningExperiences);
 
-<!-- B. CONTEXTE DES ÉLÈVES -->
-<table>
-  <tr><td colspan="2" class="section-header">B. Contexte des élèves et connaissances antérieures</td></tr>
-  ${row('Connaissances antérieures', s(plan.studentContext?.priorKnowledge))}
-  ${row('Compétences déjà acquises', s(plan.studentContext?.acquiredSkills))}
-  ${row('Liens avec les unités précédentes', s(plan.studentContext?.linksPreviousUnits))}
-  ${row('Besoins spécifiques', s(plan.studentContext?.specificNeeds))}
-  ${row('Diversité des profils', s(plan.studentContext?.profileDiversity || plan.studentContext?.culturalContexts))}
-  ${row('Difficultés anticipées', s(plan.studentContext?.anticipatedDifficulties))}
-</table>
+  // Évaluation formative
+  const evalFormTxt = [
+    c(plan.formativeAssessment),
+    plan.objectivesDetails?.map(d => d.formativeAssessment ? `Critère ${d.criterion} : ${c(d.formativeAssessment)}` : '').filter(Boolean).join('\n') || '',
+  ].filter(Boolean).join('\n\n');
 
-<!-- C. CONCEPTS ET CONTEXTE MONDIAL -->
-<table>
-  <tr><td colspan="2" class="section-header">C. Concepts et contexte mondial</td></tr>
-  ${row('Concept clé', s(plan.keyConcept))}
-  ${row('Définition du concept clé', s(plan.keyConceptDefinition))}
-  ${row('Concepts connexes', related.map(c=>`<span class="tag">${c.replace(/</g,'&lt;')}</span>`).join(' ') || '—')}
-  ${row('Contexte mondial', s(plan.globalContext))}
-  ${row('Aspects du contexte', s(plan.globalContextAspects))}
-  ${row('Énoncé de recherche', `<em>${s(plan.statementOfInquiry)}</em>`)}
-  ${row('Explication de l\'énoncé', s(plan.statementExplanation))}
-</table>
+  // Évaluation sommative
+  const evalSommTxt = [
+    c(plan.summativeAssessment),
+    objectives.length > 0 ? 'Critères évalués : ' + objectives.join(', ') : '',
+    plan.summativeDetails?.consigne          ? 'Consigne : ' + c(plan.summativeDetails.consigne) : '',
+    plan.summativeDetails?.productionAttendue ? 'Production attendue : ' + c(plan.summativeDetails.productionAttendue) : '',
+    plan.summativeDetails?.duree             ? 'Durée : ' + c(plan.summativeDetails.duree) : '',
+    plan.objectivesDetails?.map(d => d.summativeAssessment ? `Critère ${d.criterion} : ${c(d.summativeAssessment)}` : '').filter(Boolean).join('\n') || '',
+  ].filter(Boolean).join('\n\n');
 
-<!-- D. QUESTIONS D'INVESTIGATION -->
-<table>
-  <tr><td colspan="2" class="section-header">D. Questions d'investigation (inquiry)</td></tr>
-  <tr><td class="sub-header" colspan="2">Questions factuelles</td></tr>
-  <tr><td colspan="2" style="${cellStyle}">${arr(plan.inquiryQuestions?.factual)}</td></tr>
-  <tr><td class="sub-header" colspan="2">Questions conceptuelles</td></tr>
-  <tr><td colspan="2" style="${cellStyle}">${arr(plan.inquiryQuestions?.conceptual)}</td></tr>
-  <tr><td class="sub-header" colspan="2">Questions débattables</td></tr>
-  <tr><td colspan="2" style="${cellStyle}">${arr(plan.inquiryQuestions?.debatable)}</td></tr>
-</table>
+  // Différenciation
+  const difftxt = [
+    c(plan.differentiation),
+    plan.differentiationDetails?.supportStudents ? [
+      'Élèves en difficulté :',
+      plan.differentiationDetails.supportStudents.vocabulary      ? '  - Soutien vocabulaire : ' + c(plan.differentiationDetails.supportStudents.vocabulary) : '',
+      plan.differentiationDetails.supportStudents.visualSupports  ? '  - Supports visuels : ' + c(plan.differentiationDetails.supportStudents.visualSupports) : '',
+      plan.differentiationDetails.supportStudents.models          ? '  - Modèles/étayage : ' + c(plan.differentiationDetails.supportStudents.models) : '',
+      plan.differentiationDetails.supportStudents.adaptedInstructions ? '  - Instructions adaptées : ' + c(plan.differentiationDetails.supportStudents.adaptedInstructions) : '',
+      plan.differentiationDetails.supportStudents.individualSupport   ? '  - Soutien individuel : ' + c(plan.differentiationDetails.supportStudents.individualSupport) : '',
+      plan.differentiationDetails.supportStudents.extraTime           ? '  - Temps supplémentaire : ' + c(plan.differentiationDetails.supportStudents.extraTime) : '',
+    ].filter(Boolean).join('\n') : '',
+    plan.differentiationDetails?.advancedStudents ? [
+      'Élèves avancés :',
+      plan.differentiationDetails.advancedStudents.deepening         ? '  - Approfondissement : ' + c(plan.differentiationDetails.advancedStudents.deepening) : '',
+      plan.differentiationDetails.advancedStudents.challenges        ? '  - Défis : ' + c(plan.differentiationDetails.advancedStudents.challenges) : '',
+      plan.differentiationDetails.advancedStudents.autonomousResearch ? '  - Recherche autonome : ' + c(plan.differentiationDetails.advancedStudents.autonomousResearch) : '',
+      plan.differentiationDetails.advancedStudents.transfer          ? '  - Transfert : ' + c(plan.differentiationDetails.advancedStudents.transfer) : '',
+    ].filter(Boolean).join('\n') : '',
+    plan.differentiationDetails?.contentDifferentiation  ? 'Différenciation du contenu : ' + c(plan.differentiationDetails.contentDifferentiation) : '',
+    plan.differentiationDetails?.processDifferentiation  ? 'Différenciation du processus : ' + c(plan.differentiationDetails.processDifferentiation) : '',
+    plan.differentiationDetails?.productDifferentiation  ? 'Différenciation de la production : ' + c(plan.differentiationDetails.productDifferentiation) : '',
+  ].filter(Boolean).join('\n\n');
 
-<!-- E. OBJECTIFS ET CRITÈRES D'ÉVALUATION -->
-<table>
-  <tr><td colspan="5" class="section-header">E. Objectifs et critères d'évaluation IB (Objectif → Activité → Apprentissage → Évaluation)</td></tr>
-  <tr class="obj-table">
-    <th>Critère</th><th>Aspects évalués</th><th>Niveau attendu</th><th>Activités associées</th><th>Évaluation</th>
-  </tr>
-  ${objectives.map(cr => {
-    const detail = plan.objectivesDetails?.find(d => d.criterion === cr);
-    return `<tr class="obj-table">
-      <td style="font-weight:bold;text-align:center;">${cr}</td>
-      <td>${s(detail?.aspects)}</td>
-      <td style="text-align:center;">${s(detail?.expectedLevel)}</td>
-      <td>${s(detail?.activities)}</td>
-      <td>${s(detail?.summativeAssessment || detail?.formativeAssessment)}</td>
-    </tr>`;
-  }).join('')}
-  ${objectives.length === 0 ? `<tr><td colspan="5" style="${cellStyle}">Objectifs non définis</td></tr>` : ''}
-</table>
+  // Ressources
+  const ressourcesTxt = [
+    c(plan.resources),
+    plan.sessions?.map(s => s.ressources ? `Séance ${s.numero} : ${c(s.ressources)}` : '').filter(Boolean).join('\n') || '',
+  ].filter(Boolean).join('\n\n');
 
-<!-- F. COMPÉTENCES ATL -->
-<table>
-  <tr><td class="section-header">F. Approches de l'apprentissage (ATL)</td></tr>
-  <tr><td style="${cellStyle}">${atl.map(a=>`<span class="tag">${a.replace(/</g,'&lt;')}</span>`).join(' ') || '—'}</td></tr>
-</table>
+  // Réflexion avant
+  const reflexionAvantTxt = [
+    plan.reflectionDetails?.before ? [
+      plan.reflectionDetails.before.priorKnowledge      ? 'Connaissances antérieures : ' + c(plan.reflectionDetails.before.priorKnowledge) : '',
+      plan.reflectionDetails.before.studentNeeds        ? 'Besoins des élèves : ' + c(plan.reflectionDetails.before.studentNeeds) : '',
+      plan.reflectionDetails.before.anticipatedDifficulties ? 'Difficultés anticipées : ' + c(plan.reflectionDetails.before.anticipatedDifficulties) : '',
+      plan.reflectionDetails.before.relevance           ? 'Pertinence : ' + c(plan.reflectionDetails.before.relevance) : '',
+      plan.reflectionDetails.before.plannedStrategies   ? 'Stratégies planifiées : ' + c(plan.reflectionDetails.before.plannedStrategies) : '',
+      plan.reflectionDetails.before.plannedDifferentiation ? 'Différenciation prévue : ' + c(plan.reflectionDetails.before.plannedDifferentiation) : '',
+      plan.reflectionDetails.before.expectedOutcomes    ? 'Résultats attendus : ' + c(plan.reflectionDetails.before.expectedOutcomes) : '',
+    ].filter(Boolean).join('\n') : c(plan.reflection?.prior),
+  ].filter(Boolean).join('\n');
 
-<!-- G. CONTENU -->
-<table>
-  <tr><td colspan="2" class="section-header">G. Contenu de l'unité</td></tr>
-  ${row('Contenu général', s(plan.content))}
-  ${row('Connaissances (savoirs théoriques)', s(plan.contentDetails?.knowledges))}
-  ${row('Notions / Vocabulaire clé', s(plan.contentDetails?.notions || plan.contentDetails?.vocabulary))}
-  ${row('Méthodes et techniques', s(plan.contentDetails?.methods || plan.contentDetails?.techniques))}
-  ${row('Compétences disciplinaires', s(plan.contentDetails?.disciplinarySkills))}
-  ${row('Contenu obligatoire IB', s(plan.contentDetails?.mandatoryContent))}
-  ${row('Liens programme national français', s(plan.contentDetails?.nationalLinks))}
-</table>
+  // Réflexion pendant
+  const reflexionPendantTxt = [
+    plan.reflectionDetails?.during ? [
+      plan.reflectionDetails.during.progressObserved      ? 'Progrès observés : ' + c(plan.reflectionDetails.during.progressObserved) : '',
+      plan.reflectionDetails.during.difficulties          ? 'Difficultés rencontrées : ' + c(plan.reflectionDetails.during.difficulties) : '',
+      plan.reflectionDetails.during.effectiveStrategies   ? 'Stratégies efficaces : ' + c(plan.reflectionDetails.during.effectiveStrategies) : '',
+      plan.reflectionDetails.during.adjustmentsMade       ? 'Ajustements effectués : ' + c(plan.reflectionDetails.during.adjustmentsMade) : '',
+      plan.reflectionDetails.during.studentParticipation  ? 'Participation élèves : ' + c(plan.reflectionDetails.during.studentParticipation) : '',
+    ].filter(Boolean).join('\n') : c(plan.reflection?.during),
+  ].filter(Boolean).join('\n');
 
-<!-- H. PROCESSUS D'APPRENTISSAGE -->
-<table>
-  <tr><td colspan="2" class="section-header">H. Processus d'apprentissage</td></tr>
-  ${row('Phase 1 — Activation', s(plan.learningProcess?.phase1_activation))}
-  ${row('Phase 2 — Acquisition', s(plan.learningProcess?.phase2_acquisition))}
-  ${row('Phase 3 — Mise en pratique', s(plan.learningProcess?.phase3_practice))}
-  ${row('Phase 4 — Transfert', s(plan.learningProcess?.phase4_transfer))}
-  ${row('Phase 5 — Réflexion', s(plan.learningProcess?.phase5_reflection))}
-  ${row('Stratégies de l\'enseignant', s(plan.teachingStrategies))}
-  ${row('Activités des élèves', s(plan.studentActivities))}
-</table>
+  // Réflexion après
+  const reflexionApresTxt = [
+    plan.reflectionDetails?.after ? [
+      plan.reflectionDetails.after.achievedObjectives     ? 'Objectifs atteints : ' + c(plan.reflectionDetails.after.achievedObjectives) : '',
+      plan.reflectionDetails.after.partialObjectives      ? 'Objectifs partiels : ' + c(plan.reflectionDetails.after.partialObjectives) : '',
+      plan.reflectionDetails.after.studentDifficulties    ? 'Difficultés élèves : ' + c(plan.reflectionDetails.after.studentDifficulties) : '',
+      plan.reflectionDetails.after.successes              ? 'Succès : ' + c(plan.reflectionDetails.after.successes) : '',
+      plan.reflectionDetails.after.improvements           ? 'Points à améliorer : ' + c(plan.reflectionDetails.after.improvements) : '',
+      plan.reflectionDetails.after.modificationsNext      ? 'Modifications pour la prochaine fois : ' + c(plan.reflectionDetails.after.modificationsNext) : '',
+    ].filter(Boolean).join('\n') : c(plan.reflection?.after),
+  ].filter(Boolean).join('\n');
 
-<!-- I. SÉANCES DÉTAILLÉES -->
-<table>
-  <tr><td class="section-header" colspan="9">I. Séances détaillées</td></tr>
-  <tr>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">N°</th>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Durée</th>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Objectif</th>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Contenu</th>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Activité</th>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">ATL</th>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Éval. form.</th>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Différenciation</th>
-    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Ressources</th>
-  </tr>
-  ${(plan.sessions || []).map(sess => `
-  <tr style="font-size:8pt;">
-    <td style="border:1px solid #b0c4d8;padding:3px;text-align:center;font-weight:bold;">${sess.numero}</td>
-    <td style="border:1px solid #b0c4d8;padding:3px;text-align:center;">${s(sess.duree)}</td>
-    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.objectifApprentissage)}</td>
-    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.contenu)}</td>
-    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.activite)}</td>
-    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.atl)}</td>
-    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.evaluationFormative)}</td>
-    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.differenciation)}</td>
-    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.ressources)}</td>
-  </tr>`).join('') || `<tr><td colspan="9" style="${cellStyle};color:#999">Séances non encore générées — utilisez "Ajouter Détails" dans l'application</td></tr>`}
-</table>
+  // Contexte élèves → Prérequis enrichis
+  const prerequisTxt = [
+    c(plan.prerequisites),
+    plan.studentContext?.priorKnowledge      ? 'Connaissances antérieures : ' + c(plan.studentContext.priorKnowledge) : '',
+    plan.studentContext?.acquiredSkills      ? 'Compétences acquises : ' + c(plan.studentContext.acquiredSkills) : '',
+    plan.studentContext?.linksPreviousUnits  ? 'Liens unités précédentes : ' + c(plan.studentContext.linksPreviousUnits) : '',
+    plan.studentContext?.specificNeeds       ? 'Besoins spécifiques : ' + c(plan.studentContext.specificNeeds) : '',
+    plan.studentContext?.anticipatedDifficulties ? 'Difficultés anticipées : ' + c(plan.studentContext.anticipatedDifficulties) : '',
+  ].filter(Boolean).join('\n');
 
-<!-- L. ÉVALUATION FORMATIVE -->
-<table>
-  <tr><td class="section-header">L. Évaluation formative</td></tr>
-  <tr><td style="${cellStyle}">${s(plan.formativeAssessment)}</td></tr>
-</table>
+  // Cohérence + liens interdisciplinaires → ajout dans réflexion après ou ressources
+  const coherenceTxt = [
+    plan.verticalCoherenceText    ? 'Cohérence verticale : ' + c(plan.verticalCoherenceText) : '',
+    plan.horizontalCoherenceText  ? 'Cohérence horizontale : ' + c(plan.horizontalCoherenceText) : '',
+    plan.interdisciplinaryLinksText ? 'Liens interdisciplinaires : ' + c(plan.interdisciplinaryLinksText) : '',
+  ].filter(Boolean).join('\n\n');
 
-<!-- M. ÉVALUATION SOMMATIVE -->
-<table>
-  <tr><td colspan="2" class="section-header">M. Évaluation sommative</td></tr>
-  ${row('Description', s(plan.summativeAssessment))}
-  ${plan.assessments?.length > 0 ? `<tr><td style="${cellStyle}${labelStyle}">Critères évalués</td><td style="${cellStyle}">${plan.assessments.map(a=>`<span class="tag">Critère ${a.criterion}: ${s(a.criterionName)} (/${a.maxPoints})</span>`).join(' ')}</td></tr>` : ''}
-  ${plan.summativeDetails ? `
-  ${row('Tâche / Consigne', s(plan.summativeDetails.consigne))}
-  ${row('Production attendue', s(plan.summativeDetails.productionAttendue))}
-  ${row('Durée', s(plan.summativeDetails.duree))}
-  ${row('Modalités', s(plan.summativeDetails.modalites))}` : ''}
-</table>
+  // Durée enrichie : heures + périodes + dates calendrier
+  const dureeTxt = [
+    c(plan.duration),
+    plan.numberOfHours   ? plan.numberOfHours + ' h' : '',
+    plan.numberOfPeriods ? plan.numberOfPeriods + ' périodes' : '',
+    startDate && endDate ? `Du ${startDate} au ${endDate}` : startDate ? `À partir du ${startDate}` : '',
+  ].filter(Boolean).join(' — ');
 
-<!-- N. DIFFÉRENCIATION -->
-<table>
-  <tr><td colspan="2" class="section-header">N. Différenciation</td></tr>
-  ${row('Stratégie globale', s(plan.differentiation))}
-  <tr><td class="sub-header" colspan="2">Élèves en difficulté</td></tr>
-  ${row('Soutien vocabulaire', s(plan.differentiationDetails?.supportStudents?.vocabulary))}
-  ${row('Supports visuels', s(plan.differentiationDetails?.supportStudents?.visualSupports))}
-  ${row('Modèles et étayage', s(plan.differentiationDetails?.supportStudents?.models))}
-  ${row('Instructions adaptées', s(plan.differentiationDetails?.supportStudents?.adaptedInstructions))}
-  ${row('Soutien individuel', s(plan.differentiationDetails?.supportStudents?.individualSupport))}
-  <tr><td class="sub-header" colspan="2">Élèves avancés</td></tr>
-  ${row('Approfondissement', s(plan.differentiationDetails?.advancedStudents?.deepening))}
-  ${row('Défis et extension', s(plan.differentiationDetails?.advancedStudents?.challenges))}
-  ${row('Recherche autonome', s(plan.differentiationDetails?.advancedStudents?.autonomousResearch))}
-  <tr><td class="sub-header" colspan="2">Types de différenciation</td></tr>
-  ${row('Par le contenu', s(plan.differentiationDetails?.contentDifferentiation))}
-  ${row('Par le processus', s(plan.differentiationDetails?.processDifferentiation))}
-  ${row('Par la production', s(plan.differentiationDetails?.productDifferentiation))}
-</table>
+  // ── 3. Construire le data object qui correspond aux champs du template .docx
+  const data = {
+    // ─── Champs EN-TÊTE du template (page 1) ─────────────────────────────
+    enseignant:       c(plan.teacherName),
+    groupe_matiere:   c(plan.subject) + (plan.gradeLevel ? ' — ' + c(plan.gradeLevel) : ''),
+    titre_unite:      c(plan.title),
+    annee_pei:        c(plan.schoolYear || '2026-2027'),
+    duree:            dureeTxt,
 
-<!-- O. RESSOURCES -->
-<table>
-  <tr><td class="section-header">O. Ressources</td></tr>
-  <tr><td style="${cellStyle}">${s(plan.resources)}</td></tr>
-</table>
+    // ─── Section Recherche ────────────────────────────────────────────────
+    concept_cle:           c(plan.keyConcept) + (plan.keyConceptDefinition ? '\n' + c(plan.keyConceptDefinition) : ''),
+    concepts_connexes:     related.join(', '),
+    contexte_mondial:      c(plan.globalContext) + (plan.globalContextAspects ? '\n' + c(plan.globalContextAspects) : ''),
+    enonce_de_recherche:   c(plan.statementOfInquiry) + (plan.statementExplanation ? '\n\n' + c(plan.statementExplanation) : ''),
 
-<!-- P. RÉFLEXION -->
-<table>
-  <tr><td colspan="2" class="section-header">P. Réflexion de l'enseignant (avant / pendant / après)</td></tr>
-  <tr><td class="sub-header" colspan="2">Avant l'unité</td></tr>
-  ${row('Connaissances antérieures', s(plan.reflectionDetails?.before?.priorKnowledge || plan.reflection?.prior))}
-  ${row('Difficultés anticipées', s(plan.reflectionDetails?.before?.anticipatedDifficulties))}
-  ${row('Stratégies planifiées', s(plan.reflectionDetails?.before?.plannedStrategies))}
-  ${row('Résultats attendus', s(plan.reflectionDetails?.before?.expectedOutcomes))}
-  <tr><td class="sub-header" colspan="2">Pendant l'unité</td></tr>
-  ${row('Progrès observés', s(plan.reflectionDetails?.during?.progressObserved || plan.reflection?.during))}
-  ${row('Difficultés rencontrées', s(plan.reflectionDetails?.during?.difficulties))}
-  ${row('Ajustements effectués', s(plan.reflectionDetails?.during?.adjustmentsMade))}
-  <tr><td class="sub-header" colspan="2">Après l'unité</td></tr>
-  ${row('Objectifs atteints', s(plan.reflectionDetails?.after?.achievedObjectives || plan.reflection?.after))}
-  ${row('Points à améliorer', s(plan.reflectionDetails?.after?.improvements))}
-  ${row('Modifications pour la suite', s(plan.reflectionDetails?.after?.modificationsNext))}
-</table>
+    // Questions d'investigation
+    questions_factuelles:      listTxt(plan.inquiryQuestions?.factual),
+    questions_conceptuelles:   listTxt(plan.inquiryQuestions?.conceptual),
+    questions_debat:           listTxt(plan.inquiryQuestions?.debatable),
 
-<!-- Q. COHÉRENCE VERTICALE ET HORIZONTALE -->
-<table>
-  <tr><td colspan="2" class="section-header">Q. Cohérence verticale et horizontale</td></tr>
-  ${row('Cohérence verticale', s(plan.verticalCoherenceText || (plan.verticalCoherence as any)?.during || plan.reflectionDetails?.before?.previousLinks))}
-  ${row('Cohérence horizontale', s(plan.horizontalCoherenceText || (plan.horizontalCoherence as any)?.otherSubjectLinks))}
-</table>
+    // ─── Section Action ───────────────────────────────────────────────────
+    objectifs_specifiques:  objectifsTxt,
+    evaluation_sommative:   evalSommTxt,
+    approches_apprentissage: atl.join('\n'),
 
-<!-- R. LIENS INTERDISCIPLINAIRES -->
-<table>
-  <tr><td class="section-header">R. Liens interdisciplinaires</td></tr>
-  <tr><td style="${cellStyle}">${s(plan.interdisciplinaryLinksText || (Array.isArray(plan.interdisciplinaryLinks) && plan.interdisciplinaryLinks.length > 0 ? plan.interdisciplinaryLinks.map((l:any)=>`${l.subject}: ${l.commonConcept}`).join(' | ') : undefined))}</td></tr>
-</table>
+    // Page 2 — Processus
+    contenu:                contenuTxt,
+    processus_apprentissage: processusTxt,
+    evaluation_formative:   evalFormTxt,
+    differenciation:        difftxt,
+    ressources:             ressourcesTxt + (coherenceTxt ? '\n\n' + coherenceTxt : ''),
 
-<div style="margin-top:14px;border-top:1px solid #ccc;padding-top:6px;font-size:7.5pt;color:#888;text-align:center;">
-  Document généré par PEI Planner — Les Écoles Internationales Al-Kawthar · ${new Date().toLocaleDateString('fr-FR')} · Conforme programme IB MYP/PEI
-  ${plan.lastDetailUpdate ? ` · Dernière mise à jour IA: ${plan.lastDetailUpdate}` : ''}
-</div>
+    // ─── Section Réflexion ────────────────────────────────────────────────
+    reflexion_avant:    reflexionAvantTxt || '(À compléter avant l\'enseignement de l\'unité)',
+    reflexion_pendant:  reflexionPendantTxt || '(À compléter pendant l\'enseignement de l\'unité)',
+    reflexion_apres:    reflexionApresTxt || '(À compléter après l\'enseignement de l\'unité)',
 
-<script>window.onload=()=>window.print();</script>
-</body>
-</html>`;
+    // ─── Champs supplémentaires compatibles template étendu ──────────────
+    classe:             c(plan.gradeLevel),
+    matiere:            c(plan.subject),
+    unite:              c(plan.title),
+    enonce:             c(plan.statementOfInquiry),
+    date_debut:         startDate,
+    date_fin:           endDate,
+    annee_scolaire:     c(plan.schoolYear || '2026-2027'),
+    nombre_periodes:    c(plan.numberOfPeriods || ''),
+    nombre_heures:      c(plan.numberOfHours || plan.duration),
+    prerequis:          prerequisTxt,
+  };
 
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const saveAs = (FileSaver as any).saveAs || FileSaver;
-  const filename = `Plan_Unite_${(plan.title || 'Sans_Titre').replace(/[^a-z0-9]/gi,'_').slice(0,40)}.html`;
-  saveAs(blob, filename);
+  // ── 4. Générer le .docx via le template plan.docx officiel ───────────────
+  const fileName = `Plan_Unite_${c(plan.title).replace(/[^a-z0-9]/gi,'_').slice(0,40) || 'Sans_Titre'}.docx`;
+  await generateDocument('plan', data, fileName);
 };
 
 export const exportAssessmentsToZip = async (plan: UnitPlan) => {
