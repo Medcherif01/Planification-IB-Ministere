@@ -521,11 +521,11 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
               </div>
               <div>
                 <label className={labelClass}>Date de début</label>
-                <input type="date" value={plan.startDate || ''} onChange={(e) => handleInputChange('startDate', e.target.value)} className={inputClass} />
+                <input type="text" value={plan.startDate || ''} onChange={(e) => handleInputChange('startDate', e.target.value)} className={inputClass} placeholder="ex: 30 Août 2026" />
               </div>
               <div>
                 <label className={labelClass}>Date de fin</label>
-                <input type="date" value={plan.endDate || ''} onChange={(e) => handleInputChange('endDate', e.target.value)} className={inputClass} />
+                <input type="text" value={plan.endDate || ''} onChange={(e) => handleInputChange('endDate', e.target.value)} className={inputClass} placeholder="ex: 15 Octobre 2026" />
               </div>
               <div className="md:col-span-2">
                 <label className={labelClass}>Prérequis</label>

@@ -703,30 +703,180 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     setIsGeneratingAIDetails(true);
     setAIDetailsProgress('Initialisation…');
     try {
-      const generatedDetails = await generateUnitDetailsWithAI(
+      const g = await generateUnitDetailsWithAI(
         detailUpdatePlan,
         (msg) => setAIDetailsProgress(msg)
       );
-      // Merge: only fill fields that are currently empty
+
+      // ── Helper : retourne `a` si non-vide/non-null, sinon `b` ─────────────
+      const pick = <T,>(a: T | undefined | null, b: T | undefined | null): T | undefined => {
+        if (a !== undefined && a !== null && a !== '' && !(Array.isArray(a) && a.length === 0)) return a as T;
+        return (b ?? undefined) as T | undefined;
+      };
+
+      // ── Merge profond learningProcess (5 phases) ──────────────────────────
+      const existLP = detailUpdatePlan.learningProcess;
+      const genLP   = g.learningProcess;
+      const mergedLP = (existLP || genLP) ? {
+        phase1_activation:  pick(existLP?.phase1_activation,  genLP?.phase1_activation)  ?? '',
+        phase2_acquisition: pick(existLP?.phase2_acquisition, genLP?.phase2_acquisition) ?? '',
+        phase3_practice:    pick(existLP?.phase3_practice,    genLP?.phase3_practice)    ?? '',
+        phase4_application: pick(existLP?.phase4_application, genLP?.phase4_application) ?? '',
+        phase5_reflection:  pick(existLP?.phase5_reflection,  genLP?.phase5_reflection)  ?? '',
+      } : undefined;
+
+      // ── Merge profond differentiationDetails ─────────────────────────────
+      const existDD = detailUpdatePlan.differentiationDetails;
+      const genDD   = g.differentiationDetails;
+      const mergedDD = (existDD || genDD) ? {
+        supportStudents: {
+          vocabulary:           pick(existDD?.supportStudents?.vocabulary,           genDD?.supportStudents?.vocabulary)           ?? '',
+          visualSupports:       pick(existDD?.supportStudents?.visualSupports,       genDD?.supportStudents?.visualSupports)       ?? '',
+          models:               pick(existDD?.supportStudents?.models,               genDD?.supportStudents?.models)               ?? '',
+          adaptedInstructions:  pick(existDD?.supportStudents?.adaptedInstructions,  genDD?.supportStudents?.adaptedInstructions)  ?? '',
+          intermediateSteps:    pick(existDD?.supportStudents?.intermediateSteps,    genDD?.supportStudents?.intermediateSteps)    ?? '',
+          smallGroups:          pick(existDD?.supportStudents?.smallGroups,          genDD?.supportStudents?.smallGroups)          ?? '',
+          individualSupport:    pick(existDD?.supportStudents?.individualSupport,    genDD?.supportStudents?.individualSupport)    ?? '',
+          extraTime:            pick(existDD?.supportStudents?.extraTime,            genDD?.supportStudents?.extraTime)            ?? '',
+          additionalResources:  pick(existDD?.supportStudents?.additionalResources,  genDD?.supportStudents?.additionalResources)  ?? '',
+        },
+        advancedStudents: {
+          deepening:            pick(existDD?.advancedStudents?.deepening,           genDD?.advancedStudents?.deepening)           ?? '',
+          autonomousResearch:   pick(existDD?.advancedStudents?.autonomousResearch,  genDD?.advancedStudents?.autonomousResearch)  ?? '',
+          complexProblems:      pick(existDD?.advancedStudents?.complexProblems,     genDD?.advancedStudents?.complexProblems)     ?? '',
+          challenges:           pick(existDD?.advancedStudents?.challenges,          genDD?.advancedStudents?.challenges)          ?? '',
+          transfer:             pick(existDD?.advancedStudents?.transfer,            genDD?.advancedStudents?.transfer)            ?? '',
+          advancedProduction:   pick(existDD?.advancedStudents?.advancedProduction,  genDD?.advancedStudents?.advancedProduction)  ?? '',
+        },
+        contentDifferentiation:  pick(existDD?.contentDifferentiation,  genDD?.contentDifferentiation)  ?? '',
+        processDifferentiation:  pick(existDD?.processDifferentiation,  genDD?.processDifferentiation)  ?? '',
+        productDifferentiation:  pick(existDD?.productDifferentiation,  genDD?.productDifferentiation)  ?? '',
+      } : undefined;
+
+      // ── Merge profond reflectionDetails (avant / pendant / après) ─────────
+      // Noms de champs conformes à types.ts ET au formulaire UnitPlanForm
+      const existRD = detailUpdatePlan.reflectionDetails;
+      const genRD   = g.reflectionDetails;
+      const mergedRD = (existRD || genRD) ? {
+        before: {
+          priorKnowledge:          pick(existRD?.before?.priorKnowledge,          genRD?.before?.priorKnowledge)          ?? '',
+          studentNeeds:            pick(existRD?.before?.studentNeeds,            genRD?.before?.studentNeeds)            ?? '',
+          anticipatedDifficulties: pick(existRD?.before?.anticipatedDifficulties, genRD?.before?.anticipatedDifficulties) ?? '',
+          relevance:               pick(existRD?.before?.relevance,               genRD?.before?.relevance)               ?? '',
+          previousLinks:           pick(existRD?.before?.previousLinks,           genRD?.before?.previousLinks)           ?? '',
+          plannedStrategies:       pick(existRD?.before?.plannedStrategies,       genRD?.before?.plannedStrategies)       ?? '',
+          plannedDifferentiation:  pick(existRD?.before?.plannedDifferentiation,  genRD?.before?.plannedDifferentiation)  ?? '',
+          expectedOutcomes:        pick(existRD?.before?.expectedOutcomes,        genRD?.before?.expectedOutcomes)        ?? '',
+        },
+        during: {
+          progressObserved:        pick(existRD?.during?.progressObserved,        genRD?.during?.progressObserved)        ?? '',
+          difficulties:            pick(existRD?.during?.difficulties,            genRD?.during?.difficulties)            ?? '',
+          effectiveStrategies:     pick(existRD?.during?.effectiveStrategies,     genRD?.during?.effectiveStrategies)     ?? '',
+          ineffectiveStrategies:   pick(existRD?.during?.ineffectiveStrategies,   genRD?.during?.ineffectiveStrategies)   ?? '',
+          studentParticipation:    pick(existRD?.during?.studentParticipation,    genRD?.during?.studentParticipation)    ?? '',
+          adjustmentsMade:         pick(existRD?.during?.adjustmentsMade,         genRD?.during?.adjustmentsMade)         ?? '',
+          planningChanges:         pick(existRD?.during?.planningChanges,         genRD?.during?.planningChanges)         ?? '',
+          emergingNeeds:           pick(existRD?.during?.emergingNeeds,           genRD?.during?.emergingNeeds)           ?? '',
+        },
+        after: {
+          achievedObjectives:      pick(existRD?.after?.achievedObjectives,       genRD?.after?.achievedObjectives)       ?? '',
+          partialObjectives:       pick(existRD?.after?.partialObjectives,        genRD?.after?.partialObjectives)        ?? '',
+          studentDifficulties:     pick(existRD?.after?.studentDifficulties,      genRD?.after?.studentDifficulties)      ?? '',
+          assessmentResults:       pick(existRD?.after?.assessmentResults,        genRD?.after?.assessmentResults)        ?? '',
+          activityEfficiency:      pick(existRD?.after?.activityEfficiency,       genRD?.after?.activityEfficiency)       ?? '',
+          teachingEfficiency:      pick(existRD?.after?.teachingEfficiency,       genRD?.after?.teachingEfficiency)       ?? '',
+          differentiationEfficiency: pick(existRD?.after?.differentiationEfficiency, genRD?.after?.differentiationEfficiency) ?? '',
+          successes:               pick(existRD?.after?.successes,               genRD?.after?.successes)               ?? '',
+          improvements:            pick(existRD?.after?.improvements,            genRD?.after?.improvements)            ?? '',
+          modificationsNext:       pick(existRD?.after?.modificationsNext,       genRD?.after?.modificationsNext)       ?? '',
+          elementsToKeep:          pick(existRD?.after?.elementsToKeep,          genRD?.after?.elementsToKeep)          ?? '',
+          elementsToRemove:        pick(existRD?.after?.elementsToRemove,        genRD?.after?.elementsToRemove)        ?? '',
+          elementsToAdd:           pick(existRD?.after?.elementsToAdd,           genRD?.after?.elementsToAdd)           ?? '',
+        },
+      } : undefined;
+
+      // ── Merge profond verticalCoherence ───────────────────────────────────
+      const existVC = detailUpdatePlan.verticalCoherence;
+      const genVC_before = g.verticalCoherenceText;
+      const mergedVC = (existVC || genVC_before) ? {
+        before: pick(existVC?.before, genVC_before) ?? '',
+        during: existVC?.during ?? '',
+        after:  existVC?.after  ?? '',
+      } : undefined;
+
+      // ── Merge profond horizontalCoherence ─────────────────────────────────
+      const existHC = detailUpdatePlan.horizontalCoherence;
+      const genHC_text = g.horizontalCoherenceText;
+      const mergedHC = (existHC || genHC_text) ? {
+        otherSubjectLinks:  pick(existHC?.otherSubjectLinks,  genHC_text) ?? '',
+        transversalSkills:  pick(existHC?.transversalSkills,  '') ?? '',
+      } : undefined;
+
+      // ── Merge profond studentContext ──────────────────────────────────────
+      const existSC = detailUpdatePlan.studentContext;
+      const genSC   = g.studentContext;
+      const mergedSC = (existSC || genSC) ? {
+        priorKnowledge:  pick(existSC?.priorKnowledge, genSC?.priorKnowledge)   ?? '',
+        interests:       pick(existSC?.interests,      genSC?.interests)         ?? '',
+        specialNeeds:    pick(existSC?.specialNeeds,   genSC?.specialNeeds)      ?? '',
+        learningProfiles: pick(existSC?.learningProfiles, genSC?.learningProfiles) ?? '',
+      } : undefined;
+
+      // ── Merge profond interdisciplinaryLinks ──────────────────────────────
+      const existIL = detailUpdatePlan.interdisciplinaryLinks;
+      const genIL   = g.interdisciplinaryLinks;
+      const mergedIL = (existIL && existIL.length > 0) ? existIL : (genIL && genIL.length > 0 ? genIL : existIL);
+
+      // ── Merge final complet ───────────────────────────────────────────────
       const merged: UnitPlan = {
         ...detailUpdatePlan,
-        // Only set if not already defined
-        learningProcess: detailUpdatePlan.learningProcess || generatedDetails.learningProcess,
-        sessions: (detailUpdatePlan.sessions && detailUpdatePlan.sessions.length > 0)
-          ? detailUpdatePlan.sessions
-          : generatedDetails.sessions,
-        differentiationDetails: detailUpdatePlan.differentiationDetails || generatedDetails.differentiationDetails,
-        reflectionDetails: detailUpdatePlan.reflectionDetails || generatedDetails.reflectionDetails,
-        verticalCoherence: detailUpdatePlan.verticalCoherence || generatedDetails.verticalCoherence,
-        horizontalCoherence: detailUpdatePlan.horizontalCoherence || generatedDetails.horizontalCoherence,
-        interdisciplinaryLinks: detailUpdatePlan.interdisciplinaryLinks || generatedDetails.interdisciplinaryLinks,
-        studentContext: detailUpdatePlan.studentContext || generatedDetails.studentContext,
+        // ── Section A : Informations générales ──
+        numberOfPeriods:    pick(detailUpdatePlan.numberOfPeriods, g.numberOfPeriods)    ?? detailUpdatePlan.numberOfPeriods,
+        numberOfHours:      pick(detailUpdatePlan.numberOfHours,   g.numberOfHours)      ?? detailUpdatePlan.numberOfHours,
+        startDate:          pick(detailUpdatePlan.startDate,        g.startDate)          ?? detailUpdatePlan.startDate,
+        endDate:            pick(detailUpdatePlan.endDate,          g.endDate)            ?? detailUpdatePlan.endDate,
+        prerequisites:      pick(detailUpdatePlan.prerequisites,    g.prerequisites)      ?? detailUpdatePlan.prerequisites,
+        schoolYear:         pick(detailUpdatePlan.schoolYear,       g.schoolYear)         ?? detailUpdatePlan.schoolYear,
+        // ── Sections B/G/H ──
+        studentContext:     mergedSC,
+        contentDetails:     pick(detailUpdatePlan.contentDetails,   g.contentDetails)     ?? detailUpdatePlan.contentDetails,
+        objectivesDetails:  pick(detailUpdatePlan.objectivesDetails,g.objectivesDetails)  ?? detailUpdatePlan.objectivesDetails,
+        // ── Section I : Processus d'apprentissage (5 phases) ──
+        learningProcess:    mergedLP,
+        // ── Section J/K ──
+        sessions:           (detailUpdatePlan.sessions && detailUpdatePlan.sessions.length > 0)
+                              ? detailUpdatePlan.sessions : g.sessions,
+        learningExperiences: pick(detailUpdatePlan.learningExperiences, g.learningExperiences) ?? detailUpdatePlan.learningExperiences,
+        teachingStrategies:  pick(detailUpdatePlan.teachingStrategies,  g.teachingStrategies)  ?? '',
+        studentActivities:   pick(detailUpdatePlan.studentActivities,   g.studentActivities)   ?? '',
+        // ── Section L/M : Évaluations ──
+        formativeAssessment: pick(detailUpdatePlan.formativeAssessment, g.formativeAssessment) ?? detailUpdatePlan.formativeAssessment,
+        summativeAssessment: pick(detailUpdatePlan.summativeAssessment, g.summativeAssessment) ?? detailUpdatePlan.summativeAssessment,
+        // ── Section N : Différenciation ──
+        differentiationDetails: mergedDD,
+        differentiation:    pick(detailUpdatePlan.differentiation, g.differentiation) ?? detailUpdatePlan.differentiation,
+        // ── Section O : Ressources ──
+        resources:          pick(detailUpdatePlan.resources, g.resources) ?? detailUpdatePlan.resources,
+        // ── Section P : Réflexion (avant / pendant / après) ──
+        reflectionDetails:  mergedRD,
+        // ── Section Q : Cohérence verticale / horizontale ──
+        verticalCoherence:       mergedVC,
+        horizontalCoherence:     mergedHC,
+        verticalCoherenceText:   pick(detailUpdatePlan.verticalCoherenceText,   g.verticalCoherenceText)   ?? '',
+        horizontalCoherenceText: pick(detailUpdatePlan.horizontalCoherenceText, g.horizontalCoherenceText) ?? '',
+        // ── Section R : Liens interdisciplinaires ──
+        interdisciplinaryLinks:     mergedIL,
+        interdisciplinaryLinksText: pick(detailUpdatePlan.interdisciplinaryLinksText, g.interdisciplinaryLinksText) ?? '',
+        // ── Marqueurs ──
         lastDetailUpdate: new Date().toISOString().slice(0, 10),
         isDetailUpdate: true,
       };
+
       setDetailUpdatePlan(merged);
-      setAIDetailsProgress('✅ Détails générés avec succès !');
-      setTimeout(() => setAIDetailsProgress(''), 3000);
+      // Sauvegarder immédiatement via onUpdateUnit pour persister dans MongoDB
+      if (onUpdateUnit) onUpdateUnit(merged);
+      setAIDetailsProgress('✅ Détails générés et sauvegardés !');
+      setTimeout(() => setAIDetailsProgress(''), 4000);
     } catch (e: any) {
       setAIDetailsProgress('');
       alert(`❌ Erreur lors de la génération IA :\n${e?.message || String(e)}`);

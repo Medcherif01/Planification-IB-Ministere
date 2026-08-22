@@ -71,7 +71,7 @@ const getArabicValue = (data: any, fieldName: string): string => {
   return "";
 };
 
-const generateDocumentBlob = (templateContent: ArrayBuffer, data: any): Blob => {
+const generateDocumentBlob = (templateContent: ArrayBuffer, data: any, landscape = false): Blob => {
     let zip;
     try {
         zip = new PizZip(templateContent);
@@ -101,30 +101,45 @@ const generateDocumentBlob = (templateContent: ArrayBuffer, data: any): Blob => 
     // Get the generated zip
     const generatedZip = doc.getZip();
     
-    // Force LTR (Left-to-Right) text direction by modifying document.xml settings
+    // ── Forcer LTR + orientation paysage si demandé ───────────────────────
     try {
         const documentXml = generatedZip.file("word/document.xml")?.asText();
         if (documentXml) {
-            // Ensure bidi="0" (LTR) is set in all paragraphs
             let modifiedXml = documentXml;
             
-            // Add rtl="0" to paragraph properties if not present
-            // This ensures left-to-right direction
-            modifiedXml = modifiedXml.replace(
-                /<w:pPr>/g,
-                '<w:pPr><w:bidi w:val="0"/>'
-            );
-            
-            // Also add to run properties for extra safety
-            modifiedXml = modifiedXml.replace(
-                /<w:rPr>/g,
-                '<w:rPr><w:rtl w:val="0"/>'
-            );
+            // Force LTR direction
+            modifiedXml = modifiedXml.replace(/<w:pPr>/g, '<w:pPr><w:bidi w:val="0"/>');
+            modifiedXml = modifiedXml.replace(/<w:rPr>/g, '<w:rPr><w:rtl w:val="0"/>');
+
+            if (landscape) {
+              // Remplacer ou ajouter pgSz avec orientation paysage (A4 : 29.7cm × 21cm = 16838 × 11906 twips)
+              if (/<w:pgSz[^/]*\/>/.test(modifiedXml) || /<w:pgSz[\s>]/.test(modifiedXml)) {
+                modifiedXml = modifiedXml.replace(
+                  /<w:pgSz[^>]*\/>/g,
+                  '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>'
+                );
+                modifiedXml = modifiedXml.replace(
+                  /<w:pgSz([^>]*)>/g,
+                  '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape">'
+                );
+              } else {
+                // Insérer pgSz avant </w:sectPr>
+                modifiedXml = modifiedXml.replace(
+                  /<\/w:sectPr>/,
+                  '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/></w:sectPr>'
+                );
+              }
+              // Marges réduites pour paysage
+              modifiedXml = modifiedXml.replace(
+                /<w:pgMar[^>]*\/>/g,
+                '<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/>'
+              );
+            }
             
             generatedZip.file("word/document.xml", modifiedXml);
         }
     } catch (dirError) {
-        console.warn("Could not modify text direction, using default:", dirError);
+        console.warn("Could not modify text direction/orientation:", dirError);
     }
 
     return generatedZip.generate({
@@ -133,10 +148,10 @@ const generateDocumentBlob = (templateContent: ArrayBuffer, data: any): Blob => 
     });
 };
 
-const generateDocument = async (templateType: 'plan' | 'eval' | 'exam', data: any, fileName: string) => {
+const generateDocument = async (templateType: 'plan' | 'eval' | 'exam', data: any, fileName: string, landscape = false) => {
   try {
     const content = await loadFile(templateType);
-    const blob = generateDocumentBlob(content, data);
+    const blob = generateDocumentBlob(content, data, landscape);
     const saveAs = (FileSaver as any).saveAs || FileSaver;
     saveAs(blob, fileName);
   } catch (error: any) {
@@ -328,11 +343,87 @@ const getCalendarDates = (plan: UnitPlan): { startDate: string; endDate: string 
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IB CONFORMITY AUTO-CORRECTION
+// Détecte et corrige automatiquement les non-conformités IB PEI avant l'export
+// ─────────────────────────────────────────────────────────────────────────────
+const applyIBConformityCorrections = (plan: UnitPlan): UnitPlan => {
+  const p = { ...plan };
+
+  // ── 1. Énoncé de recherche : doit être déclaratif (pas interrogatif), 15-35 mots ──
+  if (p.statementOfInquiry) {
+    let s = p.statementOfInquiry.trim();
+    // Supprimer le point d'interrogation final (énoncé = déclaratif, pas une question)
+    s = s.replace(/\?+\s*$/, '.');
+    // Ajouter un point final si absent
+    if (!/[.!]$/.test(s)) s += '.';
+    // Mettre la 1ère lettre en majuscule
+    s = s.charAt(0).toUpperCase() + s.slice(1);
+    p.statementOfInquiry = s;
+  }
+
+  // ── 2. Concept clé : doit être un SEUL mot/concept IB approuvé (sans virgules) ──
+  if (p.keyConcept && p.keyConcept.includes(',')) {
+    // Ne garder que le premier concept si plusieurs sont listés
+    p.keyConcept = p.keyConcept.split(',')[0].trim();
+  }
+
+  // ── 3. Concepts connexes : maximum 3 concepts connexes IB ──
+  if (Array.isArray(p.relatedConcepts) && p.relatedConcepts.length > 3) {
+    p.relatedConcepts = p.relatedConcepts.slice(0, 3);
+  }
+
+  // ── 4. Questions d'investigation : s'assurer que chaque type est présent ──
+  if (!p.inquiryQuestions) {
+    p.inquiryQuestions = { factual: [], conceptual: [], debatable: [] };
+  }
+  if (!Array.isArray(p.inquiryQuestions.factual)) {
+    p.inquiryQuestions.factual = p.inquiryQuestions.factual ? [p.inquiryQuestions.factual as unknown as string] : [];
+  }
+  if (!Array.isArray(p.inquiryQuestions.conceptual)) {
+    p.inquiryQuestions.conceptual = p.inquiryQuestions.conceptual ? [p.inquiryQuestions.conceptual as unknown as string] : [];
+  }
+  if (!Array.isArray(p.inquiryQuestions.debatable)) {
+    p.inquiryQuestions.debatable = p.inquiryQuestions.debatable ? [p.inquiryQuestions.debatable as unknown as string] : [];
+  }
+
+  // ── 5. Questions : s'assurer qu'elles se terminent par ? ──
+  const ensureQuestion = (q: string) => q.trim().endsWith('?') ? q.trim() : q.trim() + '?';
+  p.inquiryQuestions.factual    = p.inquiryQuestions.factual.map(ensureQuestion);
+  p.inquiryQuestions.conceptual = p.inquiryQuestions.conceptual.map(ensureQuestion);
+  p.inquiryQuestions.debatable  = p.inquiryQuestions.debatable.map(ensureQuestion);
+
+  // ── 6. Objectifs IB : normaliser le format (A, B, C, D seulement) ──
+  if (Array.isArray(p.objectives)) {
+    p.objectives = p.objectives
+      .map(o => String(o).trim().toUpperCase().charAt(0))
+      .filter(o => ['A', 'B', 'C', 'D'].includes(o))
+      .filter((o, i, arr) => arr.indexOf(o) === i); // dédoublonner
+  }
+
+  // ── 7. ATL : s'assurer que les compétences ATL sont listées ──
+  if (p.atlSkills && !Array.isArray(p.atlSkills)) {
+    p.atlSkills = [p.atlSkills as unknown as string];
+  }
+
+  // ── 8. Durée : format cohérent ──
+  if (p.duration && !/heures?|h\b|périodes?|semaines?/i.test(p.duration)) {
+    // Si c'est juste un nombre, ajouter "heures"
+    if (/^\d+$/.test(p.duration.trim())) {
+      p.duration = p.duration.trim() + ' heures';
+    }
+  }
+
+  return p;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORT PLAN D'UNITÉ → template plan.docx via docxtemplater
 // Remplit EXACTEMENT les champs du template IB PEI officiel
 // + champs étendus pour les données IA générées (sections A→R)
 // ─────────────────────────────────────────────────────────────────────────────
 export const exportUnitPlanToWord = async (plan: UnitPlan) => {
+  // ── 0. Appliquer les corrections de conformité IB ─────────────────────────
+  plan = applyIBConformityCorrections(plan);
   // ── 1. Récupérer les dates depuis le calendrier annuel ────────────────────
   const calDates = getCalendarDates(plan);
   const startDate = calDates.startDate || plan.startDate || '';
@@ -548,9 +639,9 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     prerequis:          prerequisTxt,
   };
 
-  // ── 4. Générer le .docx via le template plan.docx officiel ───────────────
+  // ── 4. Générer le .docx via le template plan.docx officiel (paysage) ──────
   const fileName = `Plan_Unite_${c(plan.title).replace(/[^a-z0-9]/gi,'_').slice(0,40) || 'Sans_Titre'}.docx`;
-  await generateDocument('plan', data, fileName);
+  await generateDocument('plan', data, fileName, true /* landscape */);
 };
 
 export const exportAssessmentsToZip = async (plan: UnitPlan) => {
