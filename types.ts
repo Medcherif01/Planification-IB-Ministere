@@ -286,6 +286,11 @@ export interface UnitPlan {
     transversalSkills: string;
   };
 
+  // === COHÉRENCE (champs texte simples générés par IA) ===
+  verticalCoherenceText?: string;   // Texte cohérence verticale (généré IA)
+  horizontalCoherenceText?: string; // Texte cohérence horizontale (généré IA)
+  interdisciplinaryLinksText?: string; // Texte liens interdisciplinaires (généré IA)
+
   // Conformité IB
   ibComplianceScore?: number; // Score de complétude 0-100
   ibComplianceDetails?: Record<string, 'complete' | 'partial' | 'missing'>;

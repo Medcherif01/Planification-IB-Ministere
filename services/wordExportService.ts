@@ -4,7 +4,7 @@ import FileSaver from "file-saver";
 import JSZip from "jszip";
 import { UnitPlan, AssessmentData, ServiceActionPlan } from "../types";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
-import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit } from "./geminiService";
+import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit, AnnualCalendar, SCHOOL_WEEKS_2026_2027, SUBJECT_COLORS, CalendarEntry } from "./geminiService";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chargement des templates Word via l'API backend (évite les problèmes CORS)
@@ -256,86 +256,280 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
 };
 
 export const exportUnitPlanToWord = async (plan: UnitPlan) => {
-  const isBilingual = isBilingualSubject(plan.subject);
-  
-  // Data mapping for Unit Plan Template
-  const baseData = {
-    enseignant: clean(plan.teacherName) || "____________________",
-    groupe_matiere: clean(plan.subject),
-    titre_unite: clean(plan.title),
-    annee_pei: clean(plan.gradeLevel),
-    duree: clean(plan.duration),
-    concept_cle: clean(plan.keyConcept),
-    concepts_connexes: Array.isArray(plan.relatedConcepts) ? clean(plan.relatedConcepts.join(", ")) : clean(plan.relatedConcepts),
-    contexte_mondial: clean(plan.globalContext),
-    enonce_de_recherche: clean(plan.statementOfInquiry),
-    
-    questions_factuelles: clean(plan.inquiryQuestions?.factual?.join("\n") || ""),
-    questions_conceptuelles: clean(plan.inquiryQuestions?.conceptual?.join("\n") || ""),
-    questions_debat: clean(plan.inquiryQuestions?.debatable?.join("\n") || ""),
-    
-    objectifs_specifiques: clean(Array.isArray(plan.objectives) ? plan.objectives.join("\n") : plan.objectives),
-    evaluation_sommative: clean(plan.summativeAssessment),
-    approches_apprentissage: clean(Array.isArray(plan.atlSkills) ? plan.atlSkills.join("\n") : plan.atlSkills),
-    
-    contenu: clean(plan.content),
-    processus_apprentissage: clean(plan.learningExperiences),
-    evaluation_formative: clean(plan.formativeAssessment),
-    differenciation: clean(plan.differentiation),
-    ressources: clean(plan.resources),
-    
-    reflexion_avant: clean(plan.reflection?.prior),
-    reflexion_pendant: clean(plan.reflection?.during),
-    reflexion_apres: clean(plan.reflection?.after)
+  // Génère un document HTML complet portrait avec TOUS les champs IB PEI (sections A→R)
+  const s = (v: string | undefined | null) => (v || '—').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const arr = (v: string[] | string | undefined) => {
+    if (!v) return '—';
+    const a = Array.isArray(v) ? v : [v];
+    return a.map(x => `• ${x.replace(/</g,'&lt;').replace(/>/g,'&gt;')}`).join('<br>') || '—';
   };
-  
-  // Add Arabic versions if bilingual (ART or EPS)
-  let data: Record<string, string> = baseData;
-  if (isBilingual) {
-    const planAny = plan as any; // Pour accéder aux champs _ar
-    data = {
-      ...baseData,
-      // Arabic versions of all fields
-      titre_unite_ar: getArabicValue(planAny, 'title'),
-      duree_ar: getArabicValue(planAny, 'duration'),
-      concept_cle_ar: getArabicValue(planAny, 'keyConcept'),
-      concepts_connexes_ar: planAny.relatedConcepts_ar 
-        ? clean(Array.isArray(planAny.relatedConcepts_ar) ? planAny.relatedConcepts_ar.join(", ") : planAny.relatedConcepts_ar)
-        : "",
-      contexte_mondial_ar: getArabicValue(planAny, 'globalContext'),
-      enonce_de_recherche_ar: getArabicValue(planAny, 'statementOfInquiry'),
-      
-      questions_factuelles_ar: planAny.inquiryQuestions?.factual_ar 
-        ? clean(planAny.inquiryQuestions.factual_ar.join("\n"))
-        : "",
-      questions_conceptuelles_ar: planAny.inquiryQuestions?.conceptual_ar 
-        ? clean(planAny.inquiryQuestions.conceptual_ar.join("\n"))
-        : "",
-      questions_debat_ar: planAny.inquiryQuestions?.debatable_ar 
-        ? clean(planAny.inquiryQuestions.debatable_ar.join("\n"))
-        : "",
-      
-      objectifs_specifiques_ar: planAny.objectives_ar 
-        ? clean(Array.isArray(planAny.objectives_ar) ? planAny.objectives_ar.join("\n") : planAny.objectives_ar)
-        : "",
-      evaluation_sommative_ar: getArabicValue(planAny, 'summativeAssessment'),
-      approches_apprentissage_ar: planAny.atlSkills_ar 
-        ? clean(Array.isArray(planAny.atlSkills_ar) ? planAny.atlSkills_ar.join("\n") : planAny.atlSkills_ar)
-        : "",
-      
-      contenu_ar: getArabicValue(planAny, 'content'),
-      processus_apprentissage_ar: getArabicValue(planAny, 'learningExperiences'),
-      evaluation_formative_ar: getArabicValue(planAny, 'formativeAssessment'),
-      differenciation_ar: getArabicValue(planAny, 'differentiation'),
-      ressources_ar: getArabicValue(planAny, 'resources'),
-      
-      reflexion_avant_ar: planAny.reflection?.prior_ar ? clean(planAny.reflection.prior_ar) : "",
-      reflexion_pendant_ar: planAny.reflection?.during_ar ? clean(planAny.reflection.during_ar) : "",
-      reflexion_apres_ar: planAny.reflection?.after_ar ? clean(planAny.reflection.after_ar) : ""
-    };
-  }
 
-  await generateDocument('plan', data, `Plan_Unite_${(plan.title || 'Sans_Titre').replace(/[^a-z0-9]/gi, '_')}.docx`);
+  const objectives = Array.isArray(plan.objectives) ? plan.objectives : [];
+  const atl = Array.isArray(plan.atlSkills) ? plan.atlSkills : (plan.atlSkills ? [plan.atlSkills] : []);
+  const related = Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts : [];
+
+  const sectionStyle = 'background:#1e3a5f;color:white;font-size:10pt;font-weight:bold;padding:6px 10px;margin:0;';
+  const subSectionStyle = 'background:#d6e4f0;color:#1e3a5f;font-size:9pt;font-weight:bold;padding:4px 8px;margin:0;';
+  const cellStyle = 'padding:6px 10px;font-size:9pt;color:#222;vertical-align:top;border-bottom:1px solid #dde3ea;';
+  const labelStyle = 'font-weight:bold;color:#1e3a5f;font-size:8pt;white-space:nowrap;width:180px;';
+
+  // Helper pour une ligne de champ
+  const row = (label: string, value: string) =>
+    `<tr><td style="${cellStyle}${labelStyle}">${label}</td><td style="${cellStyle}">${value}</td></tr>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 15mm 12mm 15mm 15mm; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 9pt; color: #222; margin: 0; padding: 0; }
+  .logo-header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #1e3a5f; padding-bottom: 8px; margin-bottom: 10px; }
+  .logo-header h1 { font-size: 14pt; color: #1e3a5f; margin: 0; }
+  .logo-header p { font-size: 8pt; color: #555; margin: 2px 0 0 0; }
+  .badge { background: #1e3a5f; color: white; border-radius: 4px; padding: 3px 10px; font-size: 9pt; font-weight: bold; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; border: 1px solid #b0c4d8; }
+  .section-header { ${sectionStyle} }
+  .sub-header { ${subSectionStyle} }
+  .sessions-table { font-size: 8pt; }
+  .sessions-table th { background: #1e3a5f; color: white; padding: 4px 6px; border: 1px solid #4472c4; text-align: center; }
+  .sessions-table td { border: 1px solid #b0c4d8; padding: 3px 5px; vertical-align: top; }
+  .sessions-table tr:nth-child(even) { background: #f5f9ff; }
+  @media print { .no-print { display:none; } }
+  .tag { display:inline-block; background:#e8f0fe; color:#1e3a5f; border-radius:10px; padding:2px 8px; margin:2px; font-size:8pt; font-weight:bold; }
+  .obj-table td { border: 1px solid #b0c4d8; padding:4px 6px; vertical-align:top; font-size:8pt; }
+  .obj-table th { background:#2d5986; color:white; padding:4px 6px; font-size:8pt; }
+</style>
+</head>
+<body>
+
+<!-- EN-TÊTE -->
+<div class="logo-header">
+  <div>
+    <h1>📘 Plan d'Unité IB PEI — ${s(plan.title)}</h1>
+    <p>Les Écoles Internationales Al-Kawthar · Programme IB MYP/PEI</p>
+  </div>
+  <div>
+    <span class="badge">${s(plan.subject)}</span><br>
+    <span class="badge" style="margin-top:4px;display:inline-block;">${s(plan.gradeLevel)}</span>
+  </div>
+</div>
+
+<!-- A. INFORMATIONS GÉNÉRALES -->
+<table>
+  <tr><td colspan="2" class="section-header">A. Informations générales</td></tr>
+  ${row('Enseignant(e)', s(plan.teacherName))}
+  ${row('Groupe / Matière', s(plan.subject))}
+  ${row('Titre de l\'unité', s(plan.title))}
+  ${row('Niveau (PEI)', s(plan.gradeLevel))}
+  ${row('Durée', s(plan.duration))}
+  ${row('Année scolaire', s(plan.schoolYear || '2026-2027'))}
+  ${row('Nombre de périodes', s(plan.numberOfPeriods || ''))}
+  ${row('Nombre d\'heures', s(plan.numberOfHours || plan.duration))}
+  ${row('Date de début', s(plan.startDate || ''))}
+  ${row('Date de fin', s(plan.endDate || ''))}
+  ${row('Prérequis', s(plan.prerequisites || plan.content?.slice(0, 150)))}
+</table>
+
+<!-- B. CONTEXTE DES ÉLÈVES -->
+<table>
+  <tr><td colspan="2" class="section-header">B. Contexte des élèves et connaissances antérieures</td></tr>
+  ${row('Connaissances antérieures', s(plan.studentContext?.priorKnowledge))}
+  ${row('Compétences déjà acquises', s(plan.studentContext?.acquiredSkills))}
+  ${row('Liens avec les unités précédentes', s(plan.studentContext?.linksPreviousUnits))}
+  ${row('Besoins spécifiques', s(plan.studentContext?.specificNeeds))}
+  ${row('Diversité des profils', s(plan.studentContext?.profileDiversity || plan.studentContext?.culturalContexts))}
+  ${row('Difficultés anticipées', s(plan.studentContext?.anticipatedDifficulties))}
+</table>
+
+<!-- C. CONCEPTS ET CONTEXTE MONDIAL -->
+<table>
+  <tr><td colspan="2" class="section-header">C. Concepts et contexte mondial</td></tr>
+  ${row('Concept clé', s(plan.keyConcept))}
+  ${row('Définition du concept clé', s(plan.keyConceptDefinition))}
+  ${row('Concepts connexes', related.map(c=>`<span class="tag">${c.replace(/</g,'&lt;')}</span>`).join(' ') || '—')}
+  ${row('Contexte mondial', s(plan.globalContext))}
+  ${row('Aspects du contexte', s(plan.globalContextAspects))}
+  ${row('Énoncé de recherche', `<em>${s(plan.statementOfInquiry)}</em>`)}
+  ${row('Explication de l\'énoncé', s(plan.statementExplanation))}
+</table>
+
+<!-- D. QUESTIONS D'INVESTIGATION -->
+<table>
+  <tr><td colspan="2" class="section-header">D. Questions d'investigation (inquiry)</td></tr>
+  <tr><td class="sub-header" colspan="2">Questions factuelles</td></tr>
+  <tr><td colspan="2" style="${cellStyle}">${arr(plan.inquiryQuestions?.factual)}</td></tr>
+  <tr><td class="sub-header" colspan="2">Questions conceptuelles</td></tr>
+  <tr><td colspan="2" style="${cellStyle}">${arr(plan.inquiryQuestions?.conceptual)}</td></tr>
+  <tr><td class="sub-header" colspan="2">Questions débattables</td></tr>
+  <tr><td colspan="2" style="${cellStyle}">${arr(plan.inquiryQuestions?.debatable)}</td></tr>
+</table>
+
+<!-- E. OBJECTIFS ET CRITÈRES D'ÉVALUATION -->
+<table>
+  <tr><td colspan="5" class="section-header">E. Objectifs et critères d'évaluation IB (Objectif → Activité → Apprentissage → Évaluation)</td></tr>
+  <tr class="obj-table">
+    <th>Critère</th><th>Aspects évalués</th><th>Niveau attendu</th><th>Activités associées</th><th>Évaluation</th>
+  </tr>
+  ${objectives.map(cr => {
+    const detail = plan.objectivesDetails?.find(d => d.criterion === cr);
+    return `<tr class="obj-table">
+      <td style="font-weight:bold;text-align:center;">${cr}</td>
+      <td>${s(detail?.aspects)}</td>
+      <td style="text-align:center;">${s(detail?.expectedLevel)}</td>
+      <td>${s(detail?.activities)}</td>
+      <td>${s(detail?.summativeAssessment || detail?.formativeAssessment)}</td>
+    </tr>`;
+  }).join('')}
+  ${objectives.length === 0 ? `<tr><td colspan="5" style="${cellStyle}">Objectifs non définis</td></tr>` : ''}
+</table>
+
+<!-- F. COMPÉTENCES ATL -->
+<table>
+  <tr><td class="section-header">F. Approches de l'apprentissage (ATL)</td></tr>
+  <tr><td style="${cellStyle}">${atl.map(a=>`<span class="tag">${a.replace(/</g,'&lt;')}</span>`).join(' ') || '—'}</td></tr>
+</table>
+
+<!-- G. CONTENU -->
+<table>
+  <tr><td colspan="2" class="section-header">G. Contenu de l'unité</td></tr>
+  ${row('Contenu général', s(plan.content))}
+  ${row('Connaissances (savoirs théoriques)', s(plan.contentDetails?.knowledges))}
+  ${row('Notions / Vocabulaire clé', s(plan.contentDetails?.notions || plan.contentDetails?.vocabulary))}
+  ${row('Méthodes et techniques', s(plan.contentDetails?.methods || plan.contentDetails?.techniques))}
+  ${row('Compétences disciplinaires', s(plan.contentDetails?.disciplinarySkills))}
+  ${row('Contenu obligatoire IB', s(plan.contentDetails?.mandatoryContent))}
+  ${row('Liens programme national français', s(plan.contentDetails?.nationalLinks))}
+</table>
+
+<!-- H. PROCESSUS D'APPRENTISSAGE -->
+<table>
+  <tr><td colspan="2" class="section-header">H. Processus d'apprentissage</td></tr>
+  ${row('Phase 1 — Activation', s(plan.learningProcess?.phase1_activation))}
+  ${row('Phase 2 — Acquisition', s(plan.learningProcess?.phase2_acquisition))}
+  ${row('Phase 3 — Mise en pratique', s(plan.learningProcess?.phase3_practice))}
+  ${row('Phase 4 — Transfert', s(plan.learningProcess?.phase4_transfer))}
+  ${row('Phase 5 — Réflexion', s(plan.learningProcess?.phase5_reflection))}
+  ${row('Stratégies de l\'enseignant', s(plan.teachingStrategies))}
+  ${row('Activités des élèves', s(plan.studentActivities))}
+</table>
+
+<!-- I. SÉANCES DÉTAILLÉES -->
+<table>
+  <tr><td class="section-header" colspan="9">I. Séances détaillées</td></tr>
+  <tr>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">N°</th>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Durée</th>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Objectif</th>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Contenu</th>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Activité</th>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">ATL</th>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Éval. form.</th>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Différenciation</th>
+    <th style="background:#2d5986;color:white;padding:4px;font-size:8pt;border:1px solid #4472c4;">Ressources</th>
+  </tr>
+  ${(plan.sessions || []).map(sess => `
+  <tr style="font-size:8pt;">
+    <td style="border:1px solid #b0c4d8;padding:3px;text-align:center;font-weight:bold;">${sess.numero}</td>
+    <td style="border:1px solid #b0c4d8;padding:3px;text-align:center;">${s(sess.duree)}</td>
+    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.objectifApprentissage)}</td>
+    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.contenu)}</td>
+    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.activite)}</td>
+    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.atl)}</td>
+    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.evaluationFormative)}</td>
+    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.differenciation)}</td>
+    <td style="border:1px solid #b0c4d8;padding:3px;">${s(sess.ressources)}</td>
+  </tr>`).join('') || `<tr><td colspan="9" style="${cellStyle};color:#999">Séances non encore générées — utilisez "Ajouter Détails" dans l'application</td></tr>`}
+</table>
+
+<!-- L. ÉVALUATION FORMATIVE -->
+<table>
+  <tr><td class="section-header">L. Évaluation formative</td></tr>
+  <tr><td style="${cellStyle}">${s(plan.formativeAssessment)}</td></tr>
+</table>
+
+<!-- M. ÉVALUATION SOMMATIVE -->
+<table>
+  <tr><td colspan="2" class="section-header">M. Évaluation sommative</td></tr>
+  ${row('Description', s(plan.summativeAssessment))}
+  ${plan.assessments?.length > 0 ? `<tr><td style="${cellStyle}${labelStyle}">Critères évalués</td><td style="${cellStyle}">${plan.assessments.map(a=>`<span class="tag">Critère ${a.criterion}: ${s(a.criterionName)} (/${a.maxPoints})</span>`).join(' ')}</td></tr>` : ''}
+  ${plan.summativeDetails ? `
+  ${row('Tâche / Consigne', s(plan.summativeDetails.consigne))}
+  ${row('Production attendue', s(plan.summativeDetails.productionAttendue))}
+  ${row('Durée', s(plan.summativeDetails.duree))}
+  ${row('Modalités', s(plan.summativeDetails.modalites))}` : ''}
+</table>
+
+<!-- N. DIFFÉRENCIATION -->
+<table>
+  <tr><td colspan="2" class="section-header">N. Différenciation</td></tr>
+  ${row('Stratégie globale', s(plan.differentiation))}
+  <tr><td class="sub-header" colspan="2">Élèves en difficulté</td></tr>
+  ${row('Soutien vocabulaire', s(plan.differentiationDetails?.supportStudents?.vocabulary))}
+  ${row('Supports visuels', s(plan.differentiationDetails?.supportStudents?.visualSupports))}
+  ${row('Modèles et étayage', s(plan.differentiationDetails?.supportStudents?.models))}
+  ${row('Instructions adaptées', s(plan.differentiationDetails?.supportStudents?.adaptedInstructions))}
+  ${row('Soutien individuel', s(plan.differentiationDetails?.supportStudents?.individualSupport))}
+  <tr><td class="sub-header" colspan="2">Élèves avancés</td></tr>
+  ${row('Approfondissement', s(plan.differentiationDetails?.advancedStudents?.deepening))}
+  ${row('Défis et extension', s(plan.differentiationDetails?.advancedStudents?.challenges))}
+  ${row('Recherche autonome', s(plan.differentiationDetails?.advancedStudents?.autonomousResearch))}
+  <tr><td class="sub-header" colspan="2">Types de différenciation</td></tr>
+  ${row('Par le contenu', s(plan.differentiationDetails?.contentDifferentiation))}
+  ${row('Par le processus', s(plan.differentiationDetails?.processDifferentiation))}
+  ${row('Par la production', s(plan.differentiationDetails?.productDifferentiation))}
+</table>
+
+<!-- O. RESSOURCES -->
+<table>
+  <tr><td class="section-header">O. Ressources</td></tr>
+  <tr><td style="${cellStyle}">${s(plan.resources)}</td></tr>
+</table>
+
+<!-- P. RÉFLEXION -->
+<table>
+  <tr><td colspan="2" class="section-header">P. Réflexion de l'enseignant (avant / pendant / après)</td></tr>
+  <tr><td class="sub-header" colspan="2">Avant l'unité</td></tr>
+  ${row('Connaissances antérieures', s(plan.reflectionDetails?.before?.priorKnowledge || plan.reflection?.prior))}
+  ${row('Difficultés anticipées', s(plan.reflectionDetails?.before?.anticipatedDifficulties))}
+  ${row('Stratégies planifiées', s(plan.reflectionDetails?.before?.plannedStrategies))}
+  ${row('Résultats attendus', s(plan.reflectionDetails?.before?.expectedOutcomes))}
+  <tr><td class="sub-header" colspan="2">Pendant l'unité</td></tr>
+  ${row('Progrès observés', s(plan.reflectionDetails?.during?.progressObserved || plan.reflection?.during))}
+  ${row('Difficultés rencontrées', s(plan.reflectionDetails?.during?.difficulties))}
+  ${row('Ajustements effectués', s(plan.reflectionDetails?.during?.adjustmentsMade))}
+  <tr><td class="sub-header" colspan="2">Après l'unité</td></tr>
+  ${row('Objectifs atteints', s(plan.reflectionDetails?.after?.achievedObjectives || plan.reflection?.after))}
+  ${row('Points à améliorer', s(plan.reflectionDetails?.after?.improvements))}
+  ${row('Modifications pour la suite', s(plan.reflectionDetails?.after?.modificationsNext))}
+</table>
+
+<!-- Q. COHÉRENCE VERTICALE ET HORIZONTALE -->
+<table>
+  <tr><td colspan="2" class="section-header">Q. Cohérence verticale et horizontale</td></tr>
+  ${row('Cohérence verticale', s(plan.verticalCoherenceText || (plan.verticalCoherence as any)?.during || plan.reflectionDetails?.before?.previousLinks))}
+  ${row('Cohérence horizontale', s(plan.horizontalCoherenceText || (plan.horizontalCoherence as any)?.otherSubjectLinks))}
+</table>
+
+<!-- R. LIENS INTERDISCIPLINAIRES -->
+<table>
+  <tr><td class="section-header">R. Liens interdisciplinaires</td></tr>
+  <tr><td style="${cellStyle}">${s(plan.interdisciplinaryLinksText || (Array.isArray(plan.interdisciplinaryLinks) && plan.interdisciplinaryLinks.length > 0 ? plan.interdisciplinaryLinks.map((l:any)=>`${l.subject}: ${l.commonConcept}`).join(' | ') : undefined))}</td></tr>
+</table>
+
+<div style="margin-top:14px;border-top:1px solid #ccc;padding-top:6px;font-size:7.5pt;color:#888;text-align:center;">
+  Document généré par PEI Planner — Les Écoles Internationales Al-Kawthar · ${new Date().toLocaleDateString('fr-FR')} · Conforme programme IB MYP/PEI
+  ${plan.lastDetailUpdate ? ` · Dernière mise à jour IA: ${plan.lastDetailUpdate}` : ''}
+</div>
+
+<script>window.onload=()=>window.print();</script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const saveAs = (FileSaver as any).saveAs || FileSaver;
+  const filename = `Plan_Unite_${(plan.title || 'Sans_Titre').replace(/[^a-z0-9]/gi,'_').slice(0,40)}.html`;
+  saveAs(blob, filename);
 };
 
 export const exportAssessmentsToZip = async (plan: UnitPlan) => {
@@ -2000,4 +2194,225 @@ export const exportInterdisciplinaryAssessmentsToZip = async (
     console.error('Error generating interdisciplinary assessments ZIP:', error);
     alert("Erreur lors de la génération des évaluations interdisciplinaires : " + error.message);
   }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT CALENDRIER ANNUEL EN WORD (HTML inline, paysage A3/A4)
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportCalendarToWord = async (calendar: AnnualCalendar, grade: string): Promise<void> => {
+  const saveAs = (FileSaver as any).saveAs || FileSaver;
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  const lightenHex = (hex: string, amount = 0.8): string => {
+    if (!hex.startsWith('#')) return hex;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const lr = Math.round(r + (255 - r) * amount);
+    const lg = Math.round(g + (255 - g) * amount);
+    const lb = Math.round(b + (255 - b) * amount);
+    return `rgb(${lr},${lg},${lb})`;
+  };
+
+  const darkenHex = (hex: string, amount = 0.35): string => {
+    if (!hex.startsWith('#')) return hex;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgb(${Math.round(r*(1-amount))},${Math.round(g*(1-amount))},${Math.round(b*(1-amount))})`;
+  };
+
+  const getSubjectColor = (subject: string): string => SUBJECT_COLORS[subject] || '#6b7280';
+
+  const getSubjectAbbr = (subject: string): string => {
+    const map: Record<string, string> = {
+      'Langue et littérature': 'L&L', 'Acquisition de langues': 'AcqL',
+      'Individus et sociétés': 'I&S', 'Sciences': 'Sci', 'Mathématiques': 'Math',
+      'Arts': 'Arts', 'Éducation physique et à la santé': 'EPS', 'Design': 'Des',
+    };
+    return map[subject] || subject.slice(0, 5);
+  };
+
+  // ── Construire les données : un tableau par semaine ───────────────────────
+  const entryByWeek = new Map<number, CalendarEntry[]>();
+  for (const entry of calendar.entries) {
+    if (!entryByWeek.has(entry.weekNum)) entryByWeek.set(entry.weekNum, []);
+    entryByWeek.get(entry.weekNum)!.push(entry);
+  }
+
+  // Matières présentes dans le calendrier
+  const subjects = [...new Set(calendar.entries.map(e => e.subject))].sort();
+
+  // ── Légende HTML ──────────────────────────────────────────────────────────
+  const legendItems = subjects.map(subj => {
+    const color = getSubjectColor(subj);
+    return `<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 4px;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;background-color:${lightenHex(color,0.8)};color:${darkenHex(color)};border:1px solid ${color};">
+      <span style="width:8px;height:8px;border-radius:50%;background-color:${color};display:inline-block;"></span>${subj}
+    </span>`;
+  }).join('');
+
+  // ── Tableau principal semaine par semaine ─────────────────────────────────
+  // ORIENTATION PAYSAGE : tableau avec colonnes = matières + 1 colonne semaine
+  const colWidth = Math.floor(200 / (subjects.length + 1));
+
+  const tableHeader = `
+    <tr style="background-color:#1e3a5f;">
+      <th style="width:80px;padding:6px 4px;color:#fff;font-size:10px;text-align:center;border:1px solid #2d5a8e;">Semaine</th>
+      <th style="width:80px;padding:6px 4px;color:#fff;font-size:10px;text-align:center;border:1px solid #2d5a8e;">Dates</th>
+      ${subjects.map(s => {
+        const color = getSubjectColor(s);
+        return `<th style="width:${colWidth}mm;padding:6px 4px;color:#fff;font-size:9px;text-align:center;border:1px solid #2d5a8e;background-color:${color};">${getSubjectAbbr(s)}</th>`;
+      }).join('')}
+    </tr>`;
+
+  const tableRows = SCHOOL_WEEKS_2026_2027.map(week => {
+    const entries = entryByWeek.get(week.num) || [];
+    const isVacation = [16, 17].includes(week.num);
+    const isFerie = [12].includes(week.num);
+    const rowBg = isVacation || isFerie ? '#f1f5f9' : '#ffffff';
+
+    const weekLabel = isVacation ? `<div style="font-size:8px;color:#94a3b8;font-style:italic;">Vacances</div>` : '';
+
+    const cells = subjects.map(subject => {
+      const subjEntries = entries.filter(e => e.subject === subject);
+      if (subjEntries.length === 0) {
+        return `<td style="padding:3px;border:1px solid #e2e8f0;background-color:${rowBg};"></td>`;
+      }
+      const color = getSubjectColor(subject);
+      const cellContent = subjEntries.map(e => {
+        const isAssessment = e.type === 'assessment';
+        if (isAssessment) {
+          return `<div style="margin:1px 0;padding:2px 4px;font-size:8px;font-weight:700;border-radius:4px;border:2px solid ${color};color:${darkenHex(color)};background:#fff;text-align:center;">
+            ★ Éval. Crit.${e.assessmentCriterion || ''}<br/><span style="font-size:7px;font-weight:400;">U${e.unitNumber}</span>
+          </div>`;
+        }
+        return `<div style="margin:1px 0;padding:2px 4px;font-size:8px;font-weight:600;border-radius:4px;background-color:${lightenHex(color,0.75)};color:${darkenHex(color)};border:1px solid ${color};">
+          U${e.unitNumber}: ${(e.unitTitle || '').slice(0, 25)}${(e.unitTitle || '').length > 25 ? '…' : ''}
+        </div>`;
+      }).join('');
+
+      return `<td style="padding:3px;border:1px solid #e2e8f0;background-color:${isVacation || isFerie ? rowBg : lightenHex(color, 0.95)};vertical-align:top;">${cellContent}</td>`;
+    }).join('');
+
+    return `<tr style="background-color:${rowBg};">
+      <td style="padding:4px 6px;border:1px solid #e2e8f0;text-align:center;font-weight:800;font-size:12px;color:#1e3a5f;background-color:${rowBg};vertical-align:middle;">
+        S${week.num}${weekLabel}
+      </td>
+      <td style="padding:4px 6px;border:1px solid #e2e8f0;font-size:9px;color:#64748b;vertical-align:middle;text-align:center;">${week.dates}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  // ── Statistiques par matière ─────────────────────────────────────────────
+  const statsRows = subjects.map(subj => {
+    const color = getSubjectColor(subj);
+    const subjEntries = calendar.entries.filter(e => e.subject === subj);
+    const unitCount = [...new Set(subjEntries.filter(e => e.type === 'unit').map(e => e.unitNumber))].length;
+    const assessCount = subjEntries.filter(e => e.type === 'assessment').length;
+    const weekCount = [...new Set(subjEntries.map(e => e.weekNum))].length;
+    return `<tr>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-weight:700;color:${darkenHex(color)};background-color:${lightenHex(color,0.85)};">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${color};margin-right:4px;vertical-align:middle;"></span>${subj}
+      </td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;font-weight:600;">${unitCount}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;font-weight:600;">${assessCount}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;font-weight:600;">${weekCount}</td>
+    </tr>`;
+  }).join('');
+
+  // ── HTML complet ──────────────────────────────────────────────────────────
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Calendrier Annuel ${grade} — 2026-2027</title>
+<style>
+  @page { size: A3 landscape; margin: 10mm 8mm 10mm 8mm; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  * { box-sizing: border-box; }
+  body { font-family: 'Calibri', Arial, sans-serif; font-size: 10px; color: #1e293b; margin: 0; padding: 0; }
+  
+  .page-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 0 10px; border-bottom: 3px solid #1e3a5f; margin-bottom: 10px; }
+  .page-title { font-size: 18px; font-weight: 900; color: #1e3a5f; letter-spacing: -0.5px; }
+  .page-subtitle { font-size: 10px; color: #64748b; margin-top: 2px; }
+  .page-meta { text-align: right; font-size: 9px; color: #94a3b8; }
+
+  .legend-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; }
+  .legend-title { font-size: 9px; font-weight: 700; color: #475569; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 9px; }
+  th, td { vertical-align: top; }
+  
+  .section-title { font-size: 12px; font-weight: 800; color: #1e3a5f; margin: 12px 0 6px; padding: 4px 0; border-bottom: 2px solid #e2e8f0; display: flex; align-items: center; gap: 6px; }
+  
+  .stat-table th { background-color: #1e3a5f; color: #fff; padding: 5px 8px; text-align: center; font-size: 9px; border: 1px solid #2d5a8e; }
+  
+  .no-break { page-break-inside: avoid; }
+  
+  @media print {
+    .page-header { position: fixed; top: 0; left: 0; right: 0; }
+    .content { margin-top: 60px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- EN-TÊTE -->
+<div class="page-header">
+  <div>
+    <div class="page-title">📅 Calendrier Annuel — ${grade}</div>
+    <div class="page-subtitle">Les Écoles Internationales Al Kawthar · PEI Planner · Année scolaire 2026-2027 · 38 semaines</div>
+  </div>
+  <div class="page-meta">
+    Généré le ${new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}<br/>
+    ${calendar.entries.filter(e=>e.type==='unit').length} semaines-unités · ${calendar.entries.filter(e=>e.type==='assessment').length} évaluations
+  </div>
+</div>
+
+<!-- LÉGENDE -->
+<div class="legend-box">
+  <div class="legend-title">Légende des matières</div>
+  <div>${legendItems}</div>
+  <div style="margin-top:5px;display:flex;gap:12px;font-size:9px;color:#64748b;">
+    <span>📘 U1, U2… = Numéro d'unité</span>
+    <span>★ = Évaluation sommative (avec critère IB)</span>
+    <span>Fond coloré = Semaine de l'unité</span>
+    <span>Fond grisé = Période de vacances</span>
+  </div>
+</div>
+
+<!-- TABLEAU PRINCIPAL -->
+<div class="section-title">📊 Répartition hebdomadaire des unités et évaluations</div>
+<table>
+  <thead>${tableHeader}</thead>
+  <tbody>${tableRows}</tbody>
+</table>
+
+<!-- STATISTIQUES -->
+<div class="section-title" style="margin-top:16px;">📈 Récapitulatif par matière</div>
+<table class="stat-table" style="width:60%;">
+  <thead>
+    <tr>
+      <th style="width:40%;text-align:left;">Matière</th>
+      <th>Nb Unités</th>
+      <th>Nb Évaluations</th>
+      <th>Semaines couvertes</th>
+    </tr>
+  </thead>
+  <tbody>${statsRows}</tbody>
+</table>
+
+<!-- PIED DE PAGE -->
+<div style="margin-top:16px;padding-top:8px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:8px;color:#94a3b8;">
+  <span>PEI Planner — Les Écoles Internationales Al Kawthar</span>
+  <span>Programme IB PEI · Toutes les matières · Année 2026-2027</span>
+  <span>Document confidentiel — Usage pédagogique interne</span>
+</div>
+
+<script>window.onload = () => { window.print(); }</script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  saveAs(blob, `Calendrier_Annuel_${grade.replace(/ /g, '_')}_2026-2027.html`);
 };

@@ -20,9 +20,10 @@ import {
   Loader2, CheckCircle, AlertCircle, Download, RefreshCw,
   Users, Layers, Sparkles, FileText, Eye, Trash2, ChevronDown,
   ChevronUp, BookMarked, GraduationCap, FolderOpen, ExternalLink,
-  Table, Shield, Lock,
+  Table, Shield, Lock, Calendar,
 } from 'lucide-react';
 import AdminPanel from './AdminPanel';
+import CalendarView from './CalendarView';
 import type { AppUser } from '../services/authService';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -133,6 +134,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
 
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showCalendar, setShowCalendar] = useState<string | null>(null); // grade string or null
 
   // Dériver les infos user depuis currentUser prop (avec fallback localStorage)
   const userName = currentUser?.displayName || localStorage.getItem('userName') || 'Administrateur';
@@ -450,6 +452,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
         onImportCSV={handleImportCSV}
       />
     )}
+
+    {/* Calendar Modal */}
+    {showCalendar && (
+      <CalendarView
+        grade={showCalendar}
+        onClose={() => setShowCalendar(null)}
+      />
+    )}
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100">
 
       {/* ══ HEADER ══ */}
@@ -610,10 +620,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
                   const units = gradeUnitCounts[grade] ?? 0;
                   const sp = specialCounts[grade] ?? { inter: 0, sea: 0 };
                   return (
+                    <div key={grade} className="group relative flex flex-col">
                     <button
-                      key={grade}
                       onClick={() => handleGradeSelect(grade)}
-                      className="group relative flex flex-col items-center gap-3 p-5 bg-white rounded-2xl border-2 border-slate-200 hover:border-indigo-300 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 active:scale-95 overflow-hidden"
+                      className="relative flex flex-col items-center gap-3 p-5 bg-white rounded-2xl rounded-b-lg border-2 border-slate-200 hover:border-indigo-300 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 active:scale-95 overflow-hidden flex-1"
                     >
                       {/* Background gradient on hover */}
                       <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 to-blue-50 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl" />
@@ -648,6 +658,15 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
                         )}
                       </div>
                     </button>
+                    {/* Bouton Calendrier sous la carte */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShowCalendar(grade); }}
+                      className="flex items-center justify-center gap-1.5 w-full py-1.5 bg-teal-50 hover:bg-teal-100 border border-teal-200 border-t-0 rounded-b-xl text-teal-700 text-xs font-semibold transition"
+                      title={`Calendrier annuel de ${grade}`}
+                    >
+                      <Calendar size={11} /> Calendrier
+                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -680,12 +699,23 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
                   </p>
                 )}
               </div>
-              <button
-                onClick={handleBack}
-                className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-medium transition flex-shrink-0"
-              >
-                <ChevronLeft size={15} /> Retour
-              </button>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {/* Bouton Calendrier */}
+                <button
+                  onClick={() => setShowCalendar(selectedGrade)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold transition shadow-sm border border-teal-500"
+                  title={`Voir le calendrier annuel de ${selectedGrade}`}
+                >
+                  <Calendar size={15} />
+                  Calendrier
+                </button>
+                <button
+                  onClick={handleBack}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-medium transition"
+                >
+                  <ChevronLeft size={15} /> Retour
+                </button>
+              </div>
             </div>
 
             {/* Section: Matières */}

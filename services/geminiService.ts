@@ -3430,9 +3430,11 @@ Retourne un tableau JSON de 2 objets InterdisciplinaryUnit complets.`;
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GÉNÉRATION IA DES DÉTAILS D'UNITÉ — Version corrigée (2 appels séparés)
-// Divise la génération en 2 appels pour éviter les dépassements de tokens
-// et les erreurs de parsing JSON sur de très longs textes.
+// GÉNÉRATION IA DES DÉTAILS D'UNITÉ — Version complète (3 appels séparés)
+// Couvre TOUS les champs A→R du plan d'unité IB PEI :
+// infos générales, contexte élèves, processus, séances,
+// différenciation, réflexion, cohérence, liens interdisciplinaires,
+// contenu détaillé, évaluations formative/sommative
 // ─────────────────────────────────────────────────────────────────────────────
 export const generateUnitDetailsWithAI = async (
   plan: UnitPlan,
@@ -3440,164 +3442,617 @@ export const generateUnitDetailsWithAI = async (
 ): Promise<Partial<UnitPlan>> => {
   onProgress?.('Analyse de l\'unité en cours...');
 
-  // Informations de base de l'unité (tronquées pour éviter dépassement)
+  // Informations de base de l'unité
   const unitInfo = [
     'Titre: ' + (plan.title || 'Non défini'),
     'Matière: ' + (plan.subject || 'Non définie'),
     'Niveau: ' + (plan.gradeLevel || 'Non défini'),
     'Durée: ' + (plan.duration || 'Non définie'),
+    'Année scolaire: ' + (plan.schoolYear || '2026-2027'),
     'Concept clé: ' + (plan.keyConcept || 'Non défini'),
+    'Concepts connexes: ' + (Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts.join(', ') : ''),
     'Contexte mondial: ' + (plan.globalContext || 'Non défini'),
     'Énoncé de recherche: ' + (plan.statementOfInquiry || 'Non défini'),
     'Objectifs: ' + (plan.objectives || []).join(', '),
     'ATL: ' + (Array.isArray(plan.atlSkills) ? plan.atlSkills : [plan.atlSkills || '']).join(', '),
-    'Contenu: ' + (plan.content || '').slice(0, 300),
+    'Contenu: ' + (plan.content || '').slice(0, 400),
+    'Évaluation sommative: ' + (plan.summativeAssessment || '').slice(0, 200),
   ].join('\n');
 
-  // ── Appel 1: Processus d'apprentissage + Séances ─────────────────────────
-  onProgress?.('Génération du processus d\'apprentissage et des séances...');
+  // ── Appel 1: Infos générales + Contexte élèves + Contenu détaillé ────────
+  onProgress?.('Génération du contexte élèves et du contenu détaillé (1/3)...');
 
-  const prompt1 = 'Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide (pas de texte avant/après, pas de markdown) pour cette unité:\n\n' + unitInfo + '\n\nFormat JSON attendu:\n{"learningProcess":{"phase1_activation":"texte court","phase2_acquisition":"texte court","phase3_practice":"texte court","phase4_transfer":"texte court","phase5_reflection":"texte court"},"sessions":[{"numero":1,"objectifApprentissage":"texte","contenu":"texte","activite":"texte","roleEnseignant":"texte","roleEleves":"texte","atl":"texte","evaluationFormative":"texte","differenciation":"texte"},{"numero":2,"objectifApprentissage":"texte","contenu":"texte","activite":"texte","roleEnseignant":"texte","roleEleves":"texte","atl":"texte","evaluationFormative":"texte","differenciation":"texte"},{"numero":3,"objectifApprentissage":"texte","contenu":"texte","activite":"texte","roleEnseignant":"texte","roleEleves":"texte","atl":"texte","evaluationFormative":"texte","differenciation":"texte"},{"numero":4,"objectifApprentissage":"texte","contenu":"texte","activite":"texte","roleEnseignant":"texte","roleEleves":"texte","atl":"texte","evaluationFormative":"texte","differenciation":"texte"}]}\n\nRègles: français, spécifique à la matière, conforme IB PEI, JSON valide uniquement.';
+  const prompt1 = `Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide pour cette unité:
 
-  const raw1 = await callGeminiViaProxy(prompt1, undefined, { temperature: 0.6, maxOutputTokens: 3000 });
+${unitInfo}
 
-  onProgress?.('Génération de la différenciation et de la réflexion...');
+Format JSON attendu (toutes les valeurs en français, détaillées, conformes IB PEI):
+{
+  "schoolYear": "2026-2027",
+  "numberOfPeriods": "nombre de périodes selon durée",
+  "numberOfHours": "nombre d'heures selon durée",
+  "startDate": "date de début estimée",
+  "endDate": "date de fin estimée",
+  "prerequisites": "prérequis détaillés pour cette unité",
+  "studentContext": {
+    "priorKnowledge": "Ce que les élèves savent déjà en lien avec cette unité",
+    "acquiredSkills": "Compétences déjà maîtrisées par les élèves",
+    "linksPreviousUnits": "Connexions avec les unités précédentes de la même matière",
+    "specificNeeds": "Besoins spécifiques identifiés des élèves",
+    "profileDiversity": "Diversité culturelle, sociale, linguistique de la classe",
+    "culturalContexts": "Contextes culturels et locaux pertinents",
+    "anticipatedDifficulties": "Obstacles prévisibles à anticiper"
+  },
+  "contentDetails": {
+    "knowledges": "Savoirs théoriques à acquérir dans cette unité",
+    "notions": "Notions et termes clés à maîtriser",
+    "vocabulary": "Vocabulaire disciplinaire essentiel",
+    "methods": "Démarches méthodologiques à enseigner",
+    "techniques": "Techniques spécifiques à la matière",
+    "disciplinarySkills": "Compétences disciplinaires et savoir-faire",
+    "mandatoryContent": "Contenu obligatoire du programme IB",
+    "selectedContent": "Contenu sélectionné et justification",
+    "nationalLinks": "Correspondances avec le programme national français"
+  },
+  "objectivesDetails": [
+    {"criterion": "A", "aspects": "Aspects évalués du critère A", "expectedLevel": "Niveau attendu /8", "activities": "Activités liées au critère A", "formativeAssessment": "Évaluation formative critère A", "summativeAssessment": "Évaluation sommative critère A"},
+    {"criterion": "B", "aspects": "Aspects évalués du critère B", "expectedLevel": "Niveau attendu /8", "activities": "Activités liées au critère B", "formativeAssessment": "Évaluation formative critère B", "summativeAssessment": "Évaluation sommative critère B"}
+  ],
+  "formativeAssessment": "Description détaillée des évaluations formatives: modalités, fréquence, feedback",
+  "summativeAssessment": "Description complète de l'évaluation sommative: tâche, critères, produit attendu",
+  "interdisciplinaryLinks": "Liens avec autres matières IB, connexions conceptuelles et thématiques"
+}
 
-  // ── Appel 2: Différenciation + Réflexion + Cohérence ────────────────────
-  const prompt2 = 'Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide (pas de texte avant/après, pas de markdown) pour cette unité:\n\n' + unitInfo + '\n\nFormat JSON attendu:\n{"differentiationDetails":{"supportStudents":{"strategies":"texte","materials":"texte","scaffolding":"texte"},"advancedStudents":{"enrichment":"texte","extension":"texte","autonomy":"texte"},"contentDifferentiation":"texte","processDifferentiation":"texte","productDifferentiation":"texte"},"reflectionDetails":{"before":{"priorKnowledge":"texte","anticipatedChallenges":"texte","plannedStrategies":"texte"},"during":{"whatWorked":"texte","whatToAdjust":"texte","studentEngagement":"texte"},"after":{"unitSuccess":"texte","improvementsForNext":"texte","studentLearning":"texte"}},"verticalCoherence":"texte","horizontalCoherence":"texte","interdisciplinaryLinks":"texte","studentContext":{"priorKnowledge":"texte","acquiredSkills":"texte","linksPreviousUnits":"texte","specificNeeds":"texte","anticipatedDifficulties":"texte"}}\n\nRègles: français, spécifique à la matière, conforme IB PEI, JSON valide uniquement.';
+Règles: JSON valide uniquement, pas de markdown, français, spécifique à la matière "${plan.subject}" pour ${plan.gradeLevel}.`;
 
-  const raw2 = await callGeminiViaProxy(prompt2, undefined, { temperature: 0.6, maxOutputTokens: 3000 });
+  const raw1 = await callGeminiViaProxy(prompt1, undefined, { temperature: 0.6, maxOutputTokens: 3500 });
+
+  // ── Appel 2: Processus d'apprentissage + Séances ─────────────────────────
+  onProgress?.('Génération du processus d\'apprentissage et des séances (2/3)...');
+
+  const prompt2 = `Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide pour cette unité:
+
+${unitInfo}
+
+Format JSON attendu (français, détaillé, conforme IB PEI):
+{
+  "learningProcess": {
+    "phase1_activation": "Activation des connaissances antérieures: stratégies concrètes",
+    "phase2_acquisition": "Acquisition des nouvelles connaissances: méthodes et ressources",
+    "phase3_practice": "Mise en pratique guidée: exercices et activités progressives",
+    "phase4_transfer": "Application et transfert dans nouveaux contextes",
+    "phase5_reflection": "Réflexion métacognitive et consolidation des apprentissages"
+  },
+  "sessions": [
+    {
+      "numero": 1,
+      "duree": "2h",
+      "objectifApprentissage": "Objectif précis de la séance 1",
+      "contenu": "Contenu spécifique travaillé",
+      "activite": "Activité détaillée avec modalités",
+      "roleEnseignant": "Rôle et actions de l'enseignant",
+      "roleEleves": "Rôle et actions des élèves",
+      "atl": "Compétence ATL mobilisée",
+      "evaluationFormative": "Comment on évalue les apprentissages en séance",
+      "differenciation": "Adaptation pour élèves en difficulté et avancés",
+      "ressources": "Ressources et matériaux utilisés",
+      "questionsRecherche": "Question de recherche de la séance"
+    },
+    {"numero": 2, "duree": "2h", "objectifApprentissage": "Obj. séance 2", "contenu": "Contenu 2", "activite": "Activité 2", "roleEnseignant": "Rôle ens. 2", "roleEleves": "Rôle élèves 2", "atl": "ATL 2", "evaluationFormative": "Éval. form. 2", "differenciation": "Diff. 2", "ressources": "Ressources 2", "questionsRecherche": "Question 2"},
+    {"numero": 3, "duree": "2h", "objectifApprentissage": "Obj. séance 3", "contenu": "Contenu 3", "activite": "Activité 3", "roleEnseignant": "Rôle ens. 3", "roleEleves": "Rôle élèves 3", "atl": "ATL 3", "evaluationFormative": "Éval. form. 3", "differenciation": "Diff. 3", "ressources": "Ressources 3", "questionsRecherche": "Question 3"},
+    {"numero": 4, "duree": "2h", "objectifApprentissage": "Obj. séance 4", "contenu": "Contenu 4", "activite": "Activité 4", "roleEnseignant": "Rôle ens. 4", "roleEleves": "Rôle élèves 4", "atl": "ATL 4", "evaluationFormative": "Éval. form. 4", "differenciation": "Diff. 4", "ressources": "Ressources 4", "questionsRecherche": "Question 4"},
+    {"numero": 5, "duree": "2h", "objectifApprentissage": "Obj. séance 5", "contenu": "Contenu 5", "activite": "Activité 5", "roleEnseignant": "Rôle ens. 5", "roleEleves": "Rôle élèves 5", "atl": "ATL 5", "evaluationFormative": "Éval. form. 5", "differenciation": "Diff. 5", "ressources": "Ressources 5", "questionsRecherche": "Question 5"}
+  ],
+  "learningExperiences": "Description globale des expériences d'apprentissage et stratégies pédagogiques de l'unité",
+  "teachingStrategies": "Stratégies et méthodes principales de l'enseignant pour cette unité",
+  "studentActivities": "Vue d'ensemble des activités et productions des élèves"
+}
+
+Règles: JSON valide uniquement, pas de markdown, français, spécifique à "${plan.subject}" pour ${plan.gradeLevel}.`;
+
+  const raw2 = await callGeminiViaProxy(prompt2, undefined, { temperature: 0.6, maxOutputTokens: 3500 });
+
+  // ── Appel 3: Différenciation + Réflexion + Cohérence ─────────────────────
+  onProgress?.('Génération de la différenciation et de la réflexion (3/3)...');
+
+  const prompt3 = `Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide pour cette unité:
+
+${unitInfo}
+
+Format JSON attendu (français, détaillé, conforme IB PEI):
+{
+  "differentiationDetails": {
+    "supportStudents": {
+      "vocabulary": "Soutien vocabulaire et terminologie pour élèves en difficulté",
+      "visualSupports": "Supports visuels, schémas, organisateurs graphiques",
+      "models": "Modèles et exemples fournis",
+      "adaptedInstructions": "Instructions simplifiées et reformulées",
+      "intermediateSteps": "Décomposition des tâches en étapes intermédiaires",
+      "smallGroups": "Travail en petits groupes avec pair aidant",
+      "individualSupport": "Soutien individualisé et suivi personnalisé",
+      "extraTime": "Temps supplémentaire accordé",
+      "additionalResources": "Ressources complémentaires simplifiées"
+    },
+    "advancedStudents": {
+      "deepening": "Approfondissement et enrichissement du contenu",
+      "autonomousResearch": "Recherche autonome sur des thèmes connexes",
+      "complexProblems": "Résolution de problèmes complexes et ouverts",
+      "challenges": "Défis supplémentaires et tâches d'extension",
+      "transfer": "Transfert dans contextes nouveaux et inattendus",
+      "advancedProduction": "Productions créatives et approfondies"
+    },
+    "contentDifferentiation": "Adaptation du niveau de complexité et de profondeur du contenu",
+    "processDifferentiation": "Variation des modalités, rythmes et méthodes de travail",
+    "productDifferentiation": "Choix du type et du niveau de production finale"
+  },
+  "reflectionDetails": {
+    "before": {
+      "priorKnowledge": "Connaissances antérieures identifiées et évaluées",
+      "studentNeeds": "Besoins des élèves identifiés avant l'unité",
+      "anticipatedDifficulties": "Difficultés prévisibles et stratégies d'anticipation",
+      "relevance": "Pertinence et sens de l'unité pour les élèves",
+      "previousLinks": "Liens avec les unités précédentes établis",
+      "plannedStrategies": "Stratégies pédagogiques planifiées",
+      "plannedDifferentiation": "Différenciation planifiée dès le départ",
+      "expectedOutcomes": "Résultats d'apprentissage attendus"
+    },
+    "during": {
+      "progressObserved": "Progression des élèves observée en cours d'unité",
+      "difficulties": "Difficultés rencontrées et comment elles ont été gérées",
+      "effectiveStrategies": "Stratégies qui ont bien fonctionné",
+      "ineffectiveStrategies": "Stratégies à améliorer ou remplacer",
+      "studentParticipation": "Niveau d'engagement et participation des élèves",
+      "adjustmentsMade": "Ajustements apportés en cours d'unité",
+      "planningChanges": "Modifications au planning initial",
+      "emergingNeeds": "Besoins émergents identifiés"
+    },
+    "after": {
+      "achievedObjectives": "Objectifs pleinement atteints par les élèves",
+      "partialObjectives": "Objectifs partiellement atteints à consolider",
+      "studentDifficulties": "Difficultés persistantes à traiter",
+      "assessmentResults": "Résultats et analyse de l'évaluation sommative",
+      "activityEfficiency": "Efficacité des activités proposées",
+      "teachingEfficiency": "Efficacité de l'enseignement dispensé",
+      "differentiationEfficiency": "Efficacité de la différenciation mise en place",
+      "successes": "Points forts et réussites de l'unité",
+      "improvements": "Améliorations à apporter",
+      "modificationsNext": "Modifications pour la prochaine fois",
+      "elementsToKeep": "Éléments à conserver",
+      "elementsToRemove": "Éléments à supprimer",
+      "elementsToAdd": "Éléments à ajouter"
+    }
+  },
+  "verticalCoherence": "Cohérence verticale: liens avec les niveaux précédents et suivants du programme IB",
+  "horizontalCoherence": "Cohérence horizontale: liens avec les autres matières du même niveau",
+  "resources": "Liste complète des ressources: manuels, articles, sites, matériaux, outils numériques",
+  "differentiation": "Résumé global de la stratégie de différenciation de l'unité"
+}
+
+Règles: JSON valide uniquement, pas de markdown, français, spécifique à "${plan.subject}" pour ${plan.gradeLevel}.`;
+
+  const raw3 = await callGeminiViaProxy(prompt3, undefined, { temperature: 0.6, maxOutputTokens: 3500 });
 
   onProgress?.('Traitement des résultats...');
 
   // ── Parsing robuste ───────────────────────────────────────────────────────
   function parseJsonSafe(raw: string): Record<string, unknown> {
     let s = raw.trim();
-
-    // 1. Supprimer les balises markdown ```json ... ```
     const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (fence) s = fence[1].trim();
-
-    // 2. Extraire le premier objet JSON complet (accolades équilibrées)
     const firstBrace = s.indexOf('{');
     if (firstBrace !== -1) {
-      let depth = 0;
-      let endIdx = -1;
+      let depth = 0; let endIdx = -1;
       for (let i = firstBrace; i < s.length; i++) {
-        const ch = s[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-          depth--;
-          if (depth === 0) { endIdx = i; break; }
-        }
+        if (s[i] === '{') depth++;
+        else if (s[i] === '}') { depth--; if (depth === 0) { endIdx = i; break; } }
       }
-      if (endIdx !== -1) {
-        s = s.slice(firstBrace, endIdx + 1);
-      } else {
-        // Fallback: prendre jusqu'au dernier }
-        const lastBrace = s.lastIndexOf('}');
-        if (lastBrace > firstBrace) s = s.slice(firstBrace, lastBrace + 1);
-      }
+      s = endIdx !== -1 ? s.slice(firstBrace, endIdx + 1) : s.slice(firstBrace, s.lastIndexOf('}') + 1);
     }
-
-    // 3. Nettoyer les caractères de contrôle problématiques (garder \n \r \t)
     s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
-
-    // 4. Corriger les virgules trailing (,] ou ,}) — erreur fréquente des LLMs
     s = s.replace(/,\s*([\]}])/g, '$1');
-
-    // 5. Tentative de parse direct
-    try {
-      return JSON.parse(s) as Record<string, unknown>;
-    } catch (_firstErr) {
-      // 6. Fallback: remplacer les retours à la ligne à l'intérieur des strings par \n
-      // Pour éviter les erreurs "control character" dans les valeurs multi-lignes
-      const cleaned = s.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
-        return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-      });
-      try {
-        return JSON.parse(cleaned) as Record<string, unknown>;
-      } catch (_secondErr) {
-        // 7. Dernier recours: supprimer toutes les valeurs multi-lignes malformées
-        const safe = s.replace(/:\s*"([^"]*)"(\s*[,}])/gs, (_m, val, end) => {
-          const escapedVal = val
-            .replace(/\\/g, '\\\\')
-            .replace(/\n/g, '\\n')
-            .replace(/\r/g, '\\r')
-            .replace(/\t/g, '\\t')
-            .replace(/"/g, '\\"');
-          return `: "${escapedVal}"${end}`;
-        });
-        return JSON.parse(safe) as Record<string, unknown>;
-      }
-    }
+    try { return JSON.parse(s) as Record<string, unknown>; } catch (_) { /* continue */ }
+    const cleaned = s.replace(/("(?:[^"\\]|\\.)*")/g, (m) =>
+      m.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'));
+    try { return JSON.parse(cleaned) as Record<string, unknown>; } catch (_) { /* continue */ }
+    const safe = s.replace(/:\s*"([^"]*)"(\s*[,}])/gs, (_m, val, end) => {
+      const ev = val.replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/\r/g,'\\r').replace(/\t/g,'\\t').replace(/"/g,'\\"');
+      return `: "${ev}"${end}`;
+    });
+    return JSON.parse(safe) as Record<string, unknown>;
   }
 
   let p1: Record<string, unknown> = {};
   let p2: Record<string, unknown> = {};
+  let p3: Record<string, unknown> = {};
 
-  try {
-    p1 = parseJsonSafe(raw1);
-  } catch (e) {
-    console.error('Erreur parsing JSON appel 1:', e, '\nRaw:', raw1.slice(0, 500));
-    // Valeurs par défaut si le parsing échoue
+  try { p1 = parseJsonSafe(raw1); } catch (e) {
+    console.error('Erreur parsing appel 1:', e);
     p1 = {
-      learningProcess: {
-        phase1_activation: 'Activation des connaissances antérieures par questionnement et remue-méninges.',
-        phase2_acquisition: 'Acquisition des nouvelles connaissances via exposé, lecture et ressources numériques.',
-        phase3_practice: 'Pratique guidée avec exercices progressifs et travail collaboratif.',
-        phase4_transfer: 'Transfert et application dans un contexte nouveau ou interdisciplinaire.',
-        phase5_reflection: 'Réflexion métacognitive sur les apprentissages et les progrès réalisés.',
+      schoolYear: '2026-2027',
+      numberOfPeriods: '20 périodes',
+      numberOfHours: plan.duration || '40 heures',
+      startDate: 'Septembre 2026',
+      endDate: 'Novembre 2026',
+      prerequisites: `Connaissances de base en ${plan.subject}, maîtrise des compétences fondamentales de la matière.`,
+      studentContext: {
+        priorKnowledge: `Les élèves connaissent déjà les bases de ${plan.subject} étudiées dans les unités précédentes.`,
+        acquiredSkills: 'Compétences ATL de base : recherche documentaire, prise de notes, travail collaboratif.',
+        linksPreviousUnits: 'Cette unité prolonge les apprentissages des unités précédentes de la même matière.',
+        specificNeeds: 'Certains élèves nécessitent un étayage supplémentaire; d\'autres peuvent aller plus loin.',
+        profileDiversity: 'Classe hétérogène avec diversité culturelle, sociale et linguistique.',
+        culturalContexts: 'Prise en compte des contextes culturels locaux et internationaux des élèves.',
+        anticipatedDifficulties: 'Abstraction conceptuelle, vocabulaire spécialisé, transfert dans nouveaux contextes.',
       },
-      sessions: [
-        { numero: 1, objectifApprentissage: 'Introduction à l\'unité', contenu: 'Présentation du concept clé', activite: 'Remue-méninges collectif', roleEnseignant: 'Facilitateur', roleEleves: 'Explorateurs actifs', atl: 'Compétences de pensée', evaluationFormative: 'Tour de table', differenciation: 'Support visuel' },
-        { numero: 2, objectifApprentissage: 'Développement des connaissances', contenu: 'Approfondissement du contenu', activite: 'Recherche documentaire', roleEnseignant: 'Guide', roleEleves: 'Chercheurs', atl: 'Compétences de recherche', evaluationFormative: 'Questions réponses', differenciation: 'Niveau de complexité adapté' },
-        { numero: 3, objectifApprentissage: 'Mise en pratique', contenu: 'Application des concepts', activite: 'Travail en groupes', roleEnseignant: 'Coach', roleEleves: 'Praticiens', atl: 'Compétences sociales', evaluationFormative: 'Observation', differenciation: 'Groupes de niveaux' },
-        { numero: 4, objectifApprentissage: 'Évaluation et réflexion', contenu: 'Synthèse et transfert', activite: 'Production finale', roleEnseignant: 'Évaluateur', roleEleves: 'Producteurs', atl: 'Compétences d\'autogestion', evaluationFormative: 'Auto-évaluation', differenciation: 'Choix du produit' },
-      ],
+      contentDetails: {
+        knowledges: `Savoirs théoriques fondamentaux en lien avec "${plan.title}" et le concept clé "${plan.keyConcept}".`,
+        notions: `Notions clés: ${plan.relatedConcepts?.join(', ') || 'à définir selon le contenu'}`,
+        vocabulary: 'Vocabulaire disciplinaire spécifique à maîtriser au cours de l\'unité.',
+        methods: 'Démarches méthodologiques propres à la discipline: analyse, synthèse, expérimentation.',
+        techniques: 'Techniques spécifiques à la matière développées dans cette unité.',
+        disciplinarySkills: 'Compétences disciplinaires et savoir-faire à développer.',
+        mandatoryContent: 'Contenu obligatoire du programme IB PEI pour cette matière et ce niveau.',
+        selectedContent: 'Contenu sélectionné pour sa pertinence avec le concept clé et le contexte mondial.',
+        nationalLinks: 'Correspondances avec le programme national français pour ce niveau.',
+      },
+      objectivesDetails: (plan.objectives || ['A','B']).map(cr => ({
+        criterion: cr, aspects: `Aspects du critère ${cr} évalués dans cette unité`,
+        expectedLevel: 'Niveau 5-6 attendu /8', activities: `Activités développant le critère ${cr}`,
+        formativeAssessment: `Évaluation formative du critère ${cr}`, summativeAssessment: `Évaluation sommative du critère ${cr}`
+      })),
+      formativeAssessment: plan.formativeAssessment || 'Évaluations formatives régulières par observation, questionnement oral, travaux écrits courts.',
+      summativeAssessment: plan.summativeAssessment || 'Évaluation sommative finale conforme aux critères IB.',
+      interdisciplinaryLinks: 'Liens identifiés avec d\'autres matières IB partageant des concepts communs.',
     };
   }
 
-  try {
-    p2 = parseJsonSafe(raw2);
-  } catch (e) {
-    console.error('Erreur parsing JSON appel 2:', e, '\nRaw:', raw2.slice(0, 500));
+  try { p2 = parseJsonSafe(raw2); } catch (e) {
+    console.error('Erreur parsing appel 2:', e);
     p2 = {
+      learningProcess: {
+        phase1_activation: `Activation des connaissances: questionnement sur "${plan.keyConcept}", remue-méninges, carte mentale collective.`,
+        phase2_acquisition: `Acquisition via exposé interactif, textes, ressources numériques sur "${plan.title}". Prise de notes structurée.`,
+        phase3_practice: 'Pratique guidée: exercices progressifs, travail collaboratif, étude de cas contextualisée.',
+        phase4_transfer: `Transfert et application dans le contexte "${plan.globalContext}". Production en lien avec l'énoncé.`,
+        phase5_reflection: 'Réflexion métacognitive: auto-évaluation, journal de bord, retour sur les apprentissages.',
+      },
+      sessions: Array.from({ length: 5 }, (_, i) => ({
+        numero: i + 1, duree: '2h',
+        objectifApprentissage: [`Introduction à l'unité et activation`, `Acquisition des connaissances`, `Mise en pratique guidée`, `Approfondissement et transfert`, `Synthèse et évaluation`][i],
+        contenu: [`Concept clé "${plan.keyConcept}" et contexte`, `Savoirs fondamentaux de l'unité`, `Application des concepts`, `Problèmes complexes et interdisciplinarité`, `Préparation à l'évaluation sommative`][i],
+        activite: [`Remue-méninges + carte mentale`, `Lecture analytique + prise de notes`, `Travail en groupes + résolution`, `Projet collaboratif`, `Production individuelle finale`][i],
+        roleEnseignant: ['Facilitateur de questionnement', 'Transmetteur et guide', 'Coach pédagogique', 'Accompagnateur', 'Évaluateur'][i],
+        roleEleves: ['Explorateurs actifs', 'Apprenants engagés', 'Praticiens', 'Chercheurs autonomes', 'Producteurs'][i],
+        atl: ['Compétences de communication', 'Compétences de recherche', 'Compétences sociales', 'Compétences de pensée', 'Compétences d\'autogestion'][i],
+        evaluationFormative: ['Tour de table oral', 'Questions-réponses', 'Observation des groupes', 'Retour écrit', 'Auto-évaluation critériée'][i],
+        differenciation: ['Supports visuels pour élèves en difficulté, défi supplémentaire pour avancés', 'Textes adaptés', 'Groupes de niveaux', 'Choix du problème', 'Choix du format de production'][i],
+        ressources: ['Manuel, supports visuels', 'Textes documentaires, sites web', 'Fiches d\'exercices', 'Ressources numériques', 'Grille d\'évaluation critériée'][i],
+        questionsRecherche: plan.inquiryQuestions?.factual?.[i] || `Question de recherche séance ${i + 1}`,
+      })),
+      learningExperiences: `Unité centrée sur l'inquiry: les élèves explorent "${plan.title}" à travers des activités variées, progressives et différenciées.`,
+      teachingStrategies: 'Enseignement différencié, apprentissage par investigation, travail collaboratif, questionnement socratique.',
+      studentActivities: 'Recherche documentaire, discussions, résolution de problèmes, création de productions, auto-évaluation.',
+    };
+  }
+
+  try { p3 = parseJsonSafe(raw3); } catch (e) {
+    console.error('Erreur parsing appel 3:', e);
+    p3 = {
       differentiationDetails: {
-        supportStudents: { strategies: 'Fiches de soutien, étayage progressif, travail en binôme avec pair aidant.', materials: 'Supports visuels, glossaire simplifié, ressources adaptées.', scaffolding: 'Décomposition des tâches complexes en étapes simples.' },
-        advancedStudents: { enrichment: 'Recherches approfondies, projets créatifs autonomes.', extension: 'Connexions interdisciplinaires, défis supplémentaires.', autonomy: 'Choix du sujet de recherche, présentation libre.' },
-        contentDifferentiation: 'Adaptation du niveau de complexité du contenu selon les profils.',
-        processDifferentiation: 'Variation des modalités de travail (individuel, binôme, groupe).',
-        productDifferentiation: 'Choix du type de production finale (oral, écrit, numérique).',
+        supportStudents: {
+          vocabulary: 'Glossaire simplifié, définitions illustrées, cartes de vocabulaire.',
+          visualSupports: 'Schémas, organisateurs graphiques, cartes conceptuelles visuelles.',
+          models: 'Exemples résolus, modèles de production annotés.',
+          adaptedInstructions: 'Instructions reformulées en langage simple, étapes clarifiées.',
+          intermediateSteps: 'Décomposition des tâches complexes en sous-étapes accessibles.',
+          smallGroups: 'Travail en binômes ou petits groupes avec pair aidant.',
+          individualSupport: 'Soutien individualisé pendant les activités.',
+          extraTime: 'Temps supplémentaire accordé pour les productions.',
+          additionalResources: 'Ressources complémentaires adaptées au niveau.',
+        },
+        advancedStudents: {
+          deepening: 'Recherches approfondies sur des aspects complexes du concept clé.',
+          autonomousResearch: 'Investigation autonome sur des thèmes connexes choisis librement.',
+          complexProblems: 'Résolution de problèmes ouverts et situations complexes.',
+          challenges: 'Défis supplémentaires et projets créatifs d\'extension.',
+          transfer: 'Application dans des contextes nouveaux et inattendus.',
+          advancedProduction: 'Productions créatives approfondies, présentations enrichies.',
+        },
+        contentDifferentiation: 'Niveaux de complexité adaptés: contenu de base, standard et enrichi.',
+        processDifferentiation: 'Modalités variées: individuel, binôme, groupe. Rythme personnalisé.',
+        productDifferentiation: 'Choix du format de production: écrit, oral, numérique, visuel.',
       },
       reflectionDetails: {
-        before: { priorKnowledge: 'Identifier les connaissances préalables par QCM diagnostic.', anticipatedChallenges: 'Vocabulaire spécifique et abstraction conceptuelle.', plannedStrategies: 'Différenciation dès le départ, supports variés.' },
-        during: { whatWorked: 'À compléter en cours d\'unité.', whatToAdjust: 'À compléter selon l\'observation des élèves.', studentEngagement: 'À évaluer par observation et auto-évaluation.' },
-        after: { unitSuccess: 'À évaluer après l\'unité.', improvementsForNext: 'À identifier après l\'évaluation sommative.', studentLearning: 'À mesurer par les résultats de l\'évaluation.' },
+        before: {
+          priorKnowledge: 'Évaluation diagnostique des connaissances préalables des élèves.',
+          studentNeeds: 'Identification des besoins d\'apprentissage par observation et évaluation diagnostique.',
+          anticipatedDifficulties: 'Abstraction conceptuelle, vocabulaire spécialisé, transfert interdisciplinaire.',
+          relevance: 'Ancrage dans le contexte et la réalité des élèves pour donner sens aux apprentissages.',
+          previousLinks: 'Connexions explicites avec les unités précédentes et les acquis des élèves.',
+          plannedStrategies: 'Différenciation intégrée dès la planification, évaluation formative régulière.',
+          plannedDifferentiation: 'Niveaux de difficulté préparés pour tous les profils d\'élèves.',
+          expectedOutcomes: 'Maîtrise des objectifs ciblés, développement des compétences ATL et disciplinaires.',
+        },
+        during: {
+          progressObserved: 'Suivi continu des progrès par observation directe et productions en cours.',
+          difficulties: 'Identification des blocages et ajustements immédiats des stratégies.',
+          effectiveStrategies: 'À documenter en cours d\'unité selon les observations terrain.',
+          ineffectiveStrategies: 'À identifier et modifier selon les retours des élèves.',
+          studentParticipation: 'Engagement mesuré par participation active et qualité des productions.',
+          adjustmentsMade: 'Ajustements au rythme, aux ressources et aux activités selon les besoins.',
+          planningChanges: 'Modifications du planning initial si nécessaire.',
+          emergingNeeds: 'Besoins émergents traités en temps réel.',
+        },
+        after: {
+          achievedObjectives: 'Objectifs pleinement atteints selon les résultats de l\'évaluation sommative.',
+          partialObjectives: 'Objectifs partiellement atteints à consolider dans la prochaine unité.',
+          studentDifficulties: 'Difficultés persistantes à cibler dans les séances de remédiation.',
+          assessmentResults: 'Analyse des résultats et identification des points à améliorer.',
+          activityEfficiency: 'Évaluation de l\'efficacité des activités proposées.',
+          teachingEfficiency: 'Réflexion sur l\'efficacité des stratégies d\'enseignement utilisées.',
+          differentiationEfficiency: 'Bilan de la différenciation mise en place.',
+          successes: 'Points forts de l\'unité à valoriser et reproduire.',
+          improvements: 'Axes d\'amélioration identifiés pour la prochaine fois.',
+          modificationsNext: 'Modifications concrètes à apporter lors de la prochaine mise en œuvre.',
+          elementsToKeep: 'Activités et stratégies efficaces à conserver.',
+          elementsToRemove: 'Éléments peu efficaces ou redondants à supprimer.',
+          elementsToAdd: 'Nouvelles idées à intégrer pour enrichir l\'unité.',
+        },
       },
-      verticalCoherence: 'Cette unité s\'inscrit dans la progression du programme PEI, préparant les compétences pour les niveaux suivants.',
-      horizontalCoherence: 'Liens possibles avec les matières du même niveau partageant des concepts communs.',
-      interdisciplinaryLinks: 'Connexions identifiées avec d\'autres disciplines IB pour enrichir l\'apprentissage.',
-      studentContext: {
-        priorKnowledge: 'Connaissances de base acquises dans les unités précédentes.',
-        acquiredSkills: 'Compétences ATL et disciplinaires développées antérieurement.',
-        linksPreviousUnits: 'Cette unité s\'appuie sur les unités précédentes de la même matière.',
-        specificNeeds: 'Besoins d\'étayage pour certains élèves, enrichissement pour d\'autres.',
-        anticipatedDifficulties: 'Abstraction conceptuelle et transfert dans de nouveaux contextes.',
-      },
+      verticalCoherence: `Cohérence verticale: cette unité prépare les compétences pour les niveaux suivants du PEI en ${plan.subject}.`,
+      horizontalCoherence: `Cohérence horizontale: liens avec les autres matières de ${plan.gradeLevel} partageant "${plan.keyConcept}".`,
+      resources: plan.resources || 'Manuel scolaire, ressources numériques, articles documentaires, matériel expérimental selon la matière.',
+      differentiation: 'Différenciation systématique par le contenu, le processus et la production. Soutien et enrichissement intégrés.',
     };
   }
 
+  // ── Construire le résultat complet fusionné ───────────────────────────────
+  onProgress?.('Finalisation et sauvegarde automatique...');
+
   return {
-    learningProcess: p1.learningProcess as UnitPlan['learningProcess'],
-    sessions: p1.sessions as UnitPlan['sessions'],
-    differentiationDetails: p2.differentiationDetails as UnitPlan['differentiationDetails'],
-    reflectionDetails: p2.reflectionDetails as UnitPlan['reflectionDetails'],
-    verticalCoherence: p2.verticalCoherence as string,
-    horizontalCoherence: p2.horizontalCoherence as string,
-    interdisciplinaryLinks: p2.interdisciplinaryLinks as string,
-    studentContext: p2.studentContext as UnitPlan['studentContext'],
+    // Infos générales mises à jour
+    schoolYear: (p1.schoolYear as string) || '2026-2027',
+    numberOfPeriods: (p1.numberOfPeriods as string) || '',
+    numberOfHours: (p1.numberOfHours as string) || plan.duration || '',
+    startDate: (p1.startDate as string) || '',
+    endDate: (p1.endDate as string) || '',
+    prerequisites: (p1.prerequisites as string) || '',
+    // Contexte élèves
+    studentContext: (p1.studentContext as UnitPlan['studentContext']) || undefined,
+    // Contenu détaillé
+    contentDetails: (p1.contentDetails as UnitPlan['contentDetails']) || undefined,
+    // Détails objectifs
+    objectivesDetails: (p1.objectivesDetails as UnitPlan['objectivesDetails']) || undefined,
+    // Évaluations
+    formativeAssessment: (p1.formativeAssessment as string) || plan.formativeAssessment || '',
+    summativeAssessment: (p1.summativeAssessment as string) || plan.summativeAssessment || '',
+    // Liens interdisciplinaires (texte simple)
+    interdisciplinaryLinksText: (p1.interdisciplinaryLinks as string) || undefined,
+    // Processus d'apprentissage + séances
+    learningProcess: (p2.learningProcess as UnitPlan['learningProcess']) || undefined,
+    sessions: (p2.sessions as UnitPlan['sessions']) || undefined,
+    learningExperiences: (p2.learningExperiences as string) || plan.learningExperiences || '',
+    teachingStrategies: (p2.teachingStrategies as string) || '',
+    studentActivities: (p2.studentActivities as string) || '',
+    // Différenciation
+    differentiationDetails: (p3.differentiationDetails as UnitPlan['differentiationDetails']) || undefined,
+    differentiation: (p3.differentiation as string) || plan.differentiation || '',
+    // Réflexion
+    reflectionDetails: (p3.reflectionDetails as UnitPlan['reflectionDetails']) || undefined,
+    // Cohérence (champs texte simples)
+    verticalCoherenceText: (p3.verticalCoherence as string) || '',
+    horizontalCoherenceText: (p3.horizontalCoherence as string) || '',
+    // Ressources
+    resources: (p3.resources as string) || plan.resources || '',
+    // Marqueurs de mise à jour
     lastDetailUpdate: new Date().toISOString().slice(0, 10),
     isDetailUpdate: true,
   };
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPES ET CONSTANTES DU CALENDRIER ANNUEL
+// ─────────────────────────────────────────────────────────────────────────────
+export interface CalendarWeek {
+  num: number;      // Numéro de semaine (1-38)
+  label: string;    // "Semaine 1"
+  dates: string;    // "30 Août – 03 Septembre 2026"
+}
+
+export interface CalendarEntry {
+  weekNum: number;
+  subject: string;
+  unitNumber: number;
+  unitTitle: string;
+  type: 'unit' | 'assessment';
+  assessmentCriterion?: string; // "A", "B", etc.
+  color?: string;
+}
+
+export interface AnnualCalendar {
+  grade: string;
+  generatedAt: string;
+  entries: CalendarEntry[];
+}
+
+// 38 semaines de l'année scolaire 2026-2027
+export const SCHOOL_WEEKS_2026_2027: CalendarWeek[] = [
+  { num: 1, label: 'Semaine 1', dates: '30 Août – 03 Sept. 2026' },
+  { num: 2, label: 'Semaine 2', dates: '06 – 10 Sept. 2026' },
+  { num: 3, label: 'Semaine 3', dates: '13 – 17 Sept. 2026' },
+  { num: 4, label: 'Semaine 4', dates: '20 – 24 Sept. 2026' },
+  { num: 5, label: 'Semaine 5', dates: '27 Sept. – 01 Oct. 2026' },
+  { num: 6, label: 'Semaine 6', dates: '04 – 08 Oct. 2026' },
+  { num: 7, label: 'Semaine 7', dates: '11 – 15 Oct. 2026' },
+  { num: 8, label: 'Semaine 8', dates: '18 – 22 Oct. 2026' },
+  { num: 9, label: 'Semaine 9', dates: '25 – 29 Oct. 2026' },
+  { num: 10, label: 'Semaine 10', dates: '01 – 05 Nov. 2026' },
+  { num: 11, label: 'Semaine 11', dates: '08 – 12 Nov. 2026' },
+  { num: 12, label: 'Semaine 12', dates: '15 – 19 Nov. 2026' },
+  { num: 13, label: 'Semaine 13', dates: '29 Nov. – 03 Déc. 2026' },
+  { num: 14, label: 'Semaine 14', dates: '06 – 10 Déc. 2026' },
+  { num: 15, label: 'Semaine 15', dates: '13 – 17 Déc. 2026' },
+  { num: 16, label: 'Semaine 16', dates: '20 – 24 Déc. 2026' },
+  { num: 17, label: 'Semaine 17', dates: '27 – 31 Déc. 2026' },
+  { num: 18, label: 'Semaine 18', dates: '03 – 07 Jan. 2027' },
+  { num: 19, label: 'Semaine 19', dates: '17 – 21 Jan. 2027' },
+  { num: 20, label: 'Semaine 20', dates: '24 – 28 Jan. 2027' },
+  { num: 21, label: 'Semaine 21', dates: '31 Jan. – 04 Fév. 2027' },
+  { num: 22, label: 'Semaine 22', dates: '07 – 11 Fév. 2027' },
+  { num: 23, label: 'Semaine 23', dates: '14 – 18 Fév. 2027' },
+  { num: 24, label: 'Semaine 24', dates: '21 – 25 Fév. 2027' },
+  { num: 25, label: 'Semaine 25', dates: '14 – 18 Mars 2027' },
+  { num: 26, label: 'Semaine 26', dates: '21 – 25 Mars 2027' },
+  { num: 27, label: 'Semaine 27', dates: '28 Mars – 01 Avr. 2027' },
+  { num: 28, label: 'Semaine 28', dates: '04 – 08 Avr. 2027' },
+  { num: 29, label: 'Semaine 29', dates: '11 – 15 Avr. 2027' },
+  { num: 30, label: 'Semaine 30', dates: '18 – 22 Avr. 2027' },
+  { num: 31, label: 'Semaine 31', dates: '25 – 29 Avr. 2027' },
+  { num: 32, label: 'Semaine 32', dates: '02 – 06 Mai 2027' },
+  { num: 33, label: 'Semaine 33', dates: '23 – 27 Mai 2027' },
+  { num: 34, label: 'Semaine 34', dates: '30 Mai – 03 Juin 2027' },
+  { num: 35, label: 'Semaine 35', dates: '06 – 10 Juin 2027' },
+  { num: 36, label: 'Semaine 36', dates: '13 – 17 Juin 2027' },
+  { num: 37, label: 'Semaine 37', dates: '20 – 24 Juin 2027' },
+  { num: 38, label: 'Semaine 38', dates: '27 – 30 Juin 2027' },
+];
+
+export const SUBJECT_COLORS: Record<string, string> = {
+  'Langue et littérature': '#3b82f6',
+  'Acquisition de langues': '#0ea5e9',
+  'Individus et sociétés': '#f59e0b',
+  'Sciences': '#10b981',
+  'Mathématiques': '#ef4444',
+  'Arts': '#eab308',
+  'Éducation physique et à la santé': '#ec4899',
+  'Design': '#8b5cf6',
+  'Interdisciplinaire': '#a855f7',
+  'SEA': '#f97316',
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GÉNÉRATION IA DU CALENDRIER ANNUEL
+// Distribue intelligemment les unités de toutes les matières sur 38 semaines
+// Tient compte des unités interdisciplinaires pour synchroniser les matières
+// ─────────────────────────────────────────────────────────────────────────────
+export const generateAnnualCalendarWithAI = async (
+  grade: string,
+  plansBySubject: Record<string, UnitPlan[]>,
+  interdisciplinaryUnits: InterdisciplinaryUnit[],
+  onProgress?: (msg: string) => void
+): Promise<AnnualCalendar> => {
+  onProgress?.('Analyse des unités et préparation du calendrier...');
+
+  // Construire le résumé des unités pour le prompt
+  const subjectSummaries: string[] = [];
+  const allSubjectsWithPlans: string[] = [];
+
+  for (const [subject, plans] of Object.entries(plansBySubject)) {
+    if (plans.length === 0) continue;
+    allSubjectsWithPlans.push(subject);
+    const plansList = plans.map((p, i) =>
+      `  Unité ${i+1}: "${p.title}" (${p.duration || '?'}) — Critères: ${(p.objectives||[]).join(',')} — Concept: ${p.keyConcept||'?'}`
+    ).join('\n');
+    subjectSummaries.push(`${subject} (${plans.length} unités):\n${plansList}`);
+  }
+
+  // Résumé des unités interdisciplinaires pour synchronisation
+  const interSummary = interdisciplinaryUnits.map(u =>
+    `"${u.title}" — Disciplines: ${u.disciplines?.join(' + ')} — S'appuie sur: ${u.statementOfInquiry?.slice(0,80)||'?'}`
+  ).join('\n');
+
+  const prompt = `Tu es expert en planification IB PEI. Distribue les unités ci-dessous sur 38 semaines (semaines 1 à 38) de l'année scolaire 2026-2027 pour la classe ${grade}.
+
+MATIÈRES ET UNITÉS À PLANIFIER:
+${subjectSummaries.join('\n\n')}
+
+UNITÉS INTERDISCIPLINAIRES À SYNCHRONISER (matières doivent être en parallèle):
+${interSummary || 'Aucune'}
+
+RÈGLES IMPORTANTES:
+1. Distribue équitablement chaque unité sur plusieurs semaines consécutives selon sa durée
+2. Pour chaque unité interdisciplinaire, les matières concernées DOIVENT être planifiées en parallèle (mêmes semaines)
+3. Place les évaluations sommatives (assessment) 1-2 semaines avant la fin de l'unité
+4. Semaines 16-17 (Déc.) et 12-13 (Nov.) sont souvent des vacances — allège si possible
+5. Utilise TOUTES les 38 semaines
+
+Génère UNIQUEMENT un objet JSON valide:
+{
+  "entries": [
+    {"weekNum": 1, "subject": "NOM_EXACT_MATIERE", "unitNumber": 1, "unitTitle": "Titre de l'unité", "type": "unit"},
+    {"weekNum": 2, "subject": "NOM_EXACT_MATIERE", "unitNumber": 1, "unitTitle": "Titre de l'unité", "type": "unit"},
+    {"weekNum": 5, "subject": "NOM_EXACT_MATIERE", "unitNumber": 1, "unitTitle": "Titre", "type": "assessment", "assessmentCriterion": "A"},
+    ...
+  ]
+}
+
+Génère TOUTES les entrées pour TOUTES les matières sur les 38 semaines. Chaque semaine peut contenir plusieurs entrées (une par matière). Les noms de matières doivent correspondre EXACTEMENT à: ${allSubjectsWithPlans.join(', ')}`;
+
+  let entries: CalendarEntry[] = [];
+
+  try {
+    onProgress?.('Génération IA du calendrier en cours...');
+    const raw = await callGeminiViaProxy(prompt, undefined, { temperature: 0.5, maxOutputTokens: 4000 });
+
+    // Parse JSON
+    let s = raw.trim();
+    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) s = fence[1].trim();
+    const first = s.indexOf('{');
+    if (first !== -1) {
+      let depth = 0; let end = -1;
+      for (let i = first; i < s.length; i++) {
+        if (s[i] === '{') depth++; else if (s[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end !== -1) s = s.slice(first, end + 1);
+    }
+    s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+    s = s.replace(/,\s*([\]}])/g, '$1');
+    const parsed = JSON.parse(s) as { entries: CalendarEntry[] };
+    entries = parsed.entries || [];
+  } catch (e) {
+    console.error('Erreur génération calendrier IA:', e);
+    // Fallback: distribution automatique simple
+    onProgress?.('Génération automatique (fallback)...');
+    entries = generateCalendarFallback(grade, plansBySubject);
+  }
+
+  onProgress?.('Calendrier généré avec succès !');
+  return {
+    grade,
+    generatedAt: new Date().toISOString(),
+    entries,
+  };
+};
+
+// Fallback: distribution automatique simple sans IA
+function generateCalendarFallback(
+  grade: string,
+  plansBySubject: Record<string, UnitPlan[]>
+): CalendarEntry[] {
+  const entries: CalendarEntry[] = [];
+  const TOTAL_WEEKS = 38;
+  const subjects = Object.entries(plansBySubject).filter(([,plans]) => plans.length > 0);
+
+  for (const [subject, plans] of subjects) {
+    if (plans.length === 0) continue;
+    const weeksPerUnit = Math.max(2, Math.floor(TOTAL_WEEKS / plans.length));
+    let currentWeek = 1;
+
+    plans.forEach((plan, idx) => {
+      const endWeek = Math.min(currentWeek + weeksPerUnit - 1, TOTAL_WEEKS);
+      for (let w = currentWeek; w <= endWeek; w++) {
+        if (w <= TOTAL_WEEKS) {
+          entries.push({ weekNum: w, subject, unitNumber: idx + 1, unitTitle: plan.title || `Unité ${idx + 1}`, type: 'unit' });
+        }
+      }
+      // Assessment in last week of unit
+      const assWeek = Math.min(endWeek, TOTAL_WEEKS);
+      (plan.objectives || ['A']).forEach((crit: string) => {
+        entries.push({ weekNum: assWeek, subject, unitNumber: idx + 1, unitTitle: plan.title || `Unité ${idx + 1}`, type: 'assessment', assessmentCriterion: crit });
+      });
+      currentWeek = endWeek + 1;
+      if (currentWeek > TOTAL_WEEKS) currentWeek = TOTAL_WEEKS;
+    });
+  }
+  return entries;
+}
