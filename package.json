@@ -8,14 +8,17 @@
     "npm": ">=9.0.0"
   },
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
     "docx": "^9.5.1",
     "docxtemplater": "3.42.0",
+    "esbuild": "^0.28.2",
+    "express": "^5.2.1",
     "file-saver": "2.0.5",
     "firebase": "^12.6.0",
     "groq-sdk": "^0.37.0",
@@ -25,9 +28,11 @@
     "pizzip": "3.1.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "recharts": "^3.4.1"
+    "recharts": "^3.4.1",
+    "tsx": "^4.23.12"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.14.0",
     "@vercel/node": "^5.5.9",
     "@vitejs/plugin-react": "^5.0.0",

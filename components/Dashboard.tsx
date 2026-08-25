@@ -5,7 +5,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recha
 import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI } from '../services/geminiService';
 import type { AppUser } from '../services/authService';
 import ModificationRequestModal from './ModificationRequestModal';
-import { exportUnitPlanToWord, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
+import { exportUnitPlanToWord, exportAllUnitPlansToZip, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
 import { SUBJECTS, INTERDISCIPLINARY_SUBJECT, PEI_GRADES, DRIVE_FORM_TAG_GUIDE } from '../constants';
 import AddEditUnitModal from './AddEditUnitModal';
@@ -210,8 +210,14 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
 
   const handleExportPlan = async (plan: UnitPlan) => {
     setExportingId(`plan-${plan.id}`);
-    await exportUnitPlanToWord(plan);
-    setExportingId(null);
+    try {
+      await exportUnitPlanToWord(plan);
+    } catch (e: any) {
+      console.error("Erreur téléchargement plan Word:", e);
+      alert(`Erreur lors du téléchargement du plan Word: ${e?.message || e}`);
+    } finally {
+      setExportingId(null);
+    }
   };
 
   const handleExportAssessment = async (plan: UnitPlan) => {
@@ -721,7 +727,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
         phase1_activation:  pick(existLP?.phase1_activation,  genLP?.phase1_activation)  ?? '',
         phase2_acquisition: pick(existLP?.phase2_acquisition, genLP?.phase2_acquisition) ?? '',
         phase3_practice:    pick(existLP?.phase3_practice,    genLP?.phase3_practice)    ?? '',
-        phase4_application: pick(existLP?.phase4_application, genLP?.phase4_application) ?? '',
+        phase4_transfer:    pick(existLP?.phase4_transfer,    genLP?.phase4_transfer)    ?? '',
         phase5_reflection:  pick(existLP?.phase5_reflection,  genLP?.phase5_reflection)  ?? '',
       } : undefined;
 
@@ -816,10 +822,13 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       const existSC = detailUpdatePlan.studentContext;
       const genSC   = g.studentContext;
       const mergedSC = (existSC || genSC) ? {
-        priorKnowledge:  pick(existSC?.priorKnowledge, genSC?.priorKnowledge)   ?? '',
-        interests:       pick(existSC?.interests,      genSC?.interests)         ?? '',
-        specialNeeds:    pick(existSC?.specialNeeds,   genSC?.specialNeeds)      ?? '',
-        learningProfiles: pick(existSC?.learningProfiles, genSC?.learningProfiles) ?? '',
+        priorKnowledge:          pick(existSC?.priorKnowledge,          genSC?.priorKnowledge)          ?? '',
+        acquiredSkills:          pick(existSC?.acquiredSkills,          genSC?.acquiredSkills)          ?? '',
+        linksPreviousUnits:      pick(existSC?.linksPreviousUnits,      genSC?.linksPreviousUnits)      ?? '',
+        specificNeeds:           pick(existSC?.specificNeeds,           genSC?.specificNeeds)           ?? '',
+        profileDiversity:        pick(existSC?.profileDiversity,        genSC?.profileDiversity)        ?? '',
+        culturalContexts:        pick(existSC?.culturalContexts,        genSC?.culturalContexts)        ?? '',
+        anticipatedDifficulties: pick(existSC?.anticipatedDifficulties, genSC?.anticipatedDifficulties) ?? '',
       } : undefined;
 
       // ── Merge profond interdisciplinaryLinks ──────────────────────────────
@@ -967,54 +976,30 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     URL.revokeObjectURL(url);
   };
 
-  // ── Handler : Export ZIP des plans d'une classe ───────────────────────────
+  // ── Handler : Export ZIP des plans d'une classe (tous au format Word .docx) ──
+  const [zipProgress, setZipProgress] = useState<{ current: number; total: number; title: string } | null>(null);
   const handleExportClassZip = async () => {
+    if (plans.length === 0) {
+      alert("Aucun plan d'unité à exporter pour cette classe.");
+      return;
+    }
     setIsExportingZip(true);
+    setZipProgress(null);
     try {
-      // Import JSZip dynamically
-      const JSZip = (await import('jszip')).default;
-      const FileSaver = await import('file-saver');
-      const zip = new JSZip();
-
-      // Créer un dossier pour cette classe
-      const folder = zip.folder(`Plans_${currentSubject}_${currentGrade}`) || zip;
-      
-      // Ajouter un fichier CSV récapitulatif
-      const headers = [
-        'Titre', 'Matière', 'Niveau', 'Durée', 'Concept clé', 'Contexte mondial',
-        'Énoncé de recherche', 'Objectifs', 'ATL', 'Évaluation sommative',
-        'Réflexion avant', 'Réflexion pendant', 'Réflexion après', 'Dernière mise à jour'
-      ];
-      const rows = plans.map(p => [
-        p.title || '', p.subject || '', p.gradeLevel || '', p.duration || '',
-        p.keyConcept || '', p.globalContext || '', p.statementOfInquiry || '',
-        (p.objectives || []).join('; '),
-        (Array.isArray(p.atlSkills) ? p.atlSkills : []).join('; '),
-        (p.summativeAssessment || '').replace(/\n/g, ' '),
-        (p.reflection?.prior || '').replace(/\n/g, ' '),
-        (p.reflection?.during || '').replace(/\n/g, ' '),
-        (p.reflection?.after || '').replace(/\n/g, ' '),
-        p.lastDetailUpdate || ''
-      ]);
-      const csvContent = '\uFEFF' + [headers, ...rows]
-        .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-        .join('\n');
-      folder.file(`recapitulatif_${currentGrade}.csv`, csvContent);
-
-      // Ajouter un fichier JSON complet pour chaque plan
-      plans.forEach((plan, idx) => {
-        const safeTitle = (plan.title || `unite_${idx + 1}`).replace(/[^a-zA-Z0-9_\u00C0-\u017E\s-]/g, '').trim().replace(/\s+/g, '_');
-        folder.file(`${idx + 1}_${safeTitle}.json`, JSON.stringify(plan, null, 2));
-      });
-
-      // Générer et télécharger le ZIP
-      const content = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-      const saveAs = (FileSaver as any).saveAs || FileSaver;
-      saveAs(content, `Plans_${currentSubject}_${currentGrade}_${new Date().toISOString().slice(0,10)}.zip`);
+      await exportAllUnitPlansToZip(
+        plans,
+        currentSubject,
+        currentGrade,
+        (current, total, title) => {
+          setZipProgress({ current, total, title });
+        }
+      );
     } catch (e: any) {
-      alert('Erreur export ZIP: ' + (e?.message || e));
+      console.error("Erreur export ZIP des plans Word:", e);
+      alert('Erreur lors de l\'export ZIP des plans Word: ' + (e?.message || e));
     } finally {
       setIsExportingZip(false);
+      setZipProgress(null);
     }
   };
 
@@ -1547,16 +1532,18 @@ Chapitre 4 : Algèbre et équations
                 Export CSV
               </button>
             )}
-            {/* ── Bouton Export ZIP Classe ─ admin seulement ─── */}
-            {isAdmin && plans.length > 0 && (
+            {/* ── Bouton Export ZIP Plans Word Classe ─── */}
+            {plans.length > 0 && (
               <button
                 onClick={handleExportClassZip}
                 disabled={isExportingZip}
-                className="flex items-center gap-2 bg-rose-500/80 hover:bg-rose-500 text-white border border-rose-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70"
-                title="Télécharger tous les plans de cette classe en ZIP (JSON + CSV)"
+                className="flex items-center gap-2 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white border border-rose-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70"
+                title="Télécharger tous les plans d'unités de cette classe sous forme d'archive ZIP (contenant tous les fichiers Word .docx)"
               >
                 {isExportingZip ? <Loader2 className="animate-spin" size={20} /> : <FileArchive size={20} />}
-                ZIP Classe
+                {isExportingZip && zipProgress
+                  ? `Export Word (${zipProgress.current}/${zipProgress.total})...`
+                  : `ZIP Plans Word (${plans.length})`}
               </button>
             )}
             {/* ── Bouton Demander une modification ─ enseignant seulement ─ */}
@@ -1816,11 +1803,12 @@ Chapitre 4 : Algèbre et équations
                             <div className="flex items-center gap-2 flex-wrap">
                                 <button 
                                     onClick={() => handleExportPlan(plan)}
-                                    className="flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-1 rounded hover:bg-emerald-100 transition"
+                                    className="flex items-center gap-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-md transition font-medium"
                                     disabled={exportingId === `plan-${plan.id}`}
+                                    title="Télécharger ce plan d'unité sous format Word (.docx)"
                                 >
-                                    {exportingId === `plan-${plan.id}` ? <Loader2 className="animate-spin" size={14}/> : <Download size={14}/>}
-                                    Plan
+                                    {exportingId === `plan-${plan.id}` ? <Loader2 className="animate-spin" size={14}/> : <FileText size={14}/>}
+                                    Plan Word
                                 </button>
                                 <button 
                                     onClick={() => handleExportAssessment(plan)}

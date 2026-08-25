@@ -221,8 +221,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
   };
 
   // Toutes les matières présentes dans le calendrier
-  const presentSubjects = calendar
-    ? [...new Set(calendar.entries.map(e => e.subject))].sort()
+  const presentSubjects: string[] = calendar
+    ? Array.from(new Set<string>(calendar.entries.map(e => e.subject))).sort()
     : [];
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -523,7 +523,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                   const color = getSubjectColor(subject);
                   const subjectEntries = calendar.entries.filter(e => e.subject === subject);
                   // Grouper par numéro d'unité
-                  const unitNums = [...new Set(subjectEntries.map(e => e.unitNumber))].sort((a, b) => a - b);
+                  const unitNums: number[] = Array.from(new Set<number>(subjectEntries.map(e => Number(e.unitNumber)))).sort((a: number, b: number) => a - b);
 
                   return (
                     <div

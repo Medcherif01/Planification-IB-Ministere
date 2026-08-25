@@ -2,6 +2,21 @@ import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import FileSaver from "file-saver";
 import JSZip from "jszip";
+import {
+  Document as DocxDocument,
+  Paragraph,
+  TextRun,
+  Table as DocxTable,
+  TableRow as DocxTableRow,
+  TableCell as DocxTableCell,
+  WidthType,
+  BorderStyle,
+  AlignmentType,
+  PageOrientation,
+  ShadingType,
+  HeadingLevel,
+  Packer,
+} from "docx";
 import { UnitPlan, AssessmentData, ServiceActionPlan } from "../types";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
 import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit, AnnualCalendar, SCHOOL_WEEKS_2026_2027, SUBJECT_COLORS, CalendarEntry } from "./geminiService";
@@ -417,30 +432,23 @@ const applyIBConformityCorrections = (plan: UnitPlan): UnitPlan => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EXPORT PLAN D'UNITÉ → template plan.docx via docxtemplater
-// Remplit EXACTEMENT les champs du template IB PEI officiel
-// + champs étendus pour les données IA générées (sections A→R)
+// CONSTRUCTEUR DE DONNÉES POUR LE TEMPLATE OFFICIEL .DOCX
 // ─────────────────────────────────────────────────────────────────────────────
-export const exportUnitPlanToWord = async (plan: UnitPlan) => {
-  // ── 0. Appliquer les corrections de conformité IB ─────────────────────────
-  plan = applyIBConformityCorrections(plan);
-  // ── 1. Récupérer les dates depuis le calendrier annuel ────────────────────
+export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
+  const plan = applyIBConformityCorrections(rawPlan);
   const calDates = getCalendarDates(plan);
   const startDate = calDates.startDate || plan.startDate || '';
   const endDate   = calDates.endDate   || plan.endDate   || '';
 
-  // ── 2. Préparer les champs agrégés pour le template ──────────────────────
   const objectives = Array.isArray(plan.objectives) ? plan.objectives : [];
   const atl = Array.isArray(plan.atlSkills) ? plan.atlSkills : (plan.atlSkills ? [plan.atlSkills as string] : []);
   const related = Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts : [];
 
-  // Objectifs spécifiques : "Critère A – aspects ; Critère B – aspects …"
   const objectifsTxt = objectives.map(cr => {
     const d = plan.objectivesDetails?.find(x => x.criterion === cr);
     return `Critère ${cr}${d?.aspects ? ' – ' + d.aspects : ''}${d?.expectedLevel ? ' (niveau attendu : ' + d.expectedLevel + ')' : ''}`;
   }).join('\n') || c(plan.content?.slice(0, 200));
 
-  // Contenu enrichi : plan général + détails IA
   const contenuTxt = [
     c(plan.content),
     plan.contentDetails?.knowledges      ? 'Connaissances : ' + c(plan.contentDetails.knowledges) : '',
@@ -451,7 +459,6 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     plan.contentDetails?.nationalLinks      ? 'Liens programme national : ' + c(plan.contentDetails.nationalLinks) : '',
   ].filter(Boolean).join('\n\n');
 
-  // Processus d'apprentissage enrichi avec les 5 phases + stratégies + séances
   const processusBlocs: string[] = [];
   if (plan.learningProcess) {
     const lp = plan.learningProcess;
@@ -465,7 +472,6 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
   if (plan.studentActivities)   processusBlocs.push('Activités des élèves :\n' + c(plan.studentActivities));
   if (plan.learningExperiences) processusBlocs.push('Expériences d\'apprentissage :\n' + c(plan.learningExperiences));
 
-  // Séances détaillées → texte structuré
   if (plan.sessions && plan.sessions.length > 0) {
     const sessionsText = plan.sessions.map(sess =>
       `Séance ${sess.numero} (${c(sess.duree)}) :\n` +
@@ -482,13 +488,11 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
 
   const processusTxt = processusBlocs.join('\n\n') || c(plan.learningExperiences);
 
-  // Évaluation formative
   const evalFormTxt = [
     c(plan.formativeAssessment),
     plan.objectivesDetails?.map(d => d.formativeAssessment ? `Critère ${d.criterion} : ${c(d.formativeAssessment)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
-  // Évaluation sommative
   const evalSommTxt = [
     c(plan.summativeAssessment),
     objectives.length > 0 ? 'Critères évalués : ' + objectives.join(', ') : '',
@@ -498,7 +502,6 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     plan.objectivesDetails?.map(d => d.summativeAssessment ? `Critère ${d.criterion} : ${c(d.summativeAssessment)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
-  // Différenciation
   const difftxt = [
     c(plan.differentiation),
     plan.differentiationDetails?.supportStudents ? [
@@ -522,13 +525,11 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     plan.differentiationDetails?.productDifferentiation  ? 'Différenciation de la production : ' + c(plan.differentiationDetails.productDifferentiation) : '',
   ].filter(Boolean).join('\n\n');
 
-  // Ressources
   const ressourcesTxt = [
     c(plan.resources),
     plan.sessions?.map(s => s.ressources ? `Séance ${s.numero} : ${c(s.ressources)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
-  // Réflexion avant
   const reflexionAvantTxt = [
     plan.reflectionDetails?.before ? [
       plan.reflectionDetails.before.priorKnowledge      ? 'Connaissances antérieures : ' + c(plan.reflectionDetails.before.priorKnowledge) : '',
@@ -541,7 +542,6 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     ].filter(Boolean).join('\n') : c(plan.reflection?.prior),
   ].filter(Boolean).join('\n');
 
-  // Réflexion pendant
   const reflexionPendantTxt = [
     plan.reflectionDetails?.during ? [
       plan.reflectionDetails.during.progressObserved      ? 'Progrès observés : ' + c(plan.reflectionDetails.during.progressObserved) : '',
@@ -552,7 +552,6 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     ].filter(Boolean).join('\n') : c(plan.reflection?.during),
   ].filter(Boolean).join('\n');
 
-  // Réflexion après
   const reflexionApresTxt = [
     plan.reflectionDetails?.after ? [
       plan.reflectionDetails.after.achievedObjectives     ? 'Objectifs atteints : ' + c(plan.reflectionDetails.after.achievedObjectives) : '',
@@ -564,7 +563,6 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     ].filter(Boolean).join('\n') : c(plan.reflection?.after),
   ].filter(Boolean).join('\n');
 
-  // Contexte élèves → Prérequis enrichis
   const prerequisTxt = [
     c(plan.prerequisites),
     plan.studentContext?.priorKnowledge      ? 'Connaissances antérieures : ' + c(plan.studentContext.priorKnowledge) : '',
@@ -574,14 +572,12 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     plan.studentContext?.anticipatedDifficulties ? 'Difficultés anticipées : ' + c(plan.studentContext.anticipatedDifficulties) : '',
   ].filter(Boolean).join('\n');
 
-  // Cohérence + liens interdisciplinaires → ajout dans réflexion après ou ressources
   const coherenceTxt = [
     plan.verticalCoherenceText    ? 'Cohérence verticale : ' + c(plan.verticalCoherenceText) : '',
     plan.horizontalCoherenceText  ? 'Cohérence horizontale : ' + c(plan.horizontalCoherenceText) : '',
     plan.interdisciplinaryLinksText ? 'Liens interdisciplinaires : ' + c(plan.interdisciplinaryLinksText) : '',
   ].filter(Boolean).join('\n\n');
 
-  // Durée enrichie : heures + périodes + dates calendrier
   const dureeTxt = [
     c(plan.duration),
     plan.numberOfHours   ? plan.numberOfHours + ' h' : '',
@@ -589,44 +585,30 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     startDate && endDate ? `Du ${startDate} au ${endDate}` : startDate ? `À partir du ${startDate}` : '',
   ].filter(Boolean).join(' — ');
 
-  // ── 3. Construire le data object qui correspond aux champs du template .docx
-  const data = {
-    // ─── Champs EN-TÊTE du template (page 1) ─────────────────────────────
+  return {
     enseignant:       c(plan.teacherName),
     groupe_matiere:   c(plan.subject) + (plan.gradeLevel ? ' — ' + c(plan.gradeLevel) : ''),
     titre_unite:      c(plan.title),
     annee_pei:        c(plan.schoolYear || '2026-2027'),
     duree:            dureeTxt,
-
-    // ─── Section Recherche ────────────────────────────────────────────────
     concept_cle:           c(plan.keyConcept) + (plan.keyConceptDefinition ? '\n' + c(plan.keyConceptDefinition) : ''),
     concepts_connexes:     related.join(', '),
     contexte_mondial:      c(plan.globalContext) + (plan.globalContextAspects ? '\n' + c(plan.globalContextAspects) : ''),
     enonce_de_recherche:   c(plan.statementOfInquiry) + (plan.statementExplanation ? '\n\n' + c(plan.statementExplanation) : ''),
-
-    // Questions d'investigation
     questions_factuelles:      listTxt(plan.inquiryQuestions?.factual),
     questions_conceptuelles:   listTxt(plan.inquiryQuestions?.conceptual),
     questions_debat:           listTxt(plan.inquiryQuestions?.debatable),
-
-    // ─── Section Action ───────────────────────────────────────────────────
     objectifs_specifiques:  objectifsTxt,
     evaluation_sommative:   evalSommTxt,
     approches_apprentissage: atl.join('\n'),
-
-    // Page 2 — Processus
     contenu:                contenuTxt,
     processus_apprentissage: processusTxt,
     evaluation_formative:   evalFormTxt,
     differenciation:        difftxt,
     ressources:             ressourcesTxt + (coherenceTxt ? '\n\n' + coherenceTxt : ''),
-
-    // ─── Section Réflexion ────────────────────────────────────────────────
     reflexion_avant:    reflexionAvantTxt || '(À compléter avant l\'enseignement de l\'unité)',
     reflexion_pendant:  reflexionPendantTxt || '(À compléter pendant l\'enseignement de l\'unité)',
     reflexion_apres:    reflexionApresTxt || '(À compléter après l\'enseignement de l\'unité)',
-
-    // ─── Champs supplémentaires compatibles template étendu ──────────────
     classe:             c(plan.gradeLevel),
     matiere:            c(plan.subject),
     unite:              c(plan.title),
@@ -638,10 +620,295 @@ export const exportUnitPlanToWord = async (plan: UnitPlan) => {
     nombre_heures:      c(plan.numberOfHours || plan.duration),
     prerequis:          prerequisTxt,
   };
+};
 
-  // ── 4. Générer le .docx via le template plan.docx officiel (paysage) ──────
-  const fileName = `Plan_Unite_${c(plan.title).replace(/[^a-z0-9]/gi,'_').slice(0,40) || 'Sans_Titre'}.docx`;
-  await generateDocument('plan', data, fileName, true /* landscape */);
+// ─────────────────────────────────────────────────────────────────────────────
+// GÉNÉRATEUR NATIF .DOCX POUR PLAN D'UNITÉ (FALLBACK 100% GARANTI HORS LIGNE)
+// ─────────────────────────────────────────────────────────────────────────────
+export const generateUnitPlanNativeDocxBlob = async (rawPlan: UnitPlan): Promise<Blob> => {
+  const plan = applyIBConformityCorrections(rawPlan);
+  const data = buildUnitPlanTemplateData(plan);
+
+  const border = { style: BorderStyle.SINGLE, size: 1, color: "CBD5E1" };
+  const cellBorders = { top: border, bottom: border, left: border, right: border };
+
+  const createCell = (text: string, isHeader = false, widthPercent = 50): DocxTableCell => {
+    return new DocxTableCell({
+      borders: cellBorders,
+      shading: isHeader ? { fill: "F1F5F9", type: ShadingType.CLEAR } : undefined,
+      width: { size: widthPercent, type: WidthType.PERCENTAGE },
+      children: text.split('\n').map(line =>
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: line,
+              bold: isHeader,
+              size: 20, // 10pt
+              font: "Calibri",
+              color: isHeader ? "1E293B" : "334155",
+            })
+          ],
+          spacing: { before: 60, after: 60 }
+        })
+      )
+    });
+  };
+
+  const createSectionHeader = (title: string, color = "1E3A8A"): Paragraph => {
+    return new Paragraph({
+      children: [
+        new TextRun({
+          text: title,
+          bold: true,
+          size: 24, // 12pt
+          color,
+          font: "Calibri",
+        })
+      ],
+      spacing: { before: 240, after: 120 },
+      heading: HeadingLevel.HEADING_2
+    });
+  };
+
+  const createRow = (label: string, value: string): DocxTableRow => {
+    return new DocxTableRow({
+      children: [
+        createCell(label, true, 30),
+        createCell(value || '(Non renseigné)', false, 70),
+      ]
+    });
+  };
+
+  const doc = new DocxDocument({
+    sections: [{
+      properties: {
+        page: {
+          margin: { top: 720, bottom: 720, left: 720, right: 720 },
+        }
+      },
+      children: [
+        // En-tête principal
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new TextRun({
+              text: "LES ÉCOLES INTERNATIONALES AL KAWTHAR",
+              bold: true,
+              size: 26,
+              color: "1E3A8A",
+              font: "Calibri",
+            })
+          ],
+          spacing: { after: 60 }
+        }),
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new TextRun({
+              text: `PLAN DE L'UNITÉ D'APPRENTISSAGE DU PEI (IB MYP)`,
+              bold: true,
+              size: 24,
+              color: "2563EB",
+              font: "Calibri",
+            })
+          ],
+          spacing: { after: 180 }
+        }),
+
+        // Tableau métadonnées
+        new DocxTable({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders: cellBorders,
+          rows: [
+            new DocxTableRow({
+              children: [
+                createCell("Titre de l'unité", true, 25),
+                createCell(data.titre_unite, false, 75),
+              ]
+            }),
+            new DocxTableRow({
+              children: [
+                createCell("Matière & Classe", true, 25),
+                createCell(`${data.groupe_matiere}`, false, 75),
+              ]
+            }),
+            new DocxTableRow({
+              children: [
+                createCell("Enseignant(e)", true, 25),
+                createCell(data.enseignant || 'Non spécifié', false, 75),
+              ]
+            }),
+            new DocxTableRow({
+              children: [
+                createCell("Durée & Période", true, 25),
+                createCell(data.duree || 'Non spécifié', false, 75),
+              ]
+            }),
+          ]
+        }),
+
+        // 1. RECHERCHE
+        createSectionHeader("1. ÉTABLIR L'OBJECTIF DE L'UNITÉ (RECHERCHE)"),
+        new DocxTable({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders: cellBorders,
+          rows: [
+            createRow("Énoncé de recherche", data.enonce_de_recherche),
+            createRow("Concept clé", data.concept_cle),
+            createRow("Concepts connexes", data.concepts_connexes),
+            createRow("Contexte mondial & exploration", data.contexte_mondial),
+            createRow("Questions d'investigation\n(Factuelles, Conceptuelles, Débat)",
+              `Factuelles :\n${data.questions_factuelles || '—'}\n\nConceptuelles :\n${data.questions_conceptuelles || '—'}\n\nÀ débat :\n${data.questions_debat || '—'}`
+            ),
+          ]
+        }),
+
+        // 2. ACTION
+        createSectionHeader("2. PLANIFIER L'APPRENTISSAGE PAR LE BIAIS DE LA RECHERCHE (ACTION)"),
+        new DocxTable({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders: cellBorders,
+          rows: [
+            createRow("Objectifs spécifiques & Critères", data.objectifs_specifiques),
+            createRow("Évaluation sommative", data.evaluation_sommative),
+            createRow("Approches de l'apprentissage (ATL)", data.approches_apprentissage),
+            createRow("Contenu & Notions", data.contenu),
+            createRow("Processus d'apprentissage & Séances", data.processus_apprentissage),
+            createRow("Évaluation formative", data.evaluation_formative),
+            createRow("Différenciation", data.differenciation),
+            createRow("Ressources & Coopération", data.ressources),
+          ]
+        }),
+
+        // 3. RÉFLEXION
+        createSectionHeader("3. RÉFLÉCHIR : PLANIFIER, ENSEIGNER ET APPRENDRE (RÉFLEXION)"),
+        new DocxTable({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders: cellBorders,
+          rows: [
+            createRow("Avant l'enseignement", data.reflexion_avant),
+            createRow("Pendant l'enseignement", data.reflexion_pendant),
+            createRow("Après l'enseignement", data.reflexion_apres),
+          ]
+        }),
+      ]
+    }]
+  });
+
+  return await Packer.toBlob(doc);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GÉNÉRATEUR DE BLOB WORD (.DOCX) POUR UN PLAN D'UNITÉ (AVEC FALLBACK ROBUSTE)
+// ─────────────────────────────────────────────────────────────────────────────
+export const generateUnitPlanWordBlob = async (rawPlan: UnitPlan): Promise<Blob> => {
+  const plan = applyIBConformityCorrections(rawPlan);
+  const data = buildUnitPlanTemplateData(plan);
+
+  try {
+    const templateContent = await loadFile('plan');
+    return generateDocumentBlob(templateContent, data, true /* landscape */);
+  } catch (templateErr) {
+    console.warn("[WORD EXPORT] Le template officiel n'a pas pu être chargé, génération native .docx:", templateErr);
+    return await generateUnitPlanNativeDocxBlob(plan);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT D'UN PLAN D'UNITÉ INDIVIDUEL EN WORD (.DOCX)
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportUnitPlanToWord = async (plan: UnitPlan): Promise<void> => {
+  try {
+    const blob = await generateUnitPlanWordBlob(plan);
+    const safeTitle = (plan.title || 'Plan_Unite')
+      .replace(/[^a-zA-Z0-9_\u00C0-\u017E\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '_')
+      .slice(0, 45);
+    const fileName = `Plan_Unite_${safeTitle || 'Sans_Titre'}.docx`;
+    const saveAs = (FileSaver as any).saveAs || FileSaver;
+    saveAs(blob, fileName);
+  } catch (error: any) {
+    console.error("Erreur export plan Word:", error);
+    alert(`Erreur lors de l'export Word : ${error?.message || error}`);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT DE TOUS LES PLANS D'UNITÉ D'UNE CLASSE/MATIÈRE EN ZIP (FICHIERS WORD .DOCX)
+// ─────────────────────────────────────────────────────────────────────────────
+export const exportAllUnitPlansToZip = async (
+  plans: UnitPlan[],
+  subject: string,
+  grade: string,
+  onProgress?: (current: number, total: number, unitTitle: string) => void
+): Promise<void> => {
+  if (!plans || plans.length === 0) {
+    alert("Aucun plan d'unité à exporter pour cette classe.");
+    return;
+  }
+
+  const zip = new JSZip();
+  const safeSubject = (subject || 'Matiere')
+    .replace(/[^a-zA-Z0-9_\u00C0-\u017E\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+  const safeGrade = (grade || 'Classe')
+    .replace(/[^a-zA-Z0-9_\u00C0-\u017E\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+
+  const folderName = `Plans_Word_${safeSubject}_${safeGrade}`;
+  const folder = zip.folder(folderName) || zip;
+
+  // 1. Générer le fichier Word .docx pour chaque unité
+  for (let i = 0; i < plans.length; i++) {
+    const plan = plans[i];
+    const unitNum = i + 1;
+    const safeTitle = (plan.title || `Unite_${unitNum}`)
+      .replace(/[^a-zA-Z0-9_\u00C0-\u017E\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '_')
+      .slice(0, 40);
+
+    onProgress?.(unitNum, plans.length, plan.title || `Unité ${unitNum}`);
+
+    try {
+      const wordBlob = await generateUnitPlanWordBlob(plan);
+      const fileName = `${unitNum}_Plan_${safeTitle}.docx`;
+      folder.file(fileName, wordBlob);
+    } catch (unitErr) {
+      console.error(`Erreur génération Word pour unité ${unitNum}:`, unitErr);
+      const fallbackBlob = await generateUnitPlanNativeDocxBlob(plan);
+      folder.file(`${unitNum}_Plan_${safeTitle}.docx`, fallbackBlob);
+    }
+  }
+
+  // 2. Ajouter un récapitulatif CSV structuré
+  const headers = ['N°', 'Titre', 'Matière', 'Classe', 'Durée', 'Enseignant(e)', 'Énoncé de recherche', 'Concept Clé', 'Contexte Mondial', 'Critères Évalués'];
+  const rows = plans.map((p, idx) => [
+    idx + 1,
+    p.title || '',
+    p.subject || subject,
+    p.gradeLevel || grade,
+    p.duration || '',
+    p.teacherName || '',
+    p.statementOfInquiry || '',
+    p.keyConcept || '',
+    p.globalContext || '',
+    Array.isArray(p.objectives) ? p.objectives.join(', ') : (p.assessments || []).map(a => `Critère ${a.criterion}`).join(', ')
+  ]);
+
+  const csvContent = '\uFEFF' + [headers, ...rows]
+    .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  folder.file(`00_Recapitulatif_${safeGrade}_${safeSubject}.csv`, csvContent);
+
+  // 3. Générer et télécharger l'archive ZIP
+  const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  const saveAs = (FileSaver as any).saveAs || FileSaver;
+  const zipFileName = `Plans_Word_${safeSubject}_${safeGrade}_${new Date().toISOString().slice(0, 10)}.zip`;
+  saveAs(zipBlob, zipFileName);
 };
 
 export const exportAssessmentsToZip = async (plan: UnitPlan) => {

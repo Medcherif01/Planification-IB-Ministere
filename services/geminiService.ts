@@ -2272,7 +2272,7 @@ ${unitDescriptions}
 Matière: ${subject}
 Niveau: ${gradeLevel}
 
-${!isDesignSubject(subject) && lang !== 'en' ? `Concepts IB officiels pour ${subject}:
+${!isDesignSubject(subject) ? `Concepts IB officiels pour ${subject}:
 - Concepts clés autorisés: ${subjectConcepts.keyConcepts.join(', ')}
 - Concepts connexes autorisés: ${subjectConcepts.relatedConcepts.join(', ')}` : ''}
 
