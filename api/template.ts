@@ -1,4 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import fs from 'fs';
+import path from 'path';
 
 // Liste des templates autorisés (clés → URLs Google Docs)
 const ALLOWED_TEMPLATES: Record<string, string> = {
@@ -39,7 +41,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     console.log(`[TEMPLATE API] Téléchargement du template "${type}" depuis Google Docs...`);
 
-    // Ajouter un cache-buster pour forcer Google à renvoyer le fichier le plus récent
     const urlWithCacheBust = `${templateUrl}&t=${Date.now()}`;
 
     const response = await fetch(urlWithCacheBust, {
@@ -51,36 +52,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       redirect: 'follow',
     });
 
-    if (!response.ok) {
-      console.error(`[TEMPLATE API] Échec HTTP ${response.status} pour template "${type}"`);
-      return res.status(502).json({
-        error: `Impossible de télécharger le template depuis Google Docs (HTTP ${response.status})`,
-      });
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > 100) {
+        console.log(`[TEMPLATE API] Template "${type}" téléchargé depuis Google Docs (${buffer.byteLength} bytes)`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.setHeader('Content-Length', buffer.byteLength);
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(200).send(Buffer.from(buffer));
+      }
     }
-
-    const contentType = response.headers.get('content-type') || 'application/octet-stream';
-    const buffer = await response.arrayBuffer();
-
-    if (buffer.byteLength < 100) {
-      console.error(`[TEMPLATE API] Template "${type}" trop petit (${buffer.byteLength} bytes) — probablement une erreur Google`);
-      return res.status(502).json({
-        error: 'Le template téléchargé est vide ou invalide',
-      });
-    }
-
-    console.log(`[TEMPLATE API] Template "${type}" téléchargé avec succès (${buffer.byteLength} bytes)`);
-
-    // Renvoyer le fichier binaire au frontend
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Length', buffer.byteLength);
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).send(Buffer.from(buffer));
-
   } catch (error: any) {
-    console.error(`[TEMPLATE API] Erreur lors du téléchargement du template "${type}":`, error);
-    return res.status(500).json({
-      error: 'Erreur serveur lors du téléchargement du template',
-      message: error.message,
-    });
+    console.warn(`[TEMPLATE API] Échec téléchargement Google Docs pour "${type}", essai fallback local:`, error.message);
   }
+
+  // Fallback local file if Google Docs is unavailable
+  try {
+    const localPaths = [
+      path.join(process.cwd(), 'public', 'templates', `${type}.docx`),
+      path.join(process.cwd(), 'templates', `${type}.docx`),
+    ];
+    for (const p of localPaths) {
+      if (fs.existsSync(p)) {
+        const fileBuf = fs.readFileSync(p);
+        console.log(`[TEMPLATE API] Utilisation du template local "${type}" (${fileBuf.byteLength} bytes)`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.setHeader('Content-Length', fileBuf.byteLength);
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(200).send(fileBuf);
+      }
+    }
+  } catch (e: any) {
+    console.error(`[TEMPLATE API] Erreur lecture fallback local:`, e.message);
+  }
+
+  return res.status(502).json({
+    error: `Impossible de charger le modèle Word "${type}"`,
+  });
 }

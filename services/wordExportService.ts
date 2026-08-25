@@ -21,35 +21,54 @@ import { UnitPlan, AssessmentData, ServiceActionPlan } from "../types";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
 import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit, AnnualCalendar, SCHOOL_WEEKS_2026_2027, SUBJECT_COLORS, CalendarEntry } from "./geminiService";
 
+// Cache en mémoire des modèles Word téléchargés pour un export ultra-rapide
+const templateCache: Record<string, ArrayBuffer> = {};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Chargement des templates Word via l'API backend (évite les problèmes CORS)
 // L'API /api/template?type=plan|eval|exam télécharge le fichier côté serveur
 // et le renvoie directement au frontend — aucun proxy tiers requis.
 // ─────────────────────────────────────────────────────────────────────────────
 const loadFile = async (templateType: 'plan' | 'eval' | 'exam'): Promise<ArrayBuffer> => {
-  console.log(`[WORD] Chargement du template "${templateType}" via l'API backend...`);
-
-  const response = await fetch(`/api/template?type=${templateType}&t=${Date.now()}`, {
-    cache: 'no-store',
-  });
-
-  if (!response.ok) {
-    let errMsg = `Erreur HTTP ${response.status}`;
-    try {
-      const json = await response.json();
-      errMsg = json.error || json.message || errMsg;
-    } catch (_) { /* ignore */ }
-    throw new Error(errMsg);
+  if (templateCache[templateType] && templateCache[templateType].byteLength > 100) {
+    return templateCache[templateType];
   }
 
-  const buffer = await response.arrayBuffer();
+  console.log(`[WORD] Chargement du template "${templateType}"...`);
 
-  if (buffer.byteLength < 100) {
-    throw new Error("Le template téléchargé est vide ou invalide. Veuillez réessayer.");
+  try {
+    const response = await fetch(`/api/template?type=${templateType}&t=${Date.now()}`, {
+      cache: 'no-store',
+    });
+
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength >= 100) {
+        console.log(`[WORD] Template "${templateType}" chargé avec succès via API (${buffer.byteLength} bytes)`);
+        templateCache[templateType] = buffer;
+        return buffer;
+      }
+    }
+  } catch (apiErr) {
+    console.warn(`[WORD] Échec chargement API pour "${templateType}", essai fichier statique local:`, apiErr);
   }
 
-  console.log(`[WORD] Template "${templateType}" chargé avec succès (${buffer.byteLength} bytes)`);
-  return buffer;
+  // Fallback: charger depuis le dossier public
+  try {
+    const localRes = await fetch(`/templates/${templateType}.docx`, { cache: 'no-store' });
+    if (localRes.ok) {
+      const localBuf = await localRes.arrayBuffer();
+      if (localBuf.byteLength >= 100) {
+        console.log(`[WORD] Template local "${templateType}" chargé avec succès (${localBuf.byteLength} bytes)`);
+        templateCache[templateType] = localBuf;
+        return localBuf;
+      }
+    }
+  } catch (localErr) {
+    console.warn(`[WORD] Échec chargement fichier local pour "${templateType}":`, localErr);
+  }
+
+  throw new Error(`Le modèle Word "${templateType}" est inaccessible. Veuillez vérifier votre connexion.`);
 };
 
 // Helper to remove characters that break Docxtemplater
@@ -542,41 +561,82 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     startDate && endDate ? `Du ${startDate} au ${endDate}` : startDate ? `À partir du ${startDate}` : '',
   ].filter(Boolean).join(' — ');
 
-  return {
-    enseignant:       c(plan.teacherName),
-    groupe_matiere:   c(plan.subject) + (plan.gradeLevel ? ' — ' + c(plan.gradeLevel) : ''),
-    titre_unite:      c(plan.title),
-    annee_pei:        c(plan.schoolYear || '2026-2027'),
-    duree:            dureeTxt,
-    concept_cle:           c(plan.keyConcept) + (plan.keyConceptDefinition ? '\n' + c(plan.keyConceptDefinition) : ''),
-    concepts_connexes:     related.join(', '),
-    contexte_mondial:      c(plan.globalContext) + (plan.globalContextAspects ? '\n' + c(plan.globalContextAspects) : ''),
-    enonce_de_recherche:   c(plan.statementOfInquiry) + (plan.statementExplanation ? '\n\n' + c(plan.statementExplanation) : ''),
-    questions_factuelles:      listTxt(plan.inquiryQuestions?.factual),
-    questions_conceptuelles:   listTxt(plan.inquiryQuestions?.conceptual),
-    questions_debat:           listTxt(plan.inquiryQuestions?.debatable),
-    objectifs_specifiques:  objectifsTxt,
-    evaluation_sommative:   evalSommTxt,
-    approches_apprentissage: atl.join('\n'),
-    contenu:                contenuTxt,
-    processus_apprentissage: processusTxt,
-    evaluation_formative:   evalFormTxt,
-    differenciation:        difftxt,
-    ressources:             ressourcesTxt + (coherenceTxt ? '\n\n' + coherenceTxt : ''),
-    reflexion_avant:    reflexionAvantTxt || '(À compléter avant l\'enseignement de l\'unité)',
-    reflexion_pendant:  reflexionPendantTxt || '(À compléter pendant l\'enseignement de l\'unité)',
-    reflexion_apres:    reflexionApresTxt || '(À compléter après l\'enseignement de l\'unité)',
-    classe:             c(plan.gradeLevel),
-    matiere:            c(plan.subject),
-    unite:              c(plan.title),
-    enonce:             c(plan.statementOfInquiry),
-    date_debut:         startDate,
-    date_fin:           endDate,
-    annee_scolaire:     c(plan.schoolYear || '2026-2027'),
-    nombre_periodes:    c(plan.numberOfPeriods || ''),
-    nombre_heures:      c(plan.numberOfHours || plan.duration),
-    prerequis:          prerequisTxt,
+  const dataDict = {
+    // ── En-tête du plan (Page 1) ───────────────────────────────────────────────
+    enseignant:               c(plan.teacherName || 'M. Mohamed Cherif'),
+    Enseignant:               c(plan.teacherName || 'M. Mohamed Cherif'),
+    enseignants:              c(plan.teacherName || 'M. Mohamed Cherif'),
+    groupe_matiere:           c(plan.subject) + (plan.gradeLevel ? ' — ' + c(plan.gradeLevel) : ''),
+    groupe_matieres:          c(plan.subject) + (plan.gradeLevel ? ' — ' + c(plan.gradeLevel) : ''),
+    matiere:                  c(plan.subject),
+    Matiere:                  c(plan.subject),
+    titre_unite:              c(plan.title),
+    unite:                    c(plan.title),
+    titre:                    c(plan.title),
+    Titre:                    c(plan.title),
+    annee_pei:                c(plan.gradeLevel ? `${plan.gradeLevel} (${plan.schoolYear || '2026-2027'})` : (plan.schoolYear || '2026-2027')),
+    annee:                    c(plan.schoolYear || '2026-2027'),
+    classe:                   c(plan.gradeLevel),
+    Classe:                   c(plan.gradeLevel),
+    duree:                    dureeTxt || c(plan.duration) || '18 heures',
+    duree_unite:              dureeTxt || c(plan.duration) || '18 heures',
+    heures:                   c(plan.numberOfHours || plan.duration || '18'),
+
+    // ── Recherche : définition de l'objectif de l'unité ───────────────────────
+    concept_cle:              c(plan.keyConcept) + (plan.keyConceptDefinition ? '\n' + c(plan.keyConceptDefinition) : ''),
+    concept_cle_definition:   c(plan.keyConceptDefinition || plan.keyConcept),
+    concepts_connexes:        related.join(', ') || c(plan.relatedConcepts),
+    concept_connexe:          related.join(', ') || c(plan.relatedConcepts),
+    contexte_mondial:         c(plan.globalContext) + (plan.globalContextAspects ? '\n' + c(plan.globalContextAspects) : ''),
+    contexte:                 c(plan.globalContext),
+    enonce_de_recherche:      c(plan.statementOfInquiry) + (plan.statementExplanation ? '\n\n' + c(plan.statementExplanation) : ''),
+    enonce:                   c(plan.statementOfInquiry),
+    
+    // Questions de recherche
+    questions_factuelles:     listTxt(plan.inquiryQuestions?.factual) || 'Quelles sont les notions fondamentales de cette unité ?',
+    question_factuelle:       listTxt(plan.inquiryQuestions?.factual) || 'Quelles sont les notions fondamentales de cette unité ?',
+    questions_conceptuelles:  listTxt(plan.inquiryQuestions?.conceptual) || 'Comment ces concepts s\'articulent-ils dans le monde réel ?',
+    question_conceptuelle:    listTxt(plan.inquiryQuestions?.conceptual) || 'Comment ces concepts s\'articulent-ils dans le monde réel ?',
+    questions_debat:          listTxt(plan.inquiryQuestions?.debatable) || 'Dans quelle mesure cette approche est-elle universelle ?',
+    question_debat:           listTxt(plan.inquiryQuestions?.debatable) || 'Dans quelle mesure cette approche est-elle universelle ?',
+    questions_debatables:     listTxt(plan.inquiryQuestions?.debatable) || 'Dans quelle mesure cette approche est-elle universelle ?',
+
+    // Objectifs, Évaluation & ATL
+    objectifs_specifiques:    objectifsTxt || 'Critères IB évalués dans cette unité',
+    objectifs:                objectifsTxt || 'Critères IB évalués dans cette unité',
+    criteres:                 objectifsTxt || 'Critères IB évalués dans cette unité',
+    evaluation_sommative:     evalSommTxt || 'Évaluation sommative de fin d\'unité basée sur les critères IB.',
+    sommative:                evalSommTxt || 'Évaluation sommative de fin d\'unité basée sur les critères IB.',
+    approches_apprentissage:  atl.join('\n') || 'Compétences de communication, pensée critique et autogestion.',
+    atl:                      atl.join('\n') || 'Compétences de communication, pensée critique et autogestion.',
+
+    // ── Action : enseignement et apprentissage par le biais de la recherche ───
+    contenu:                  contenuTxt || c(plan.content),
+    processus_apprentissage:  processusTxt || c(plan.learningExperiences),
+    activites_apprentissage:  processusTxt || c(plan.learningExperiences),
+    evaluation_formative:     evalFormTxt || 'Évaluations formatives continues et auto-évaluations.',
+    formative:                evalFormTxt || 'Évaluations formatives continues et auto-évaluations.',
+    differenciation:          difftxt || 'Différenciation pédagogique par étayage, soutien et approfondissement.',
+    ressources:               ressourcesTxt + (coherenceTxt ? '\n\n' + coherenceTxt : '') || 'Manuels scolaires, fiches d\'activités, plateformes numériques.',
+
+    // ── Réflexion : examen de la planification ────────────────────────────────
+    reflexion_avant:          reflexionAvantTxt || '(À compléter avant l\'enseignement de l\'unité)',
+    reflexion_pendant:        reflexionPendantTxt || '(À compléter pendant l\'enseignement de l\'unité)',
+    reflexion_apres:          reflexionApresTxt || '(À compléter après l\'enseignement de l\'unité)',
+
+    // ── Données additionnelles & métadonnées ──────────────────────────────────
+    date_debut:               startDate,
+    date_fin:                 endDate,
+    annee_scolaire:           c(plan.schoolYear || '2026-2027'),
+    nombre_periodes:          c(plan.numberOfPeriods || ''),
+    nombre_heures:            c(plan.numberOfHours || plan.duration),
+    prerequis:                prerequisTxt,
+    Date:                     c(startDate || new Date().toLocaleDateString('fr-FR')),
+    Semestre:                 c((plan as any).semester || 'Semestre 1'),
+    semestre:                 c((plan as any).semester || 'Semestre 1'),
   };
+
+  return dataDict;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -756,11 +816,21 @@ export const generateUnitPlanNativeDocxBlob = async (rawPlan: UnitPlan): Promise
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GÉNÉRATEUR DE BLOB WORD (.DOCX) POUR UN PLAN D'UNITÉ (AVEC FALLBACK ROBUSTE)
+// GÉNÉRATEUR DE BLOB WORD (.DOCX) POUR UN PLAN D'UNITÉ (MODÈLE DRIVE OFFICIEL)
 // ─────────────────────────────────────────────────────────────────────────────
 export const generateUnitPlanWordBlob = async (rawPlan: UnitPlan): Promise<Blob> => {
   const plan = applyIBConformityCorrections(rawPlan);
-  return await generateUnitPlanNativeDocxBlob(plan);
+  const data = buildUnitPlanTemplateData(plan);
+
+  try {
+    const templateContent = await loadFile('plan');
+    const blob = generateDocumentBlob(templateContent, data);
+    console.log(`[WORD] Plan d'unité généré avec succès à partir du modèle Word Drive (${blob.size} bytes)`);
+    return blob;
+  } catch (templateError: any) {
+    console.warn("[WORD] Erreur avec le modèle Drive, basculement vers le générateur natif:", templateError?.message || templateError);
+    return await generateUnitPlanNativeDocxBlob(plan);
+  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
