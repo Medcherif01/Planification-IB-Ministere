@@ -86,7 +86,7 @@ const getArabicValue = (data: any, fieldName: string): string => {
   return "";
 };
 
-const generateDocumentBlob = (templateContent: ArrayBuffer, data: any, landscape = false): Blob => {
+const generateDocumentBlob = (templateContent: ArrayBuffer, data: any, _landscape = false): Blob => {
     let zip;
     try {
         zip = new PizZip(templateContent);
@@ -113,50 +113,7 @@ const generateDocumentBlob = (templateContent: ArrayBuffer, data: any, landscape
         throw error;
     }
 
-    // Get the generated zip
     const generatedZip = doc.getZip();
-    
-    // ── Forcer LTR + orientation paysage si demandé ───────────────────────
-    try {
-        const documentXml = generatedZip.file("word/document.xml")?.asText();
-        if (documentXml) {
-            let modifiedXml = documentXml;
-            
-            // Force LTR direction
-            modifiedXml = modifiedXml.replace(/<w:pPr>/g, '<w:pPr><w:bidi w:val="0"/>');
-            modifiedXml = modifiedXml.replace(/<w:rPr>/g, '<w:rPr><w:rtl w:val="0"/>');
-
-            if (landscape) {
-              // Remplacer ou ajouter pgSz avec orientation paysage (A4 : 29.7cm × 21cm = 16838 × 11906 twips)
-              if (/<w:pgSz[^/]*\/>/.test(modifiedXml) || /<w:pgSz[\s>]/.test(modifiedXml)) {
-                modifiedXml = modifiedXml.replace(
-                  /<w:pgSz[^>]*\/>/g,
-                  '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>'
-                );
-                modifiedXml = modifiedXml.replace(
-                  /<w:pgSz([^>]*)>/g,
-                  '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape">'
-                );
-              } else {
-                // Insérer pgSz avant </w:sectPr>
-                modifiedXml = modifiedXml.replace(
-                  /<\/w:sectPr>/,
-                  '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/></w:sectPr>'
-                );
-              }
-              // Marges réduites pour paysage
-              modifiedXml = modifiedXml.replace(
-                /<w:pgMar[^>]*\/>/g,
-                '<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/>'
-              );
-            }
-            
-            generatedZip.file("word/document.xml", modifiedXml);
-        }
-    } catch (dirError) {
-        console.warn("Could not modify text direction/orientation:", dirError);
-    }
-
     return generatedZip.generate({
       type: "blob",
       mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -803,15 +760,7 @@ export const generateUnitPlanNativeDocxBlob = async (rawPlan: UnitPlan): Promise
 // ─────────────────────────────────────────────────────────────────────────────
 export const generateUnitPlanWordBlob = async (rawPlan: UnitPlan): Promise<Blob> => {
   const plan = applyIBConformityCorrections(rawPlan);
-  const data = buildUnitPlanTemplateData(plan);
-
-  try {
-    const templateContent = await loadFile('plan');
-    return generateDocumentBlob(templateContent, data, true /* landscape */);
-  } catch (templateErr) {
-    console.warn("[WORD EXPORT] Le template officiel n'a pas pu être chargé, génération native .docx:", templateErr);
-    return await generateUnitPlanNativeDocxBlob(plan);
-  }
+  return await generateUnitPlanNativeDocxBlob(plan);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

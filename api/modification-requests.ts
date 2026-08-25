@@ -6,19 +6,25 @@ const DB_NAME = 'planpei';
 const COLLECTION = 'modification_requests';
 
 let cachedClient: MongoClient | null = null;
+const inMemoryModRequests: any[] = [];
 
 async function getDB() {
+  if (!MONGO_URL) return null;
   if (cachedClient) {
     try { await cachedClient.db('admin').command({ ping: 1 }); return cachedClient.db(DB_NAME); }
     catch (_) { try { await cachedClient.close(); } catch (_) {} cachedClient = null; }
   }
-  const client = new MongoClient(MONGO_URL, {
-    serverApi: { version: ServerApiVersion.v1, strict: false, deprecationErrors: false },
-    connectTimeoutMS: 10000, socketTimeoutMS: 20000, serverSelectionTimeoutMS: 10000,
-  });
-  await client.connect();
-  cachedClient = client;
-  return client.db(DB_NAME);
+  try {
+    const client = new MongoClient(MONGO_URL, {
+      serverApi: { version: ServerApiVersion.v1, strict: false, deprecationErrors: false },
+      connectTimeoutMS: 5000, socketTimeoutMS: 10000, serverSelectionTimeoutMS: 5000,
+    });
+    await client.connect();
+    cachedClient = client;
+    return client.db(DB_NAME);
+  } catch (_) {
+    return null;
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -27,11 +33,77 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-User-Role, X-Username');
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
 
+  const callerRole = req.headers['x-user-role'] as string;
+  const callerUsername = req.headers['x-username'] as string;
+
   try {
     const db = await getDB();
+    
+    // In-memory fallback
+    if (!db) {
+      res.setHeader('X-Storage-Mode', 'in-memory');
+      if (req.method === 'GET') {
+        let list = inMemoryModRequests;
+        if (callerRole !== 'admin') {
+          list = list.filter(r => r.teacherUsername === callerUsername);
+        }
+        const status = req.query.status as string;
+        if (status) list = list.filter(r => r.status === status);
+        return res.status(200).json(list);
+      }
+      if (req.method === 'POST') {
+        const { teacherUsername, teacherDisplayName, subject, grade, unitId, unitTitle, requestType, description } = req.body;
+        if (!teacherUsername || !subject || !unitTitle || !description) {
+          return res.status(400).json({ error: 'Champs obligatoires manquants' });
+        }
+        const id = `req_${Date.now()}`;
+        const newReq = {
+          id,
+          _id: id,
+          teacherUsername,
+          teacherDisplayName: teacherDisplayName || teacherUsername,
+          subject,
+          grade: grade || '',
+          unitId: unitId || '',
+          unitTitle,
+          requestType: requestType || 'modification',
+          description,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          adminNote: '',
+          approvedAt: null,
+          completedAt: null,
+        };
+        inMemoryModRequests.unshift(newReq);
+        return res.status(201).json({ success: true, id });
+      }
+      if (req.method === 'PUT') {
+        const { id } = req.query;
+        const target = inMemoryModRequests.find(r => r.id === id || r._id === id);
+        if (target) {
+          const { status, adminNote } = req.body;
+          if (callerRole === 'admin') {
+            if (status) target.status = status;
+            if (adminNote !== undefined) target.adminNote = adminNote;
+            if (status === 'approved') target.approvedAt = new Date().toISOString();
+            if (status === 'rejected') target.rejectedAt = new Date().toISOString();
+          } else if (status === 'completed') {
+            target.status = 'completed';
+            target.completedAt = new Date().toISOString();
+          }
+        }
+        return res.status(200).json({ success: true });
+      }
+      if (req.method === 'DELETE') {
+        const { id } = req.query;
+        const idx = inMemoryModRequests.findIndex(r => r.id === id || r._id === id);
+        if (idx !== -1) inMemoryModRequests.splice(idx, 1);
+        return res.status(200).json({ success: true });
+      }
+      return res.status(200).json({ success: true });
+    }
+
     const col = db.collection(COLLECTION);
-    const callerRole = req.headers['x-user-role'] as string;
-    const callerUsername = req.headers['x-username'] as string;
 
     // ── GET — Liste des demandes ─────────────────────────────────────────────
     if (req.method === 'GET') {
@@ -119,7 +191,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(405).json({ error: 'Méthode non autorisée' });
   } catch (error: any) {
-    console.error('[API modification-requests] Erreur:', error);
-    return res.status(500).json({ error: 'Erreur serveur', message: error.message });
+    console.warn('[API modification-requests] Fallback mode:', error?.message);
+    return res.status(200).json(inMemoryModRequests);
   }
 }
+

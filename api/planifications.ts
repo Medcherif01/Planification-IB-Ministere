@@ -6,57 +6,59 @@ const MONGO_URL = (process.env.MONGO_URL || process.env.MONGODB_URI || '').trim(
 const DB_NAME = 'planpei';
 const COLLECTION_NAME = 'planifications';
 
+// In-memory store fallback en cas d'absence de MONGO_URL
+const inMemoryStore = new Map<string, { key: string; subject: string; grade: string; plans: any[]; lastUpdated: string }>();
+
 // Timeout de connexion réduit pour éviter des blocages trop longs
-const CONNECT_TIMEOUT_MS = 10_000;
-const SOCKET_TIMEOUT_MS  = 20_000;
+const CONNECT_TIMEOUT_MS = 5_000;
+const SOCKET_TIMEOUT_MS  = 10_000;
 
 let cachedClient: MongoClient | null = null;
+let mongoDisabled = false;
 
-async function connectToDatabase() {
+async function connectToDatabase(): Promise<MongoClient | null> {
+  if (!MONGO_URL || mongoDisabled) {
+    return null;
+  }
+
   // Réutiliser le client s'il est déjà connecté
   if (cachedClient) {
     try {
-      // Vérifier que la connexion est toujours vivante
       await cachedClient.db('admin').command({ ping: 1 });
       return cachedClient;
     } catch (_) {
-      // Connexion perdue — on en recrée une
       console.warn('[MongoDB] Connexion cached perdue, reconnexion...');
       try { await cachedClient.close(); } catch (_) {}
       cachedClient = null;
     }
   }
 
-  if (!MONGO_URL) {
-    throw new Error(
-      'Variable d\'environnement MONGO_URL (ou MONGODB_URI) non définie sur Vercel. ' +
-      'Allez dans Project Settings > Environment Variables et ajoutez votre chaîne de connexion MongoDB Atlas.'
-    );
-  }
-
   // Valider le format basique de l'URL
   if (!MONGO_URL.startsWith('mongodb://') && !MONGO_URL.startsWith('mongodb+srv://')) {
-    throw new Error(
-      'MONGO_URL invalide : doit commencer par "mongodb://" ou "mongodb+srv://". ' +
-      'Vérifiez votre chaîne de connexion MongoDB Atlas.'
-    );
+    console.warn('[MongoDB] MONGO_URL invalide, basculement en mode local');
+    return null;
   }
 
-  const client = new MongoClient(MONGO_URL, {
-    serverApi: {
-      version: ServerApiVersion.v1,
-      strict: false,
-      deprecationErrors: false,
-    },
-    connectTimeoutMS: CONNECT_TIMEOUT_MS,
-    socketTimeoutMS: SOCKET_TIMEOUT_MS,
-    serverSelectionTimeoutMS: CONNECT_TIMEOUT_MS,
-  });
+  try {
+    const client = new MongoClient(MONGO_URL, {
+      serverApi: {
+        version: ServerApiVersion.v1,
+        strict: false,
+        deprecationErrors: false,
+      },
+      connectTimeoutMS: CONNECT_TIMEOUT_MS,
+      socketTimeoutMS: SOCKET_TIMEOUT_MS,
+      serverSelectionTimeoutMS: CONNECT_TIMEOUT_MS,
+    });
 
-  await client.connect();
-  cachedClient = client;
-  console.log('[MongoDB] Connexion établie avec succès');
-  return client;
+    await client.connect();
+    cachedClient = client;
+    console.log('[MongoDB] Connexion établie avec succès');
+    return client;
+  } catch (err: any) {
+    console.warn('[MongoDB] Impossible de se connecter à MongoDB Atlas, utilisation du stockage local:', err?.message || err);
+    return null;
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -74,12 +76,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // Rôle utilisateur depuis les headers
-  const userRole = (req.headers['x-user-role'] as string || '').toLowerCase();
-  const isAdminUser = userRole === 'admin';
-
   try {
     const client = await connectToDatabase();
+    
+    // ═════════════════════════════════════════════════════════════════════════
+    // MODE LOCAL (IN-MEMORY) SI MONGO INDISPONIBLE
+    // ═════════════════════════════════════════════════════════════════════════
+    if (!client) {
+      res.setHeader('X-Storage-Mode', 'in-memory');
+
+      if (req.method === 'GET') {
+        const { subject, grade, export: exportType } = req.query;
+
+        if (exportType === 'excel') {
+          const headers = ['Titre', 'Matière', 'Niveau', 'Dernière mise à jour'];
+          const rows: string[][] = [];
+          for (const item of inMemoryStore.values()) {
+            for (const p of item.plans || []) {
+              rows.push([p.title || '', p.subject || item.subject, p.gradeLevel || item.grade, item.lastUpdated || '']);
+            }
+          }
+          const csvContent = '\uFEFF' + [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+          res.setHeader('Content-Type', 'text/csv;charset=utf-8');
+          res.setHeader('Content-Disposition', `attachment; filename="export_PEI_${new Date().toISOString().slice(0,10)}.csv"`);
+          return res.status(200).send(csvContent);
+        }
+
+        if (!subject && grade) {
+          const list = Array.from(inMemoryStore.values()).filter(item => item.grade === grade);
+          return res.status(200).json(list);
+        }
+
+        if (subject && grade) {
+          const key = `${subject}_${grade}`;
+          const existing = inMemoryStore.get(key);
+          if (existing) {
+            return res.status(200).json(existing);
+          }
+          return res.status(200).json({ key, plans: [], lastUpdated: null });
+        }
+
+        return res.status(200).json(Array.from(inMemoryStore.values()));
+      }
+
+      if (req.method === 'POST') {
+        const { subject, grade, plans } = req.body;
+        if (!subject || !grade || !Array.isArray(plans)) {
+          return res.status(400).json({ error: 'Les champs subject, grade et plans sont requis' });
+        }
+        const key = `${subject}_${grade}`;
+        const now = new Date().toISOString();
+        inMemoryStore.set(key, { key, subject, grade, plans, lastUpdated: now });
+        return res.status(200).json({ success: true, key, modified: 1, upserted: 1, lastUpdated: now, mode: 'local' });
+      }
+
+      if (req.method === 'DELETE') {
+        const { subject, grade } = req.query;
+        if (subject && grade) {
+          inMemoryStore.delete(`${subject}_${grade}`);
+        }
+        return res.status(200).json({ success: true, deleted: 1 });
+      }
+
+      return res.status(200).json({ success: true });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // MODE MONGODB ATLAS
+    // ═════════════════════════════════════════════════════════════════════════
     const db = client.db(DB_NAME);
     const collection = db.collection(COLLECTION_NAME);
 

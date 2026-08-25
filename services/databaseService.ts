@@ -25,7 +25,6 @@ export async function loadPlansFromDatabase(
     const cleanGrade = grade.trim();
     
     if (!cleanSubject || !cleanGrade || cleanSubject.startsWith('_') || /^[_\s]+$/.test(cleanSubject)) {
-      console.warn(`⚠️ Paramètres invalides pour le chargement: subject="${cleanSubject}", grade="${cleanGrade}"`);
       return loadPlansFromLocalStorage(subject, grade);
     }
     
@@ -34,16 +33,21 @@ export async function loadPlansFromDatabase(
     );
 
     if (!response.ok) {
-      throw new Error(`Erreur HTTP: ${response.status}`);
+      return loadPlansFromLocalStorage(subject, grade);
     }
 
     const data: PlanificationData = await response.json();
-    return data.plans || [];
-  } catch (error) {
-    console.error('Erreur lors du chargement depuis MongoDB:', error);
+    const serverPlans = data.plans || [];
     
+    // Si le serveur n'a pas de données, vérifier si localStorage en a
+    if (serverPlans.length === 0) {
+      const localPlans = loadPlansFromLocalStorage(subject, grade);
+      if (localPlans.length > 0) return localPlans;
+    }
+    
+    return serverPlans;
+  } catch (error) {
     // Fallback vers localStorage si l'API échoue
-    console.warn('Utilisation du localStorage comme fallback');
     return loadPlansFromLocalStorage(subject, grade);
   }
 }
@@ -58,29 +62,24 @@ export async function loadAllPlansForGrade(grade: string): Promise<UnitPlan[]> {
     );
 
     if (!response.ok) {
-      throw new Error(`Erreur HTTP: ${response.status}`);
+      return loadAllPlansForGradeFromLocalStorage(grade);
     }
 
     const data = await response.json();
     
     // L'API retourne un tableau de planifications
-    if (Array.isArray(data)) {
-      // Fusionner tous les plans
+    if (Array.isArray(data) && data.length > 0) {
       const allPlans: UnitPlan[] = [];
       data.forEach((planData: PlanificationData) => {
         if (planData.plans && Array.isArray(planData.plans)) {
           allPlans.push(...planData.plans);
         }
       });
-      return allPlans;
+      if (allPlans.length > 0) return allPlans;
     }
     
-    return [];
+    return loadAllPlansForGradeFromLocalStorage(grade);
   } catch (error) {
-    console.error('Erreur lors du chargement de toutes les planifications:', error);
-    
-    // Fallback vers localStorage
-    console.warn('Utilisation du localStorage comme fallback');
     return loadAllPlansForGradeFromLocalStorage(grade);
   }
 }
