@@ -29,6 +29,63 @@ export interface ImportResult {
   stats: BackupStats;
 }
 
+// ─── Helpers Excel Safe Limits (Évite l'erreur 'Text length must not exceed 32767 characters') ───
+const prepareJsonChunks = (data: any): Record<string, string> => {
+  const str = typeof data === 'string' ? data : JSON.stringify(data);
+  const CHUNK_SIZE = 30000;
+  if (str.length <= CHUNK_SIZE) {
+    return { '_full_data_json': str };
+  }
+  const result: Record<string, string> = {
+    '_full_data_json': str.slice(0, CHUNK_SIZE),
+  };
+  let part = 2;
+  for (let i = CHUNK_SIZE; i < str.length; i += CHUNK_SIZE) {
+    result[`_full_data_json_p${part}`] = str.slice(i, i + CHUNK_SIZE);
+    part++;
+  }
+  return result;
+};
+
+const extractFullJson = (row: any): any => {
+  if (!row) return null;
+  let combined = '';
+  if (row['_full_data_json']) combined += row['_full_data_json'];
+  else if (row['full_data_json']) combined += row['full_data_json'];
+  else if (row['json']) combined += row['json'];
+
+  let p = 2;
+  while (row[`_full_data_json_p${p}`]) {
+    combined += row[`_full_data_json_p${p}`];
+    p++;
+  }
+
+  if (combined) {
+    try {
+      return JSON.parse(combined);
+    } catch (_) {}
+  }
+  return null;
+};
+
+const sanitizeRowForExcel = (row: Record<string, any>): Record<string, any> => {
+  const sanitized: Record<string, any> = {};
+  for (const [key, val] of Object.entries(row)) {
+    if (val === null || val === undefined) {
+      sanitized[key] = '';
+    } else if (typeof val === 'string') {
+      // Excel max cell string length is 32767 chars, clamp safely to 32000
+      sanitized[key] = val.length > 32000 ? val.slice(0, 32000) : val;
+    } else if (typeof val === 'number' || typeof val === 'boolean') {
+      sanitized[key] = val;
+    } else {
+      const str = JSON.stringify(val);
+      sanitized[key] = str.length > 32000 ? str.slice(0, 32000) : str;
+    }
+  }
+  return sanitized;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORT COMPLET EN EXCEL (.XLSX) MULTI-FEUILLES
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +235,7 @@ export const exportAllDataToExcel = async (
     const conceptualQ = Array.isArray(p.inquiryQuestions?.conceptual) ? p.inquiryQuestions.conceptual.join('\n') : (p.inquiryQuestions?.conceptual || '');
     const debatableQ = Array.isArray(p.inquiryQuestions?.debatable) ? p.inquiryQuestions.debatable.join('\n') : (p.inquiryQuestions?.debatable || '');
 
-    return {
+    return sanitizeRowForExcel({
       'ID_Unité': p.id || '',
       'Titre': p.title || '',
       'Matière': p.subject || '',
@@ -212,8 +269,8 @@ export const exportAllDataToExcel = async (
       'Prérequis': p.prerequisites || '',
       'Score_IB': p.ibComplianceScore || '',
       'Dernière_Mise_à_Jour': p.lastDetailUpdate || new Date().toISOString(),
-      '_full_data_json': JSON.stringify(p),
-    };
+      ...prepareJsonChunks(p),
+    });
   });
 
   const wsUnits = XLSX.utils.json_to_sheet(unitsRows);
@@ -229,7 +286,7 @@ export const exportAllDataToExcel = async (
   XLSX.utils.book_append_sheet(wb, wsUnits, 'Unités PEI');
 
   // ── FEUILLE 2 : Unités Interdisciplinaires ──────────────────────────────────
-  const interRows = allInter.map(item => ({
+  const interRows = allInter.map(item => sanitizeRowForExcel({
     'ID': item.id || '',
     'Niveau_Classe': item.grade || '',
     'Titre_Thème': item.title || '',
@@ -242,7 +299,7 @@ export const exportAllDataToExcel = async (
     'Description_Projet': item.content || item.interdisciplinaryLearningProcess || '',
     'Évaluation_Sommative': item.summativeTask || '',
     'Date_Création': item.createdAt || new Date().toISOString(),
-    '_full_data_json': JSON.stringify(item),
+    ...prepareJsonChunks(item),
   }));
 
   const wsInter = XLSX.utils.json_to_sheet(interRows);
@@ -254,7 +311,7 @@ export const exportAllDataToExcel = async (
   XLSX.utils.book_append_sheet(wb, wsInter, 'Interdisciplinaire');
 
   // ── FEUILLE 3 : Projets Service et Action (SEA) ────────────────────────────
-  const seaRows = allSEA.map(item => ({
+  const seaRows = allSEA.map(item => sanitizeRowForExcel({
     'ID': item.id || '',
     'Niveau_Classe': item.grade || '',
     'Matière': item.subject || '',
@@ -268,7 +325,7 @@ export const exportAllDataToExcel = async (
     'Compétences_ATL': Array.isArray(item.atlSkills) ? item.atlSkills.join('\n') : '',
     'Critères_Réussite': Array.isArray(item.successCriteria) ? item.successCriteria.map(s => s.description).join('\n') : '',
     'Date_Création': item.createdAt || new Date().toISOString(),
-    '_full_data_json': JSON.stringify(item),
+    ...prepareJsonChunks(item),
   }));
 
   const wsSEA = XLSX.utils.json_to_sheet(seaRows);
@@ -280,7 +337,7 @@ export const exportAllDataToExcel = async (
   XLSX.utils.book_append_sheet(wb, wsSEA, 'Service et Action');
 
   // ── FEUILLE 4 : Enseignants & Utilisateurs ──────────────────────────────────
-  const userRows = allUsers.map((u: any) => ({
+  const userRows = allUsers.map((u: any) => sanitizeRowForExcel({
     'ID': u.id || '',
     'Nom_Utilisateur': u.username || '',
     'Nom_Complet': u.displayName || '',
@@ -288,7 +345,7 @@ export const exportAllDataToExcel = async (
     'Matières_Attribuées': Array.isArray(u.subjects) ? u.subjects.join(', ') : (u.subjects || ''),
     'Actif': u.isActive !== false ? 'OUI' : 'NON',
     'Date_Création': u.createdAt || '',
-    '_full_data_json': JSON.stringify(u),
+    ...prepareJsonChunks(u),
   }));
 
   const wsUsers = XLSX.utils.json_to_sheet(userRows);
@@ -299,7 +356,7 @@ export const exportAllDataToExcel = async (
   XLSX.utils.book_append_sheet(wb, wsUsers, 'Enseignants & Utilisateurs');
 
   // ── FEUILLE 5 : Demandes de Modification ───────────────────────────────────
-  const reqRows = allRequests.map((r: any) => ({
+  const reqRows = allRequests.map((r: any) => sanitizeRowForExcel({
     'ID': r.id || '',
     'Nom_Utilisateur': r.teacherUsername || '',
     'Nom_Enseignant': r.teacherDisplayName || '',
@@ -321,7 +378,7 @@ export const exportAllDataToExcel = async (
   XLSX.utils.book_append_sheet(wb, wsReq, 'Demandes de Modification');
 
   // ── FEUILLE 6 : Examens & Évaluations ──────────────────────────────────────
-  const examRows = allExams.map(ex => ({
+  const examRows = allExams.map(ex => sanitizeRowForExcel({
     'ID': ex.id || '',
     'Matière': ex.subject || '',
     'Niveau_Classe': ex.grade || '',
@@ -335,7 +392,7 @@ export const exportAllDataToExcel = async (
     'Style': ex.style || '',
     'Nb_Questions': ex.questions?.length || 0,
     'Date_Création': ex.createdAt ? new Date(ex.createdAt).toISOString() : '',
-    '_full_data_json': JSON.stringify(ex),
+    ...prepareJsonChunks(ex),
   }));
 
   const wsExams = XLSX.utils.json_to_sheet(examRows);
@@ -347,7 +404,7 @@ export const exportAllDataToExcel = async (
   XLSX.utils.book_append_sheet(wb, wsExams, 'Examens & Évaluations');
 
   // ── FEUILLE 7 : Critères IB Personnalisés ──────────────────────────────────
-  const critRows = allCriteria.map((c: any) => ({
+  const critRows = allCriteria.map((c: any) => sanitizeRowForExcel({
     'ID': c.id || c._id || '',
     'Matière': c.subject || '',
     'Niveau': c.grade || '',
@@ -355,7 +412,7 @@ export const exportAllDataToExcel = async (
     'Nom_Critère': c.criterionName || '',
     'Aspects': Array.isArray(c.strands) ? c.strands.join('\n') : (c.aspects || ''),
     'Dernière_Mise_à_Jour': c.lastUpdated || '',
-    '_full_data_json': JSON.stringify(c),
+    ...prepareJsonChunks(c),
   }));
 
   const wsCrit = XLSX.utils.json_to_sheet(critRows);
@@ -366,11 +423,11 @@ export const exportAllDataToExcel = async (
   XLSX.utils.book_append_sheet(wb, wsCrit, 'Critères IB');
 
   // ── FEUILLE 8 : Calendriers Annuels ────────────────────────────────────────
-  const calRows = allCalendars.map(cal => ({
+  const calRows = allCalendars.map(cal => sanitizeRowForExcel({
     'Niveau_Classe': cal.grade || '',
     'Année_Scolaire': cal.schoolYear || '2026/2027',
     'Nb_Entrées': cal.entriesCount || 0,
-    '_full_data_json': JSON.stringify(cal.data),
+    ...prepareJsonChunks(cal.data),
   }));
 
   const wsCal = XLSX.utils.json_to_sheet(calRows);
@@ -447,13 +504,9 @@ export const importAllDataFromExcel = async (
         let plan: UnitPlan | null = null;
 
         // Si le champ JSON complet existe, l'utiliser en priorité
-        if (row['_full_data_json'] || row['full_data_json'] || row['json']) {
-          try {
-            const parsed = JSON.parse(row['_full_data_json'] || row['full_data_json'] || row['json']);
-            if (parsed && typeof parsed === 'object' && (parsed.title || parsed.subject)) {
-              plan = parsed;
-            }
-          } catch (_) {}
+        const extractedJson = extractFullJson(row);
+        if (extractedJson && typeof extractedJson === 'object' && (extractedJson.title || extractedJson.subject)) {
+          plan = extractedJson;
         }
 
         // Sinon, reconstruire à partir des colonnes tabulaires
@@ -554,10 +607,7 @@ export const importAllDataFromExcel = async (
       const restoredInter: InterdisciplinaryUnit[] = [];
 
       for (const row of rawRows) {
-        let item: InterdisciplinaryUnit | null = null;
-        if (row['_full_data_json']) {
-          try { item = JSON.parse(row['_full_data_json']); } catch (_) {}
-        }
+        let item: InterdisciplinaryUnit | null = extractFullJson(row);
         if (!item) {
           const themeTitle = row['Titre_Thème'] || row['Titre'] || '';
           const grade = row['Niveau_Classe'] || row['Niveau'] || '';
@@ -602,10 +652,7 @@ export const importAllDataFromExcel = async (
       const restoredSEA: ServiceActionPlan[] = [];
 
       for (const row of rawRows) {
-        let item: ServiceActionPlan | null = null;
-        if (row['_full_data_json']) {
-          try { item = JSON.parse(row['_full_data_json']); } catch (_) {}
-        }
+        let item: ServiceActionPlan | null = extractFullJson(row);
         if (!item) {
           const projectTitle = row['Titre_Projet'] || row['Titre'] || '';
           const grade = row['Niveau_Classe'] || row['Niveau'] || '';
@@ -651,10 +698,7 @@ export const importAllDataFromExcel = async (
       const restoredUsers: AppUser[] = [];
 
       for (const row of rawRows) {
-        let user: AppUser | null = null;
-        if (row['_full_data_json']) {
-          try { user = JSON.parse(row['_full_data_json']); } catch (_) {}
-        }
+        let user: AppUser | null = extractFullJson(row);
         if (!user) {
           const username = row['Nom_Utilisateur'] || row['username'] || '';
           const displayName = row['Nom_Complet'] || row['displayName'] || '';
@@ -713,10 +757,7 @@ export const importAllDataFromExcel = async (
       const restoredExams: Exam[] = [];
 
       for (const row of rawRows) {
-        let exam: Exam | null = null;
-        if (row['_full_data_json']) {
-          try { exam = JSON.parse(row['_full_data_json']); } catch (_) {}
-        }
+        const exam: Exam | null = extractFullJson(row);
         if (exam) {
           restoredExams.push(exam);
           stats.exams++;
@@ -747,9 +788,9 @@ export const importAllDataFromExcel = async (
       const rawRows: any[] = XLSX.utils.sheet_to_json(ws);
       for (const row of rawRows) {
         const grade = row['Niveau_Classe'] || row['grade'] || '';
-        if (grade && row['_full_data_json']) {
+        const data = extractFullJson(row);
+        if (grade && data) {
           try {
-            const data = JSON.parse(row['_full_data_json']);
             localStorage.setItem(`annual_calendar_${grade}`, JSON.stringify(data));
             stats.calendars++;
           } catch (_) {}
@@ -764,12 +805,10 @@ export const importAllDataFromExcel = async (
       const rawRows: any[] = XLSX.utils.sheet_to_json(ws);
       const restoredCrit: any[] = [];
       for (const row of rawRows) {
-        if (row['_full_data_json']) {
-          try {
-            const parsed = JSON.parse(row['_full_data_json']);
-            restoredCrit.push(parsed);
-            stats.criteria++;
-          } catch (_) {}
+        const parsed = extractFullJson(row);
+        if (parsed) {
+          restoredCrit.push(parsed);
+          stats.criteria++;
         }
       }
       if (restoredCrit.length > 0) {

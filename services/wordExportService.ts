@@ -106,10 +106,49 @@ const getArabicValue = (data: any, fieldName: string): string => {
   return "";
 };
 
+// Helper to sanitize Word XML to force Left-To-Right (LTR) and prevent Right-to-Left / right-alignment
+const forceDocumentLeftToRight = (zip: any) => {
+  try {
+    const xmlFiles = Object.keys(zip.files).filter(name => 
+      name.startsWith("word/") && (name.endsWith(".xml") || name.endsWith(".rels"))
+    );
+
+    for (const fileName of xmlFiles) {
+      const file = zip.file(fileName);
+      if (!file) continue;
+      let xml = file.asText();
+      let modified = false;
+
+      // 1. Remove RTL / BiDi tags
+      if (/<w:bidi\b[^>]*\/?>/i.test(xml) || /<w:rtl\b[^>]*\/?>/i.test(xml) || /<w:bidiVisual\b[^>]*\/?>/i.test(xml)) {
+        xml = xml.replace(/<w:bidi\b[^>]*\/?>/gi, '');
+        xml = xml.replace(/<w:rtl\b[^>]*\/?>/gi, '');
+        xml = xml.replace(/<w:bidiVisual\b[^>]*\/?>/gi, '');
+        modified = true;
+      }
+
+      // 2. Replace right/both alignment with left alignment in paragraphs
+      if (/<w:jc\s+[^>]*w:val="(?:right|both)"/i.test(xml)) {
+        xml = xml.replace(/<w:jc\s+([^>]*\s+)?w:val="right"([^>]*)\/>/gi, '<w:jc $1w:val="left"$2/>');
+        xml = xml.replace(/<w:jc\s+([^>]*\s+)?w:val="both"([^>]*)\/>/gi, '<w:jc $1w:val="left"$2/>');
+        modified = true;
+      }
+
+      if (modified) {
+        zip.file(fileName, xml);
+      }
+    }
+  } catch (err) {
+    console.warn("[WORD] Warning during LTR normalization:", err);
+  }
+};
+
 const generateDocumentBlob = (templateContent: ArrayBuffer, data: any, _landscape = false): Blob => {
     let zip;
     try {
         zip = new PizZip(templateContent);
+        // Force LTR before rendering tags
+        forceDocumentLeftToRight(zip);
     } catch(e) {
         throw new Error("Le fichier modèle est corrompu.");
     }
@@ -134,6 +173,9 @@ const generateDocumentBlob = (templateContent: ArrayBuffer, data: any, _landscap
     }
 
     const generatedZip = doc.getZip();
+    // Force LTR after rendering tags to ensure all rendered text stays LTR and left-aligned
+    forceDocumentLeftToRight(generatedZip);
+
     return generatedZip.generate({
       type: "blob",
       mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -205,8 +247,8 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
         const rawTitle = clean(ex.title).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim();
         // Strip "Critère X :" prefix from criterionReference (template shows criterion header separately)
         const rawRef = clean(ex.criterionReference).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim();
-        // Answer lines: 5 lines of dots aligned precisely to standard page margins
-        const DOT_LINE = '.'.repeat(82);
+        // Answer lines: 5 lines of dots (exactly 57 dots per line)
+        const DOT_LINE = '.'.repeat(57);
         const reponse_lines = Array(5).fill(DOT_LINE).join('\n');
         return {
             numero: index + 1,
@@ -246,7 +288,7 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
       exercices_ar: exercises.map((ex, index) => {
         const rawTitleAr = (ex as any).title_ar ? clean((ex as any).title_ar).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim() : "(تمرين)";
         const rawRefAr = (ex as any).criterionReference_ar ? clean((ex as any).criterionReference_ar).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim() : "";
-        const DOT_LINE_AR = '.'.repeat(82);
+        const DOT_LINE_AR = '.'.repeat(57);
         const reponse_lines_ar = Array(5).fill(DOT_LINE_AR).join('\n');
         return {
           numero: index + 1,

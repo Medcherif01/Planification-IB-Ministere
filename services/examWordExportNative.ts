@@ -250,13 +250,13 @@ const createQuestionParagraphs = (question: any, index: number, isEnglish: boole
       break;
       
     default:
-      // Lignes pour réponse adaptées aux marges
+      // Lignes pour réponse (exactement 57 points par ligne)
       for (let l = 0; l < 4; l++) {
         paragraphs.push(
           new Paragraph({
             children: [
               new TextRun({
-                text: '.'.repeat(82),
+                text: '.'.repeat(57),
                 size: 22,
                 font: FONT_NAME,
               }),

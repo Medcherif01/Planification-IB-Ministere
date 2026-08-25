@@ -173,44 +173,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const wb = XLSX.utils.book_new();
         const rows: any[] = [];
 
+        const sanitizeCell = (val: any): any => {
+          if (val === null || val === undefined) return '';
+          if (typeof val === 'string') return val.length > 32000 ? val.slice(0, 32000) : val;
+          if (typeof val === 'number' || typeof val === 'boolean') return val;
+          const s = JSON.stringify(val);
+          return s.length > 32000 ? s.slice(0, 32000) : s;
+        };
+
         for (const planif of allPlanifications) {
           const plans = planif.plans || [];
           for (const p of plans) {
-            rows.push({
-              'ID_Unité': p.id || '',
-              'Titre': p.title || '',
-              'Matière': p.subject || '',
-              'Niveau_Classe': p.gradeLevel || '',
-              'Enseignant': p.teacherName || '',
-              'Durée': p.duration || '',
-              'Année_Scolaire': p.schoolYear || '2026/2027',
-              'Nb_Heures': p.numberOfHours || '',
-              'Nb_Périodes': p.numberOfPeriods || '',
-              'Date_Début': p.startDate || '',
-              'Date_Fin': p.endDate || '',
-              'Concept_Clé': p.keyConcept || '',
-              'Concepts_Connexes': (p.relatedConcepts || []).join('; '),
-              'Contexte_Mondial': p.globalContext || '',
-              'Énoncé_de_Recherche': p.statementOfInquiry || '',
-              'Questions_Factuelles': (p.inquiryQuestions?.factual || []).join(' | '),
-              'Questions_Conceptuelles': (p.inquiryQuestions?.conceptual || []).join(' | '),
-              'Questions_Débat': (p.inquiryQuestions?.debatable || []).join(' | '),
-              'Objectifs_IB': (p.objectives || []).join('; '),
-              'Compétences_ATL': (Array.isArray(p.atlSkills) ? p.atlSkills : [p.atlSkills || '']).join('; '),
-              'Contenu_Notions': (p.content || '').replace(/\n/g, ' '),
-              'Processus_Apprentissage': (p.learningExperiences || '').replace(/\n/g, ' '),
-              'Évaluation_Formative': (p.formativeAssessment || '').replace(/\n/g, ' '),
-              'Évaluation_Sommative': (p.summativeAssessment || '').replace(/\n/g, ' '),
-              'Différenciation': (p.differentiation || '').replace(/\n/g, ' '),
-              'Ressources': (p.resources || '').replace(/\n/g, ' '),
-              'Réflexion_Avant': (p.reflection?.prior || '').replace(/\n/g, ' '),
-              'Réflexion_Pendant': (p.reflection?.during || '').replace(/\n/g, ' '),
-              'Réflexion_Après': (p.reflection?.after || '').replace(/\n/g, ' '),
-              'Critères_Évaluation': (p.assessments || []).map((a: any) => `Critère ${a.criterion}: ${a.criterionName}`).join('; '),
-              'Nb_Séances': String((p.sessions || []).length),
-              'Dernière_Mise_à_Jour': p.lastDetailUpdate || planif.lastUpdated || '',
-              '_full_data_json': JSON.stringify(p),
-            });
+            const rawJson = JSON.stringify(p);
+            const row: Record<string, any> = {
+              'ID_Unité': sanitizeCell(p.id || ''),
+              'Titre': sanitizeCell(p.title || ''),
+              'Matière': sanitizeCell(p.subject || ''),
+              'Niveau_Classe': sanitizeCell(p.gradeLevel || ''),
+              'Enseignant': sanitizeCell(p.teacherName || ''),
+              'Durée': sanitizeCell(p.duration || ''),
+              'Année_Scolaire': sanitizeCell(p.schoolYear || '2026/2027'),
+              'Nb_Heures': sanitizeCell(p.numberOfHours || ''),
+              'Nb_Périodes': sanitizeCell(p.numberOfPeriods || ''),
+              'Date_Début': sanitizeCell(p.startDate || ''),
+              'Date_Fin': sanitizeCell(p.endDate || ''),
+              'Concept_Clé': sanitizeCell(p.keyConcept || ''),
+              'Concepts_Connexes': sanitizeCell((p.relatedConcepts || []).join('; ')),
+              'Contexte_Mondial': sanitizeCell(p.globalContext || ''),
+              'Énoncé_de_Recherche': sanitizeCell(p.statementOfInquiry || ''),
+              'Questions_Factuelles': sanitizeCell((p.inquiryQuestions?.factual || []).join(' | ')),
+              'Questions_Conceptuelles': sanitizeCell((p.inquiryQuestions?.conceptual || []).join(' | ')),
+              'Questions_Débat': sanitizeCell((p.inquiryQuestions?.debatable || []).join(' | ')),
+              'Objectifs_IB': sanitizeCell((p.objectives || []).join('; ')),
+              'Compétences_ATL': sanitizeCell((Array.isArray(p.atlSkills) ? p.atlSkills : [p.atlSkills || '']).join('; ')),
+              'Contenu_Notions': sanitizeCell((p.content || '').replace(/\n/g, ' ')),
+              'Processus_Apprentissage': sanitizeCell((p.learningExperiences || '').replace(/\n/g, ' ')),
+              'Évaluation_Formative': sanitizeCell((p.formativeAssessment || '').replace(/\n/g, ' ')),
+              'Évaluation_Sommative': sanitizeCell((p.summativeAssessment || '').replace(/\n/g, ' ')),
+              'Différenciation': sanitizeCell((p.differentiation || '').replace(/\n/g, ' ')),
+              'Ressources': sanitizeCell((p.resources || '').replace(/\n/g, ' ')),
+              'Réflexion_Avant': sanitizeCell((p.reflection?.prior || '').replace(/\n/g, ' ')),
+              'Réflexion_Pendant': sanitizeCell((p.reflection?.during || '').replace(/\n/g, ' ')),
+              'Réflexion_Après': sanitizeCell((p.reflection?.after || '').replace(/\n/g, ' ')),
+              'Critères_Évaluation': sanitizeCell((p.assessments || []).map((a: any) => `Critère ${a.criterion}: ${a.criterionName}`).join('; ')),
+              'Nb_Séances': sanitizeCell(String((p.sessions || []).length)),
+              'Dernière_Mise_à_Jour': sanitizeCell(p.lastDetailUpdate || planif.lastUpdated || ''),
+              '_full_data_json': rawJson.length > 30000 ? rawJson.slice(0, 30000) : rawJson,
+            };
+            if (rawJson.length > 30000) {
+              row['_full_data_json_p2'] = rawJson.slice(30000, 60000);
+            }
+            if (rawJson.length > 60000) {
+              row['_full_data_json_p3'] = rawJson.slice(60000, 90000);
+            }
+            rows.push(row);
           }
         }
 
