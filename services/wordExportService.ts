@@ -83,6 +83,34 @@ const clean = (text: any): string => {
   return str.replace(/{/g, "[").replace(/}/g, "]");
 };
 
+// Helper to clean exercise content: removes point scales (e.g., "(2 points)") and formats dotted lines to strictly 57 dots
+export const cleanExerciseContent = (text: any): string => {
+  if (text === null || text === undefined) return "";
+  let str = String(text).replace(/{/g, "[").replace(/}/g, "]");
+
+  // 1. Remove grade/points barèmes in brackets or parentheses (French, English, Arabic)
+  // e.g. (2 points), (2 pts), (1 pt), [3 points], (0.5 point), (2 marks), (2 pts.), (2 نقاط), (درجتان), etc.
+  str = str.replace(/[\(\[]\s*\d+(?:[\.,]\d+)?\s*(?:points?|pts?|pt|marks?|mark|نقطة|نقاط|درجة|درجات)\.?\s*[\)\]]/gi, "");
+  str = str.replace(/[\(\[]\s*(?:نقطتان|درجتان|علامتان)\s*[\)\]]/gi, "");
+
+  // Remove trailing "/ 2 points" or "/ 2 pts" or "/ 2 pt" at end of question lines
+  str = str.replace(/\/\s*\d+(?:[\.,]\d+)?\s*(?:points?|pts?|pt|marks?|mark)?\s*$/gim, "");
+
+  // Clean trailing spaces before punctuation (. , ; ? !) created by removing the points
+  str = str.replace(/[ \t]+([\.\,\;\?\!])/g, "$1");
+
+  // 2. Normalize lines of dots: any sequence of 4 or more dots becomes strictly 57 dots
+  const lines = str.split("\n");
+  const processedLines = lines.map(line => {
+    if (/^\s*\.{4,}\s*$/.test(line)) {
+      return ".".repeat(57);
+    }
+    return line.replace(/\.{4,}/g, ".".repeat(57));
+  });
+
+  return processedLines.join("\n").replace(/[ \t]+$/gm, "");
+};
+
 // Helper to detect if subject is ART or EPS (bilingual)
 const isBilingualSubject = (subject: string): boolean => {
   if (!subject) return false;
@@ -241,19 +269,19 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
     })),
 
     // Exercises List Loop
-    // DOTS: 161 per line × 5 lines, line-spacing 1.5
+    // DOTS: exactly 57 dots per line × 5 lines
     exercices: exercises.map((ex, index) => {
         // Strip redundant "Exercice N" prefix from title (template already numbers them)
-        const rawTitle = clean(ex.title).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim();
+        const rawTitle = cleanExerciseContent(clean(ex.title).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim());
         // Strip "Critère X :" prefix from criterionReference (template shows criterion header separately)
         const rawRef = clean(ex.criterionReference).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim();
-        // Answer lines: 5 lines of dots (exactly 57 dots per line)
+        // Answer lines: 5 lines of dots (strictly 57 dots per line)
         const DOT_LINE = '.'.repeat(57);
         const reponse_lines = Array(5).fill(DOT_LINE).join('\n');
         return {
             numero: index + 1,
             titre: rawTitle,
-            contenu: clean(ex.content),
+            contenu: cleanExerciseContent(ex.content),
             ref: rawRef,
             reponse_lines,
         };
@@ -286,14 +314,14 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
       
       // Exercises Arabic
       exercices_ar: exercises.map((ex, index) => {
-        const rawTitleAr = (ex as any).title_ar ? clean((ex as any).title_ar).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim() : "(تمرين)";
+        const rawTitleAr = (ex as any).title_ar ? cleanExerciseContent(clean((ex as any).title_ar).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim()) : "(تمرين)";
         const rawRefAr = (ex as any).criterionReference_ar ? clean((ex as any).criterionReference_ar).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim() : "";
         const DOT_LINE_AR = '.'.repeat(57);
         const reponse_lines_ar = Array(5).fill(DOT_LINE_AR).join('\n');
         return {
           numero: index + 1,
           titre_ar: rawTitleAr,
-          contenu_ar: (ex as any).content_ar ? clean((ex as any).content_ar) : "(المحتوى)",
+          contenu_ar: (ex as any).content_ar ? cleanExerciseContent((ex as any).content_ar) : "(المحتوى)",
           ref_ar: rawRefAr,
           reponse_lines: reponse_lines_ar,
         };

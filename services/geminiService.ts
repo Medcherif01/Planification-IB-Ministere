@@ -446,6 +446,34 @@ ${idx + 1}. ${s}`,
   return result;
 };
 
+// Helper to clean exercise content: removes point scales (e.g. "(2 points)") and formats dotted lines to strictly 57 dots
+const cleanExerciseContent = (text: any): string => {
+  if (text === null || text === undefined) return "";
+  let str = String(text);
+
+  // 1. Remove grade/points barèmes in brackets or parentheses (French, English, Arabic)
+  // e.g. (2 points), (2 pts), (1 pt), [3 points], (0.5 point), (2 marks), (2 pts.), (2 نقاط), (درجتان), etc.
+  str = str.replace(/[\(\[]\s*\d+(?:[\.,]\d+)?\s*(?:points?|pts?|pt|marks?|mark|نقطة|نقاط|درجة|درجات)\.?\s*[\)\]]/gi, "");
+  str = str.replace(/[\(\[]\s*(?:نقطتان|درجتان|علامتان)\s*[\)\]]/gi, "");
+
+  // Remove trailing "/ 2 points" or "/ 2 pts" or "/ 2 pt" at end of question lines
+  str = str.replace(/\/\s*\d+(?:[\.,]\d+)?\s*(?:points?|pts?|pt|marks?|mark)?\s*$/gim, "");
+
+  // Clean trailing spaces before punctuation (. , ; ? !) created by removing the points
+  str = str.replace(/[ \t]+([\.\,\;\?\!])/g, "$1");
+
+  // 2. Normalize lines of dots: any sequence of 4 or more dots becomes strictly 57 dots
+  const lines = str.split("\n");
+  const processedLines = lines.map(line => {
+    if (/^\s*\.{4,}\s*$/.test(line)) {
+      return ".".repeat(57);
+    }
+    return line.replace(/\.{4,}/g, ".".repeat(57));
+  });
+
+  return processedLines.join("\n").replace(/[ \t]+$/gm, "");
+};
+
 const sanitizeAssessmentData = (data: any): AssessmentData | undefined => {
   // If data is missing or empty, return a safe default structure to prevent export crashes
   if (!data || typeof data !== 'object') return undefined;
@@ -470,8 +498,8 @@ const sanitizeAssessmentData = (data: any): AssessmentData | undefined => {
     })),
     
     exercises: (Array.isArray(data.exercises) ? data.exercises : []).map((e: any) => ({
-        title: String(e?.title || e?.titre || "Exercice"),
-        content: String(e?.content || e?.contenu || "Énoncé..."),
+        title: cleanExerciseContent(e?.title || e?.titre || "Exercice"),
+        content: cleanExerciseContent(e?.content || e?.contenu || "Énoncé..."),
         criterionReference: String(e?.criterionReference || e?.ref || "Critère A..."),
         workspaceNeeded: !!(e?.workspaceNeeded || true)
     }))
@@ -1010,8 +1038,10 @@ GESTION DES RESSOURCES DANS LES EXERCICES :
 - Si l'exercice nécessite l'analyse d'un texte, FOURNIS LE TEXTE complet dans le champ "content".
 - Si l'exercice nécessite une image, écris EXPLICITEMENT : "[Insérer Image/Schéma ici : description détaillée]".
 - AJOUTE TOUJOURS des lignes de réponse avec pointillés pour les élèves :
-  * Après chaque question, ajoute : "\n\nRéponse :\n" suivi de 5-8 lignes de pointillés
-  * Format des lignes : "................................................................................................................................................................................................"
+  * Après chaque question, ajoute : "\n\nRéponse :\n" suivi de 3-5 lignes de pointillés
+  * Format de chaque ligne : EXACTEMENT 57 points (.........................................................)
+  * RÈGLE ABSOLUE DE MISE EN PAGE : Chaque ligne de pointillés doit contenir STRICTEMENT 57 points pour s'ajuster parfaitement aux marges de la page Word.
+  * JAMAIS de barème en points à la fin des questions (PAS de "(2 points)", "(1 pt)", "[3 points]"). L'évaluation IB PEI est strictement critériée (1-8).
   * Adapte le nombre de lignes selon la complexité de la question
   * Ceci garantit que les élèves ont suffisamment d'espace pour écrire leurs réponses
 
@@ -1184,7 +1214,8 @@ GESTION DES RESSOURCES DANS LES TÂCHES PRATIQUES:
 - Si la tâche nécessite un modèle de référence, écrire EXPLICITEMENT: "[Insérer image de référence ici : description détaillée du sujet à observer/reproduire]".
 - AJOUTER des zones dédiées à la création :
   * Pour les tâches de dessin/peinture : "\n\n[ZONE DE CRÉATION - Laisser suffisamment d'espace pour la réalisation pratique]\n"
-  * Pour les analyses : ajouter des lignes de réponse "\n\nObservations :\n................................................................................................................................................................................................\n................................................................................................................................................................................................"
+  * Pour les analyses : ajouter des lignes de réponse "\n\nObservations :\n.........................................................\n........................................................." (exactement 57 points par ligne)
+  * RÈGLE ABSOLUE : Chaque ligne de pointillés doit comporter EXACTEMENT 57 points. AUCUN barème de points (ex: PAS de "(2 points)") à la fin des questions.
   * Adapter l'espace selon le type de tâche pratique
 
 Structure JSON attendue (FRANÇAIS uniquement, pas de champs _ar) :
@@ -1341,8 +1372,10 @@ RESOURCE MANAGEMENT IN EXERCISES:
 - If the exercise requires analysis of a text, PROVIDE THE COMPLETE TEXT in the "content" field.
 - If the exercise requires an image, write EXPLICITLY: "[Insert Image/Diagram here: detailed description]".
 - ALWAYS ADD response lines with dots for students:
-  * After each question, add: "\n\nAnswer:\n" followed by 5-8 dotted lines
-  * Line format: "................................................................................................................................................................................................"
+  * After each question, add: "\n\nAnswer:\n" followed by 3-5 dotted lines
+  * Line format: EXACTLY 57 dots (.........................................................)
+  * ABSOLUTE LAYOUT RULE: Each dotted line must contain STRICTLY 57 dots to perfectly fit Word document margins.
+  * NEVER include point markers at the end of questions (NO "(2 points)", "[1 pt]", etc.). IB MYP uses qualitative criteria 1-8 without question points.
   * Adapt the number of lines based on question complexity
   * This ensures students have sufficient space to write their answers
 
@@ -1517,7 +1550,7 @@ Structure JSON attendue :
       "exercises": [
         {
           "title": "Partie A — Dossier de conception : Recherche et définition du problème",
-          "content": "CONTEXTE DU PROJET : [Présenter le contexte du projet de conception commun à tout le dossier]\n\nA.i — Justification du besoin :\nExplique pourquoi il est nécessaire de concevoir une solution pour ce problème.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nA.ii — Profil de l'utilisateur :\nDécris le client/utilisateur cible (âge, besoins, habitudes, contraintes).\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nA.iii — Analyse de produits existants :\nAnalyse deux produits similaires existants en utilisant les spécifications suivantes : [fonctionnalité, esthétique, durabilité, coût, impact environnemental].\n\n[Insérer images des deux produits analysés]\n\nProduit 1 : ...\nProduit 2 : ...\n\nA.iv — Cahier des charges :\nDéveloppe le cahier des charges de conception (min. 5 critères avec leurs niveaux de performance).",
+          "content": "CONTEXTE DU PROJET : [Présenter le contexte du projet de conception commun à tout le dossier]\n\nA.i — Justification du besoin :\nExplique pourquoi il est nécessaire de concevoir une solution pour ce problème.\n\nRéponse :\n.........................................................\n.........................................................\n\nA.ii — Profil de l'utilisateur :\nDécris le client/utilisateur cible (âge, besoins, habitudes, contraintes).\n\nRéponse :\n.........................................................\n.........................................................\n\nA.iii — Analyse de produits existants :\nAnalyse deux produits similaires existants en utilisant les spécifications suivantes : [fonctionnalité, esthétique, durabilité, coût, impact environnemental].\n\n[Insérer images des deux produits analysés]\n\nProduit 1 : ...\nProduit 2 : ...\n\nA.iv — Cahier des charges :\nDéveloppe le cahier des charges de conception (min. 5 critères avec leurs niveaux de performance).",
           "criterionReference": "Critère A : i, ii, iii, iv",
           "workspaceNeeded": true
         }
@@ -1537,7 +1570,7 @@ Structure JSON attendue :
       "exercises": [
         {
           "title": "Partie B — Dossier de conception : Idéation et planification",
-          "content": "En référence au cahier des charges défini en Partie A :\n\nB.i & B.ii — Esquisses de conception :\nDéveloppe 3 idées de conception différentes pour le projet. Pour chaque idée, réalise une esquisse annotée avec les dimensions, matériaux et techniques envisagés.\n\n[ZONE D'ESQUISSE 1 — Idée 1]\n................................................................................................................................................................................................\n\n[ZONE D'ESQUISSE 2 — Idée 2]\n................................................................................................................................................................................................\n\n[ZONE D'ESQUISSE 3 — Idée 3]\n................................................................................................................................................................................................\n\nB.iii — Justification du choix :\nExplique pourquoi tu as choisi cette idée en référence aux critères du cahier des charges.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nB.iv — Planning de fabrication :\nDéveloppe un planning étape par étape (minimum 5 étapes avec matériaux, outils et durée).",
+          "content": "En référence au cahier des charges défini en Partie A :\n\nB.i & B.ii — Esquisses de conception :\nDéveloppe 3 idées de conception différentes pour le projet. Pour chaque idée, réalise une esquisse annotée avec les dimensions, matériaux et techniques envisagés.\n\n[ZONE D'ESQUISSE 1 — Idée 1]\n.........................................................\n\n[ZONE D'ESQUISSE 2 — Idée 2]\n.........................................................\n\n[ZONE D'ESQUISSE 3 — Idée 3]\n.........................................................\n\nB.iii — Justification du choix :\nExplique pourquoi tu as choisi cette idée en référence aux critères du cahier des charges.\n\nRéponse :\n.........................................................\n.........................................................\n\nB.iv — Planning de fabrication :\nDéveloppe un planning étape par étape (minimum 5 étapes avec matériaux, outils et durée).",
           "criterionReference": "Critère B : i, ii, iii, iv",
           "workspaceNeeded": true
         }
@@ -1557,7 +1590,7 @@ Structure JSON attendue :
       "exercises": [
         {
           "title": "Partie C — Dossier de conception : Journal de fabrication",
-          "content": "Durant la fabrication de ta solution (en référence au planning Partie B) :\n\nC.i & C.ii — Journal de fabrication :\nDocumente chaque étape de ta fabrication (photos, croquis, notes techniques).\n\nÉtape 1 réalisée :\n................................................................................................................................................................................................\nÉtape 2 réalisée :\n................................................................................................................................................................................................\nÉtape 3 réalisée :\n................................................................................................................................................................................................\n\nC.iii — Suivi du planning :\nCompare ce que tu as réalisé avec ton planning initial. Y a-t-il eu des modifications ? Justifie.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nC.iv — Gestion des ressources :\nComment as-tu géré les matériaux et les déchets de façon responsable ?\n\nRéponse :\n................................................................................................................................................................................................",
+          "content": "Durant la fabrication de ta solution (en référence au planning Partie B) :\n\nC.i & C.ii — Journal de fabrication :\nDocumente chaque étape de ta fabrication (photos, croquis, notes techniques).\n\nÉtape 1 réalisée :\n.........................................................\nÉtape 2 réalisée :\n.........................................................\nÉtape 3 réalisée :\n.........................................................\n\nC.iii — Suivi du planning :\nCompare ce que tu as réalisé avec ton planning initial. Y a-t-il eu des modifications ? Justifie.\n\nRéponse :\n.........................................................\n.........................................................\n\nC.iv — Gestion des ressources :\nComment as-tu géré les matériaux et les déchets de façon responsable ?\n\nRéponse :\n.........................................................",
           "criterionReference": "Critère C : i, ii, iii, iv",
           "workspaceNeeded": true
         }
@@ -1577,7 +1610,7 @@ Structure JSON attendue :
       "exercises": [
         {
           "title": "Partie D — Dossier de conception : Évaluation finale",
-          "content": "En référence à ta solution créée en Partie C :\n\nD.i — Méthodes d'évaluation :\nDécris comment tu vas tester ta solution (minimum 2 méthodes différentes).\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nD.ii — Tests selon le cahier des charges :\nPour chaque critère de ton cahier des charges (Partie A), indique si ta solution le respecte ou non, avec justification.\n\nCritère 1 : ...\nRéponse :\n................................................................................................................................................................................................\n\nCritère 2 : ...\nRéponse :\n................................................................................................................................................................................................\n\nD.iii — Impact de la solution :\nÉvalue l'impact de ta solution sur l'utilisateur et sur l'environnement.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................\n\nD.iv — Améliorations possibles :\nSi tu devais améliorer ta solution, que changerais-tu ? Justifie.\n\nRéponse :\n................................................................................................................................................................................................\n................................................................................................................................................................................................",
+          "content": "En référence à ta solution créée en Partie C :\n\nD.i — Méthodes d'évaluation :\nDécris comment tu vas tester ta solution (minimum 2 méthodes différentes).\n\nRéponse :\n.........................................................\n.........................................................\n\nD.ii — Tests selon le cahier des charges :\nPour chaque critère de ton cahier des charges (Partie A), indique si ta solution le respecte ou non, avec justification.\n\nCritère 1 : ...\nRéponse :\n.........................................................\n\nCritère 2 : ...\nRéponse :\n.........................................................\n\nD.iii — Impact de la solution :\nÉvalue l'impact de ta solution sur l'utilisateur et sur l'environnement.\n\nRéponse :\n.........................................................\n.........................................................\n\nD.iv — Améliorations possibles :\nSi tu devais améliorer ta solution, que changerais-tu ? Justifie.\n\nRéponse :\n.........................................................\n.........................................................",
           "criterionReference": "Critère D : i, ii, iii, iv",
           "workspaceNeeded": true
         }

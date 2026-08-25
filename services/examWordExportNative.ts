@@ -2,6 +2,7 @@ import { Document, Paragraph, TextRun, AlignmentType, HeadingLevel, Table, Table
 import { saveAs } from 'file-saver';
 import { Packer } from 'docx';
 import { Exam, QuestionType } from '../types';
+import { cleanExerciseContent } from './wordExportService';
 
 // Configuration globale du formatage
 const FONT_NAME = 'Times New Roman';
@@ -182,7 +183,7 @@ const createQuestionParagraphs = (question: any, index: number, isEnglish: boole
     new Paragraph({
       children: [
         new TextRun({
-          text: question.content,
+          text: cleanExerciseContent(question.content),
           bold: true,
           size: 22, // 11pt
           font: FONT_NAME,
@@ -303,7 +304,7 @@ const createQuestionWithCorrectionParagraphs = (question: any, index: number, is
     new Paragraph({
       children: [
         new TextRun({
-          text: question.content,
+          text: cleanExerciseContent(question.content),
           bold: true,
           size: 22,
                   font: FONT_NAME,
