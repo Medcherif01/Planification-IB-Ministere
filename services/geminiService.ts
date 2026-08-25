@@ -1,5 +1,5 @@
 import { UnitPlan, AssessmentData } from "../types";
-import { getCriteriaSync, buildCriteriaSummaryForPrompt } from './ibCriteriaService';
+import { getCriteriaSync, buildCriteriaSummaryForPrompt, getStandardIBCriterion } from './ibCriteriaService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Proxy API helper — tous les appels Gemini passent par /api/generate (Vercel
@@ -3443,18 +3443,78 @@ export const generateUnitDetailsWithAI = async (
 ): Promise<Partial<UnitPlan>> => {
   onProgress?.('Analyse globale de l\'unité en cours...');
 
+  // ── Année scolaire 2026/2027 par défaut ────────────────────────────────────
+  const effectiveSchoolYear = (plan.schoolYear && !plan.schoolYear.includes('2024') && !plan.schoolYear.includes('2025'))
+    ? plan.schoolYear
+    : '2026/2027';
+
+  // ── Objectifs cibles stricts (uniquement ceux définis pour cette unité) ────
+  const targetObjectives: ('A' | 'B' | 'C' | 'D')[] = (Array.isArray(plan.objectives) && plan.objectives.length > 0)
+    ? (plan.objectives.filter(o => ['A', 'B', 'C', 'D'].includes(o)) as ('A' | 'B' | 'C' | 'D')[])
+    : ['A', 'B', 'C', 'D'];
+
+  // ── Lire les dates depuis le calendrier annuel si disponible ──────────────
+  let calStartDate = plan.startDate || '30 Août 2026';
+  let calEndDate   = plan.endDate || '15 Octobre 2026';
+  try {
+    const grade = plan.gradeLevel || '';
+    const calRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(`annual_calendar_${grade}`) : null;
+    if (calRaw) {
+      const cal = JSON.parse(calRaw);
+      const entries: any[] = cal.entries || [];
+      const subject = plan.subject || '';
+      const titleKey = (plan.title || '').toLowerCase().slice(0, 20);
+      const matching = entries.filter(e =>
+        e.type === 'unit' && e.subject === subject &&
+        (e.unitTitle?.toLowerCase().includes(titleKey) || titleKey.includes(e.unitTitle?.toLowerCase().slice(0, 15)))
+      );
+      if (matching.length > 0) {
+        const WEEKS_START: Record<number, string> = {
+          1:'30 Août 2026', 2:'06 Sept. 2026', 3:'13 Sept. 2026', 4:'20 Sept. 2026',
+          5:'27 Sept. 2026', 6:'04 Oct. 2026', 7:'11 Oct. 2026', 8:'18 Oct. 2026',
+          9:'25 Oct. 2026', 10:'01 Nov. 2026', 11:'08 Nov. 2026', 12:'15 Nov. 2026',
+          13:'29 Nov. 2026', 14:'06 Déc. 2026', 15:'13 Déc. 2026', 16:'20 Déc. 2026',
+          17:'27 Déc. 2026', 18:'03 Jan. 2027', 19:'17 Jan. 2027', 20:'24 Jan. 2027',
+          21:'31 Jan. 2027', 22:'07 Fév. 2027', 23:'14 Fév. 2027', 24:'21 Fév. 2027',
+          25:'14 Mars 2027', 26:'21 Mars 2027', 27:'28 Mars 2027', 28:'04 Avr. 2027',
+          29:'11 Avr. 2027', 30:'18 Avr. 2027', 31:'25 Avr. 2027', 32:'02 Mai 2027',
+          33:'23 Mai 2027', 34:'30 Mai 2027', 35:'06 Juin 2027', 36:'13 Juin 2027',
+          37:'20 Juin 2027', 38:'27 Juin 2027',
+        };
+        const WEEKS_END: Record<number, string> = {
+          1:'03 Sept. 2026', 2:'10 Sept. 2026', 3:'17 Sept. 2026', 4:'24 Sept. 2026',
+          5:'01 Oct. 2026', 6:'08 Oct. 2026', 7:'15 Oct. 2026', 8:'22 Oct. 2026',
+          9:'29 Oct. 2026', 10:'05 Nov. 2026', 11:'12 Nov. 2026', 12:'19 Nov. 2026',
+          13:'03 Déc. 2026', 14:'10 Déc. 2026', 15:'17 Déc. 2026', 16:'24 Déc. 2026',
+          17:'31 Déc. 2026', 18:'07 Jan. 2027', 19:'21 Jan. 2027', 20:'28 Jan. 2027',
+          21:'04 Fév. 2027', 22:'11 Fév. 2027', 23:'18 Fév. 2027', 24:'25 Fév. 2027',
+          25:'18 Mars 2027', 26:'25 Mars 2027', 27:'01 Avr. 2027', 28:'08 Avr. 2027',
+          29:'15 Avr. 2027', 30:'22 Avr. 2027', 31:'29 Avr. 2027', 32:'06 Mai 2027',
+          33:'27 Mai 2027', 34:'03 Juin 2027', 35:'10 Juin 2027', 36:'17 Juin 2027',
+          37:'24 Juin 2027', 38:'30 Juin 2027',
+        };
+        const weekNums = matching.map(e => e.weekNum as number).sort((a, b) => a - b);
+        const minW = weekNums[0];
+        const maxW = weekNums[weekNums.length - 1];
+        if (WEEKS_START[minW]) calStartDate = WEEKS_START[minW];
+        if (WEEKS_END[maxW])   calEndDate   = WEEKS_END[maxW];
+      }
+    }
+  } catch { /* calendrier non disponible */ }
+
   // Informations de base de l'unité
   const unitInfo = [
     'Titre de l\'unité: ' + (plan.title || 'Non défini'),
     'Matière: ' + (plan.subject || 'Non définie'),
     'Niveau: ' + (plan.gradeLevel || 'Non défini'),
     'Durée: ' + (plan.duration || '20 heures'),
-    'Année scolaire: ' + (plan.schoolYear || '2024-2025'),
+    'Année scolaire: ' + effectiveSchoolYear,
+    'Dates selon calendrier: Du ' + calStartDate + ' au ' + calEndDate,
     'Concept clé: ' + (plan.keyConcept || 'Identité'),
     'Concepts connexes: ' + (Array.isArray(plan.relatedConcepts) && plan.relatedConcepts.length > 0 ? plan.relatedConcepts.join(', ') : 'Thème, Genre, Structure'),
     'Contexte mondial: ' + (plan.globalContext || 'Identités et relations'),
     'Énoncé de recherche: ' + (plan.statementOfInquiry || 'Non défini'),
-    'Objectifs / Critères: ' + (plan.objectives || ['A', 'B', 'C', 'D']).join(', '),
+    'Objectifs spécifiques visés (CRITÈRES STRICTEMENT LIMITÉS): ' + targetObjectives.join(', '),
     'ATL: ' + (Array.isArray(plan.atlSkills) && plan.atlSkills.length > 0 ? plan.atlSkills : ['Compétences de communication', 'Compétences de pensée critique', 'Compétences de recherche', 'Compétences d\'autogestion']).join(', '),
     'Contenu / Chapitres: ' + (plan.chapters || plan.content || '').slice(0, 400),
     'Évaluation sommative: ' + (plan.summativeAssessment || '').slice(0, 200),
@@ -3463,18 +3523,32 @@ export const generateUnitDetailsWithAI = async (
   // ── Appel 1: Cadrage conceptuel + Contexte élèves + Contenu + Objectifs ───
   onProgress?.('Cadrage conceptuel, contexte élèves et contenu (1/3)...');
 
+  const sampleObjectivesDetails = targetObjectives.map(crit => {
+    const std = getStandardIBCriterion(plan.subject || '', crit);
+    return {
+      criterion: crit,
+      aspects: std.aspectsFormatted,
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: std.activities,
+      formativeAssessment: std.formativeAssessment,
+      summativeAssessment: std.summativeAssessment
+    };
+  });
+
   const prompt1 = `Tu es expert pédagogique international IB PEI (Programme d'éducation intermédiaire). Génère UNIQUEMENT un objet JSON valide et complet pour cette unité.
-IMPORTANT : Remplis absolument TOUS les champs ci-dessous avec un contenu riche, professionnel et adapté en français. Ne laisse AUCUN champ vide ni avec de simple placeholder.
+IMPORTANT : Remplis absolument TOUS les champs ci-dessous avec un contenu riche, professionnel et adapté en français.
+RÈGLE CRUCIALE SUR LES OBJECTIFS : Pour "objectivesDetails", limite-toi STRICTEMENT aux objectifs spécifiques visés : [${targetObjectives.join(', ')}].
+Chaque critère DOIT obligatoirement détailler ses aspects avec la numérotation romaine officielle "i. ..., ii. ..., iii. ...".
 
 ${unitInfo}
 
 Format JSON attendu :
 {
-  "schoolYear": "${plan.schoolYear || '2024-2025'}",
+  "schoolYear": "${effectiveSchoolYear}",
   "numberOfPeriods": "20 périodes",
   "numberOfHours": "${plan.duration || '20 heures'}",
-  "startDate": "30 Août 2026",
-  "endDate": "15 Octobre 2026",
+  "startDate": "${calStartDate}",
+  "endDate": "${calEndDate}",
   "prerequisites": "Prérequis disciplinaires et compétences préalables des élèves indispensables pour aborder l'unité.",
   "chapters": "- Chapitre 1 : Découverte et cadrage conceptuel\\n- Chapitre 2 : Analyse et approfondissement\\n- Chapitre 3 : Production et consolidation",
   "keyConcept": "${plan.keyConcept || 'Identité'}",
@@ -3494,7 +3568,7 @@ Format JSON attendu :
     "conceptual": ["Question conceptuelle 1 ?", "Question conceptuelle 2 ?"],
     "debatable": ["Question invitant au débat 1 ?", "Question invitant au débat 2 ?"]
   },
-  "objectives": ${JSON.stringify(plan.objectives && plan.objectives.length >= 2 ? plan.objectives : ["A", "B", "C", "D"])},
+  "objectives": ${JSON.stringify(targetObjectives)},
   "atlSkills": ${JSON.stringify(plan.atlSkills && plan.atlSkills.length > 0 ? plan.atlSkills : ["Compétences de communication", "Compétences de pensée critique", "Compétences de recherche", "Compétences d'autogestion"])},
   "atlDetails": [
     {
@@ -3539,12 +3613,7 @@ Format JSON attendu :
     "selectedContent": "Contenus spécifiques choisis par l'enseignant et justification didactique.",
     "nationalLinks": "Correspondances précises avec le programme national pour ce niveau."
   },
-  "objectivesDetails": [
-    {"criterion": "A", "aspects": "Aspects évalués du critère A", "expectedLevel": "Niveau 5-6 attendu /8", "activities": "Activités développant le critère A", "formativeAssessment": "Évaluation formative critère A", "summativeAssessment": "Évaluation sommative critère A"},
-    {"criterion": "B", "aspects": "Aspects évalués du critère B", "expectedLevel": "Niveau 5-6 attendu /8", "activities": "Activités développant le critère B", "formativeAssessment": "Évaluation formative critère B", "summativeAssessment": "Évaluation sommative critère B"},
-    {"criterion": "C", "aspects": "Aspects évalués du critère C", "expectedLevel": "Niveau 5-6 attendu /8", "activities": "Activités développant le critère C", "formativeAssessment": "Évaluation formative critère C", "summativeAssessment": "Évaluation sommative critère C"},
-    {"criterion": "D", "aspects": "Aspects évalués du critère D", "expectedLevel": "Niveau 5-6 attendu /8", "activities": "Activités développant le critère D", "formativeAssessment": "Évaluation formative critère D", "summativeAssessment": "Évaluation sommative critère D"}
-  ],
+  "objectivesDetails": ${JSON.stringify(sampleObjectivesDetails, null, 2)},
   "formativeAssessment": "Dispositif complet d'évaluation formative continue : observations régulières, rétroactions descriptives ciblées, auto-évaluation et régulation continue des apprentissages.",
   "formativeDetails": [
     {
@@ -3552,7 +3621,7 @@ Format JSON attendu :
       "moment": "Début d'unité (Séance 1-2)",
       "objectifEvalue": "Évaluer les prérequis et l'appropriation des concepts fondamentaux",
       "activite": "Questionnaire interactif, remue-méninges structuré et carte mentale",
-      "criteres": "Critère A",
+      "criteres": "Critère ${targetObjectives[0] || 'A'}",
       "methodeEvaluation": "Observation directe et grille d'auto-positionnement",
       "feedbackEnseignant": "Rétroaction formative orale immédiate pour ajuster le rythme",
       "autoevaluation": "Grille d'auto-évaluation en 3 niveaux d'acquisition",
@@ -3564,7 +3633,7 @@ Format JSON attendu :
       "moment": "Milieu d'unité (Séance 3-4)",
       "objectifEvalue": "Vérifier la maîtrise méthodologique et le développement des compétences ATL",
       "activite": "Production écrite courte / résolution de tâche guidée",
-      "criteres": "Critères B et C",
+      "criteres": "Critères ${targetObjectives.join(' et ')}",
       "methodeEvaluation": "Correction formative avec critères IB annotés",
       "feedbackEnseignant": "Commentaires personnalisés avec pistes d'amélioration explicites",
       "autoevaluation": "Bilan d'étape métacognitif",
@@ -3580,6 +3649,8 @@ Format JSON attendu :
     "consigne": "Consigne détaillée guidant l'élève pas à pas dans la réalisation de sa production",
     "productionAttendue": "Dossier d'investigation, production créative argumentée et justification conceptuelle",
     "duree": "2 heures",
+    "objectifsEvalues": ${JSON.stringify(targetObjectives)},
+    "criteresPEI": ${JSON.stringify(targetObjectives)},
     "grille": "Critères d'évaluation IB appliqués avec descripteurs de niveaux explicites (1-8)",
     "feedback": "Bilan sommatif critérié avec commentaires formatifs pour les apprentissages futurs",
     "possibiliteRevision": true
@@ -3835,8 +3906,8 @@ Règles : JSON valide uniquement, français soigné, adapté à la matière "${p
   const statementVal = str(p1.statementOfInquiry, plan.statementOfInquiry || `L'exploration de ${keyConceptVal.toLowerCase()} permet de comprendre comment les contextes et les relations façonnent notre perception du monde.`);
 
   // ── Lire les dates depuis le calendrier annuel si disponible ──────────────
-  let calStartDate = str(p1.startDate, plan.startDate || '30 Août 2026');
-  let calEndDate   = str(p1.endDate, plan.endDate || '15 Octobre 2026');
+  calStartDate = str(p1.startDate, calStartDate || '30 Août 2026');
+  calEndDate   = str(p1.endDate, calEndDate || '15 Octobre 2026');
   try {
     const grade = plan.gradeLevel || '';
     const calRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(`annual_calendar_${grade}`) : null;
@@ -3886,7 +3957,7 @@ Règles : JSON valide uniquement, français soigné, adapté à la matière "${p
   // ── Construction sécurisée de l'objet de retour ────────────────────────────
   const result: Partial<UnitPlan> = {
     // A. Infos générales
-    schoolYear: str(p1.schoolYear, plan.schoolYear || '2024-2025'),
+    schoolYear: effectiveSchoolYear,
     numberOfPeriods: str(p1.numberOfPeriods, plan.numberOfPeriods || '20 périodes'),
     numberOfHours: str(p1.numberOfHours, plan.numberOfHours || plan.duration || '20 heures'),
     startDate: calStartDate,
@@ -3930,14 +4001,27 @@ Règles : JSON valide uniquement, français soigné, adapté à la matière "${p
       debatable: (p1.inquiryQuestions as any)?.debatable?.length ? (p1.inquiryQuestions as any).debatable : (plan.inquiryQuestions?.debatable?.length ? plan.inquiryQuestions.debatable : ['Dans quelle mesure peut-on affirmer que cette approche est universelle ?', 'Quelle est la responsabilité éthique liée à ces connaissances ?']),
     },
 
-    // F. Objectifs spécifiques
-    objectives: (Array.isArray(p1.objectives) && p1.objectives.length > 0) ? (p1.objectives as string[]) : (plan.objectives?.length ? plan.objectives : ['A', 'B', 'C', 'D']),
-    objectivesDetails: ((p1.objectivesDetails as any[])?.length ? (p1.objectivesDetails as any[]) : (plan.objectivesDetails?.length ? plan.objectivesDetails : [
-      { criterion: 'A', aspects: 'Connaissances et compréhension des concepts et notions', expectedLevel: 'Niveau 5-6 attendu /8', activities: 'Analyses de documents, résolutions de problèmes et synthèses écrites', formativeAssessment: 'Questionnaires diagnostiques et bilans d\'étape', summativeAssessment: 'Évaluation sommative critériée finale' },
-      { criterion: 'B', aspects: 'Organisation, méthodes et planification de la recherche', expectedLevel: 'Niveau 5-6 attendu /8', activities: 'Élaboration de protocoles, structuration du plan de travail', formativeAssessment: 'Vérification du carnet de bord', summativeAssessment: 'Dossier méthodologique sommatif' },
-      { criterion: 'C', aspects: 'Production, communication et expression rigoureuse', expectedLevel: 'Niveau 5-6 attendu /8', activities: 'Rédaction d\'analyses argumentées, présentations orales', formativeAssessment: 'Co-évaluation entre pairs', summativeAssessment: 'Production finale critériée' },
-      { criterion: 'D', aspects: 'Réflexion critique, analyse d\'impact et transfert', expectedLevel: 'Niveau 5-6 attendu /8', activities: 'Débats argumentés, bilans métacognitifs', formativeAssessment: 'Auto-évaluation critériée', summativeAssessment: 'Partie réflexive de la tâche sommative' },
-    ])),
+    // F. Objectifs spécifiques (Strictement limités aux critères choisis avec aspects i, ii, iii...)
+    objectives: targetObjectives,
+    objectivesDetails: targetObjectives.map(crit => {
+      const existing = (Array.isArray(p1.objectivesDetails) ? p1.objectivesDetails : (plan.objectivesDetails || [])).find(
+        (o: any) => (o?.criterion || '').toUpperCase() === crit
+      );
+      const std = getStandardIBCriterion(plan.subject || '', crit);
+      const rawAspects = typeof existing?.aspects === 'string' && existing.aspects.trim().length > 0 ? existing.aspects.trim() : '';
+      const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
+        ? rawAspects
+        : std.aspectsFormatted;
+
+      return {
+        criterion: crit,
+        aspects,
+        expectedLevel: str(existing?.expectedLevel, 'Niveau 5-6 attendu /8'),
+        activities: str(existing?.activities, std.activities),
+        formativeAssessment: str(existing?.formativeAssessment, std.formativeAssessment),
+        summativeAssessment: str(existing?.summativeAssessment, std.summativeAssessment),
+      };
+    }),
 
     // G. Contenu
     content: str(p1.content, plan.content || `Programme d'études complet portant sur ${plan.title || 'l\'unité'}, structuré en séquences progressives d'apprentissage.`),
@@ -4023,7 +4107,7 @@ Règles : JSON valide uniquement, français soigné, adapté à la matière "${p
         moment: 'Séance 1-2 (Début d\'unité)',
         objectifEvalue: 'Identifier les prérequis et représentations initiales',
         activite: 'Carte mentale et questionnaire interactif',
-        criteres: 'Critère A',
+        criteres: `Critère ${targetObjectives[0] || 'A'}`,
         methodeEvaluation: 'Observation directe et régulation orale',
         feedbackEnseignant: 'Rétroaction immédiate sur les acquis fondamentaux',
         autoevaluation: 'Auto-positionnement sur échelle de confiance',
@@ -4035,7 +4119,7 @@ Règles : JSON valide uniquement, français soigné, adapté à la matière "${p
         moment: 'Séance 3-4 (Mi-parcours)',
         objectifEvalue: 'Vérifier la maîtrise méthodologique',
         activite: 'Production courte et application guidée',
-        criteres: 'Critères B et C',
+        criteres: `Critères ${targetObjectives.join(' et ')}`,
         methodeEvaluation: 'Grille critériée descriptive annotée',
         feedbackEnseignant: 'Conseils personnalisés pour la tâche sommative',
         autoevaluation: 'Grille d\'auto-évaluation IB',
@@ -4052,9 +4136,9 @@ Règles : JSON valide uniquement, français soigné, adapté à la matière "${p
       situation: str((p1.summativeDetails as any)?.situation, plan.summativeDetails?.situation || `Situation-problème complexe mobilisant les savoirs et compétences acquis.`),
       consigne: str((p1.summativeDetails as any)?.consigne, plan.summativeDetails?.consigne || `Réaliser une production argumentée et rigoureuse répondant aux critères d'évaluation IB.`),
       productionAttendue: str((p1.summativeDetails as any)?.productionAttendue, plan.summativeDetails?.productionAttendue || `Dossier écrit ou présentation structurée avec justification conceptuelle.`),
-      objectifsEvalues: (Array.isArray((p1.summativeDetails as any)?.objectifsEvalues) && (p1.summativeDetails as any).objectifsEvalues.length > 0) ? (p1.summativeDetails as any).objectifsEvalues : (plan.objectives || ['A', 'B', 'C', 'D']),
-      criteresPEI: (Array.isArray((p1.summativeDetails as any)?.criteresPEI) && (p1.summativeDetails as any).criteresPEI.length > 0) ? (p1.summativeDetails as any).criteresPEI : (plan.objectives || ['A', 'B', 'C', 'D']),
-      aspectsEvalues: str((p1.summativeDetails as any)?.aspectsEvalues, `Ensemble des aspects prescrits des critères évalués.`),
+      objectifsEvalues: targetObjectives,
+      criteresPEI: targetObjectives,
+      aspectsEvalues: targetObjectives.map(c => `Critère ${c} : ${getStandardIBCriterion(plan.subject || '', c).aspectsFormatted}`).join('\n'),
       niveauAttendu: str((p1.summativeDetails as any)?.niveauAttendu, `Niveau 5-6 /8 attendu en moyenne.`),
       ressourcesAutorisees: str((p1.summativeDetails as any)?.ressourcesAutorisees, `Carnet de bord et fiches méthodologiques.`),
       duree: str((p1.summativeDetails as any)?.duree, `2 heures`),

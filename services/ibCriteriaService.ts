@@ -189,3 +189,437 @@ export function buildCriteriaSummaryForPrompt(config: IbCriteriaConfig): string 
   }
   return lines.join('\n');
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standard IB MYP Criteria & Aspects (Strands with Roman Numerals i, ii, iii, iv)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface StandardIBCriterionInfo {
+  name: string;
+  strands: string[];
+  aspectsFormatted: string;
+  expectedLevel: string;
+  activities: string;
+  formativeAssessment: string;
+  summativeAssessment: string;
+}
+
+export const STANDARD_IB_CRITERIA_BY_SUBJECT: Record<string, Record<'A'|'B'|'C'|'D', StandardIBCriterionInfo>> = {
+  // Langue et littérature
+  langue_litterature: {
+    A: {
+      name: 'Analyser',
+      strands: [
+        "i. Analyser les effets des choix de l'auteur sur le lecteur",
+        "ii. Justifier des opinions et des idées à l'aide d'exemples et de citations",
+        "iii. Évaluer les liens et interconnexions entre les textes"
+      ],
+      aspectsFormatted: "i. Analyser les effets des choix de l'auteur sur le lecteur ; ii. Justifier des opinions et des idées à l'aide d'exemples et de citations ; iii. Évaluer les liens et interconnexions entre les textes.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Lectures analytiques guidées, identification des figures de style et analyse critique d'extraits textuels.",
+      formativeAssessment: "Questionnaires de repérage et bilans d'étape sur l'analyse littéraire.",
+      summativeAssessment: "Commentaire littéraire structuré ou analyse comparative de textes."
+    },
+    B: {
+      name: 'Organiser',
+      strands: [
+        "i. Employer des structures organisationnelles adaptées au contexte et à l'intention",
+        "ii. Structurer les idées de manière logique et cohérente",
+        "iii. Utiliser des outils de mise en page et de référencement appropriés"
+      ],
+      aspectsFormatted: "i. Employer des structures organisationnelles adaptées au contexte et à l'intention ; ii. Structurer les idées de manière logique et cohérente ; iii. Utiliser des outils de mise en page et de référencement appropriés.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Élaboration de plans de rédaction détaillés, structuration des paragraphes et usage des connecteurs logiques.",
+      formativeAssessment: "Vérification formative du plan d'écriture et rétroaction entre pairs.",
+      summativeAssessment: "Production écrite organisée selon une progression logique rigoureuse."
+    },
+    C: {
+      name: 'Produire du texte',
+      strands: [
+        "i. Produire des textes qui démontrent réflexion, discernement et créativité",
+        "ii. Choisir et employer des éléments stylistiques adaptés",
+        "iii. Explorer des perspectives diverses à travers l'écriture"
+      ],
+      aspectsFormatted: "i. Produire des textes qui démontrent réflexion, discernement et créativité ; ii. Choisir et employer des éléments stylistiques adaptés ; iii. Explorer des perspectives diverses à travers l'écriture.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Ateliers d'écriture créative et argumentative, réécriture stylistique et diversification des points de vue.",
+      formativeAssessment: "Co-évaluation de versions intermédiaires de brouillons avec grille de critères.",
+      summativeAssessment: "Texte abouti (récit, discours, article ou essai) démontrant discernement et maîtrise stylistique."
+    },
+    D: {
+      name: 'Utiliser la langue',
+      strands: [
+        "i. Utiliser un vocabulaire, une syntaxe et des structures variés et précis",
+        "ii. Employer un registre et un ton adaptés",
+        "iii. Appliquer correctement les règles d'orthographe, de ponctuation et de grammaire"
+      ],
+      aspectsFormatted: "i. Utiliser un vocabulaire, une syntaxe et des structures variés et précis ; ii. Employer un registre et un ton adaptés ; iii. Appliquer correctement les règles d'orthographe, de ponctuation et de grammaire.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Exercices d'enrichissement lexical, révision syntaxique et perfectionnement de la langue écrite et orale.",
+      formativeAssessment: "Grille d'auto-correction ciblée et relecture guidée par fiches outils.",
+      summativeAssessment: "Évaluation de la correction linguistique, de la richesse lexicale et de l'adaptation du registre."
+    }
+  },
+  // Individus et sociétés
+  individus_societes: {
+    A: {
+      name: 'Savoir et comprendre',
+      strands: [
+        "i. Utiliser la terminologie appropriée",
+        "ii. Démontrer sa connaissance et compréhension du contenu et des concepts à travers des descriptions et des explications"
+      ],
+      aspectsFormatted: "i. Utiliser la terminologie appropriée ; ii. Démontrer sa connaissance et compréhension du contenu et des concepts à travers des descriptions et des explications.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Étude critique de documents historiques/géographiques, contextualisation spatio-temporelle et synthèses.",
+      formativeAssessment: "Questionnaires diagnostiques et bilans d'étape sur les concepts clés.",
+      summativeAssessment: "Épreuve d'analyse documentaire et de restitution de connaissances conceptuelles."
+    },
+    B: {
+      name: 'Investiguer',
+      strands: [
+        "i. Formuler une question de recherche claire et ciblée",
+        "ii. Formuler et suivre un plan d'action d'investigation",
+        "iii. Recueillir et consigner des informations pertinentes auprès de sources variées",
+        "iv. Évaluer le processus et les résultats de l'investigation"
+      ],
+      aspectsFormatted: "i. Formuler une question de recherche claire et ciblée ; ii. Formuler et suivre un plan d'action d'investigation ; iii. Recueillir et consigner des informations pertinentes auprès de sources variées ; iv. Évaluer le processus et les résultats de l'investigation.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Démarche d'investigation méthodique, collecte et tri de sources documentaires, tenue d'un carnet de recherche.",
+      formativeAssessment: "Validation d'étape de la problématique et du plan d'action par l'enseignant.",
+      summativeAssessment: "Dossier d'investigation complet avec carnet de recherche et évaluation méthodologique."
+    },
+    C: {
+      name: 'Communiquer',
+      strands: [
+        "i. Communiquer des informations et des idées en utilisant un style et une structure adaptés",
+        "ii. Structurer des informations et arguments de manière cohérente",
+        "iii. Citer et référencer toutes les sources utilisées (bibliographie normalisée)"
+      ],
+      aspectsFormatted: "i. Communiquer des informations et des idées en utilisant un style et une structure adaptés ; ii. Structurer des informations et arguments de manière cohérente ; iii. Citer et référencer toutes les sources utilisées (bibliographie normalisée).",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Présentations orales, rédaction d'articles synthétiques et création de bibliographies normalisées.",
+      formativeAssessment: "Rétroaction entre pairs sur la structuration des arguments et la rigueur des citations.",
+      summativeAssessment: "Rapport de recherche ou exposé final intégrant une argumentation fluide et un appareil critique conforme."
+    },
+    D: {
+      name: 'Penser de manière critique',
+      strands: [
+        "i. Analyser des concepts, questions, modèles et théories",
+        "ii. Évaluer des informations et arguments en identifiant les perspectives et biais",
+        "iii. Synthétiser des informations pour tirer des conclusions valides",
+        "iv. Évaluer différentes perspectives et leurs implications"
+      ],
+      aspectsFormatted: "i. Analyser des concepts, questions, modèles et théories ; ii. Évaluer des informations et arguments en identifiant les perspectives et biais ; iii. Synthétiser des informations pour tirer des conclusions valides ; iv. Évaluer différentes perspectives et leurs implications.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Débats contradictoires, déconstruction des biais documentaires et confrontation de perspectives multiples.",
+      formativeAssessment: "Tableaux d'analyse critique des sources et mini-dissertations d'étape.",
+      summativeAssessment: "Essai critique ou résolution de situation-problème complexe évaluant les impacts sociétaux."
+    }
+  },
+  // Sciences
+  sciences: {
+    A: {
+      name: 'Savoir et comprendre',
+      strands: [
+        "i. Expliquer des connaissances scientifiques",
+        "ii. Appliquer des connaissances et compétences scientifiques pour résoudre des problèmes",
+        "iii. Analyser et évaluer des informations scientifiques pour formuler des jugements"
+      ],
+      aspectsFormatted: "i. Expliquer des connaissances scientifiques ; ii. Appliquer des connaissances et compétences scientifiques pour résoudre des problèmes ; iii. Analyser et évaluer des informations scientifiques pour formuler des jugements.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Résolution de problèmes scientifiques contextualisés, calculs et interprétation de données empiriques.",
+      formativeAssessment: "Tests formatifs d'application et auto-évaluation sur exercices corrigés.",
+      summativeAssessment: "Évaluation sommative écrite combinant questions de cours, calculs et analyse de données."
+    },
+    B: {
+      name: 'Rechercher et concevoir',
+      strands: [
+        "i. Formuler un problème ou une question scientifique à tester",
+        "ii. Formuler une hypothèse vérifiable et la justifier",
+        "iii. Décrire comment manipuler et contrôler les variables",
+        "iv. Concevoir une démarche expérimentale rigoureuse"
+      ],
+      aspectsFormatted: "i. Formuler un problème ou une question scientifique à tester ; ii. Formuler une hypothèse vérifiable et la justifier ; iii. Décrire comment manipuler et contrôler les variables ; iv. Concevoir une démarche expérimentale rigoureuse.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Élaboration de protocoles expérimentaux, identification des variables dépendantes/indépendantes et contrôlées.",
+      formativeAssessment: "Validation formative du protocole avant manipulation au laboratoire.",
+      summativeAssessment: "Protocole expérimental complet et justification de la démarche scientifique."
+    },
+    C: {
+      name: 'Traiter et évaluer',
+      strands: [
+        "i. Présenter et transformer des données collectées",
+        "ii. Interpréter des données et expliquer des résultats à l'aide d'un raisonnement scientifique",
+        "iii. Évaluer la validité de l'hypothèse et de la méthode expérimentale",
+        "iv. Suggérer des améliorations et prolongements"
+      ],
+      aspectsFormatted: "i. Présenter et transformer des données collectées ; ii. Interpréter des données et expliquer des résultats à l'aide d'un raisonnement scientifique ; iii. Évaluer la validité de l'hypothèse et de la méthode expérimentale ; iv. Suggérer des améliorations et prolongements.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Collecte de données, construction de graphiques, analyse des incertitudes et formulation de conclusions.",
+      formativeAssessment: "Correction formative des graphiques et interprétations de données intermédiaires.",
+      summativeAssessment: "Rapport de laboratoire complet avec analyse critique des résultats et conclusion."
+    },
+    D: {
+      name: 'Réfléchir sur les impacts de la science',
+      strands: [
+        "i. Expliquer la façon dont la science est appliquée pour résoudre des problèmes",
+        "ii. Discuter et évaluer les implications éthiques, sociales, économiques et environnementales",
+        "iii. Utiliser un langage scientifique approprié",
+        "iv. Documenter et référencer les sources"
+      ],
+      aspectsFormatted: "i. Expliquer la façon dont la science est appliquée pour résoudre des problèmes ; ii. Discuter et évaluer les implications éthiques, sociales, économiques et environnementales ; iii. Utiliser un langage scientifique approprié ; iv. Documenter et référencer les sources.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Études de cas contemporaines sur les applications scientifiques et leurs retombées sociétales/environnementales.",
+      formativeAssessment: "Tableaux d'argumentation et débat structuré sur les enjeux éthiques.",
+      summativeAssessment: "Essai réflexif documenté sur les impacts d'une application scientifique dans le monde réel."
+    }
+  },
+  // Mathématiques
+  mathematiques: {
+    A: {
+      name: 'Savoir et comprendre',
+      strands: [
+        "i. Sélectionner et appliquer les mathématiques appropriées pour résoudre des problèmes",
+        "ii. Résoudre avec succès des problèmes dans divers contextes familiers et non familiers",
+        "iii. Démontrer une compréhension rigoureuse des concepts"
+      ],
+      aspectsFormatted: "i. Sélectionner et appliquer les mathématiques appropriées pour résoudre des problèmes ; ii. Résoudre avec succès des problèmes dans divers contextes familiers et non familiers ; iii. Démontrer une compréhension rigoureuse des concepts.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Exercices d'application directe, calculs algébriques et géométriques, résolution de situations-problèmes.",
+      formativeAssessment: "Mini-tests réguliers et fiches d'auto-positionnement avec corrigés détaillés.",
+      summativeAssessment: "Contrôle écrit évaluant l'exactitude des calculs et la compréhension conceptuelle."
+    },
+    B: {
+      name: 'Enquêter sur les régularités',
+      strands: [
+        "i. Sélectionner et appliquer des techniques mathématiques d'investigation pour déceler des régularités",
+        "ii. Formuler une conjecture cohérente avec les observations",
+        "iii. Démontrer ou justifier la règle générale ou conjecture mathématique"
+      ],
+      aspectsFormatted: "i. Sélectionner et appliquer des techniques mathématiques d'investigation pour déceler des régularités ; ii. Formuler une conjecture cohérente avec les observations ; iii. Démontrer ou justifier la règle générale ou conjecture mathématique.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Investigation sur des suites, motifs géométriques, exploration numérique et formulation de conjectures.",
+      formativeAssessment: "Point d'étape sur la méthode d'investigation et validation de la conjecture préliminaire.",
+      summativeAssessment: "Tâche d'investigation mathématique complète avec formalisation et justification de la règle générale."
+    },
+    C: {
+      name: 'Communiquer',
+      strands: [
+        "i. Utiliser un langage, des notations et une terminologie mathématiques appropriés",
+        "ii. Employer différentes formes de représentation mathématique (tableaux, graphiques, équations)",
+        "iii. Structurer des arguments mathématiques complets et cohérents",
+        "iv. Organiser le travail de manière logique et soignée"
+      ],
+      aspectsFormatted: "i. Utiliser un langage, des notations et une terminologie mathématiques appropriés ; ii. Employer différentes formes de représentation mathématique (tableaux, graphiques, équations) ; iii. Structurer des arguments mathématiques complets et cohérents ; iv. Organiser le travail de manière logique et soignée.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Rédaction rigoureuse de démonstrations, construction de graphiques précis et verbalisation des raisonnements.",
+      formativeAssessment: "Co-évaluation de copies d'élèves sur la clarté et la rigueur de la communication mathématique.",
+      summativeAssessment: "Production mathématique évaluée sur la cohérence de l'argumentation et la justesse des notations."
+    },
+    D: {
+      name: 'Appliquer les mathématiques dans des contextes réels',
+      strands: [
+        "i. Identifier les éléments pertinents d'une situation de la vie réelle",
+        "ii. Sélectionner et appliquer des stratégies mathématiques appropriées",
+        "iii. Déterminer si le résultat mathématique est plausible dans le contexte réel",
+        "iv. Expliquer le degré de précision du résultat et justifier la méthode"
+      ],
+      aspectsFormatted: "i. Identifier les éléments pertinents d'une situation de la vie réelle ; ii. Sélectionner et appliquer des stratégies mathématiques appropriées ; iii. Déterminer si le résultat mathématique est plausible dans le contexte réel ; iv. Expliquer le degré de précision du résultat et justifier la méthode.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Modélisation de contextes concrets (finances, architecture, statistiques environnementales, mesures).",
+      formativeAssessment: "Analyse critique de la vraisemblance d'un résultat numérique dans une situation concrète.",
+      summativeAssessment: "Projet de modélisation mathématique appliqué à un défi du monde réel."
+    }
+  },
+  // Arts
+  arts: {
+    A: {
+      name: 'Connaître et comprendre',
+      strands: [
+        "i. Démontrer une connaissance et compréhension de la forme d'art étudiée",
+        "ii. Démontrer une compréhension du rôle de l'art dans des contextes variés",
+        "iii. Utiliser la terminologie artistique appropriée"
+      ],
+      aspectsFormatted: "i. Démontrer une connaissance et compréhension de la forme d'art étudiée ; ii. Démontrer une compréhension du rôle de l'art dans des contextes variés ; iii. Utiliser la terminologie artistique appropriée.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Analyse d'œuvres artistiques, mise en perspective historique et acquisition du vocabulaire technique.",
+      formativeAssessment: "Fiches de lecture critique d'œuvres et glossaire visuel/musical.",
+      summativeAssessment: "Dossier d'analyse artistique ou exposé critique contextualisé."
+    },
+    B: {
+      name: 'Développer des compétences',
+      strands: [
+        "i. Démontrer l'acquisition et le développement des compétences et techniques artistiques",
+        "ii. Démontrer l'application des compétences et techniques pour créer une œuvre d'art"
+      ],
+      aspectsFormatted: "i. Démontrer l'acquisition et le développement des compétences et techniques artistiques ; ii. Démontrer l'application des compétences et techniques pour créer une œuvre d'art.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Pratique en atelier, expérimentation de techniques plastiques/musicales et exercices d'application.",
+      formativeAssessment: "Observations directes en atelier et rétroactions techniques individualisées.",
+      summativeAssessment: "Création artistique démontrant la maîtrise des techniques et savoir-faire travaillés."
+    },
+    C: {
+      name: 'Penser de manière créative',
+      strands: [
+        "i. Développer une intention artistique claire et originale",
+        "ii. Proposer des alternatives et explorer des idées innovantes",
+        "iii. Démontrer une pensée créative tout au long du processus artistique"
+      ],
+      aspectsFormatted: "i. Développer une intention artistique claire et originale ; ii. Proposer des alternatives et explorer des idées innovantes ; iii. Démontrer une pensée créative tout au long du processus artistique.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Tenue d'un journal de recherche créative, exploration d'idées divergentes et esquisses préparatoires.",
+      formativeAssessment: "Revue du carnet d'artiste et discussion autour de l'intention créative.",
+      summativeAssessment: "Projet artistique original appuyé par un carnet de démarche créative."
+    },
+    D: {
+      name: 'Répondre et réfléchir',
+      strands: [
+        "i. Présenter une critique de sa propre œuvre d'art",
+        "ii. Évaluer sa propre progression en tant qu'artiste",
+        "iii. Réfléchir sur la manière dont l'art influence le public et la société"
+      ],
+      aspectsFormatted: "i. Présenter une critique de sa propre œuvre d'art ; ii. Évaluer sa propre progression en tant qu'artiste ; iii. Réfléchir sur la manière dont l'art influence le public et la société.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Bilan réflexif personnel, participation à des critiques collectives bienveillantes.",
+      formativeAssessment: "Échange réflexif d'étape lors d'un vernissage intermédiaire.",
+      summativeAssessment: "Texte réflexif ou présentation orale évaluant sa propre création et sa portée émotionnelle."
+    }
+  },
+  // Design
+  design: {
+    A: {
+      name: 'Enquêter et analyser',
+      strands: [
+        "i. Expliquer et justifier le besoin d'une solution",
+        "ii. Identifier et prioriser la recherche primaire et secondaire",
+        "iii. Analyser des produits existants",
+        "iv. Développer un cahier des charges de conception détaillé"
+      ],
+      aspectsFormatted: "i. Expliquer et justifier le besoin d'une solution ; ii. Identifier et prioriser la recherche primaire et secondaire ; iii. Analyser des produits existants ; iv. Développer un cahier des charges de conception détaillé.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Recherche sur les besoins d'utilisateurs réels, étude concurrentielle et rédaction du cahier des charges.",
+      formativeAssessment: "Validation formative du cahier des charges avant la phase de conception.",
+      summativeAssessment: "Dossier d'investigation et cahier des charges de conception exhaustif."
+    },
+    B: {
+      name: 'Développer des idées',
+      strands: [
+        "i. Développer une spécification de conception",
+        "ii. Générer une variété d'idées de conception faisables",
+        "iii. Présenter l'idée finale retenue et justifier son choix",
+        "iv. Développer des plans de fabrication/dessins précis"
+      ],
+      aspectsFormatted: "i. Développer une spécification de conception ; ii. Générer une variété d'idées de conception faisables ; iii. Présenter l'idée finale retenue et justifier son choix ; iv. Développer des plans de fabrication/dessins précis.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Idéation graphique, modélisation 2D/3D, sélection multicritère et plans côtés.",
+      formativeAssessment: "Présentation des concepts d'idées et rétroaction critique des pairs.",
+      summativeAssessment: "Dossier technique de conception complet avec justification du modèle retenu."
+    },
+    C: {
+      name: 'Créer la solution',
+      strands: [
+        "i. Construire un plan de fabrication logique",
+        "ii. Démontrer d'excellentes compétences techniques",
+        "iii. Suivre le plan et justifier les modifications",
+        "iv. Créer une solution complète fonctionnelle"
+      ],
+      aspectsFormatted: "i. Construire un plan de fabrication logique ; ii. Démontrer d'excellentes compétences techniques ; iii. Suivre le plan et justifier les modifications ; iv. Créer une solution complète fonctionnelle.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Fabrication en atelier ou programmation, respect des règles de sécurité et ajustement du plan.",
+      formativeAssessment: "Point d'étape technique en cours de prototypage.",
+      summativeAssessment: "Prototype fonctionnel achevé conforme au cahier des charges."
+    },
+    D: {
+      name: 'Évaluer',
+      strands: [
+        "i. Concevoir des méthodes de test fiables",
+        "ii. Évaluer le succès de la solution par rapport au cahier des charges",
+        "iii. Expliquer comment la solution pourrait être améliorée",
+        "iv. Évaluer l'impact de la solution sur le public et l'environnement"
+      ],
+      aspectsFormatted: "i. Concevoir des méthodes de test fiables ; ii. Évaluer le succès de la solution par rapport au cahier des charges ; iii. Expliquer comment la solution pourrait être améliorée ; iv. Évaluer l'impact de la solution sur le public et l'environnement.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Protocole de tests d'usage, recueil des retours d'utilisateurs et analyse d'impact.",
+      formativeAssessment: "Grille d'évaluation des premiers essais et formulation des ajustements.",
+      summativeAssessment: "Rapport d'évaluation critique de la solution et bilan d'impact environnemental et social."
+    }
+  },
+  // Éducation physique et à la santé
+  education_physique: {
+    A: {
+      name: 'Savoir et comprendre',
+      strands: [
+        "i. Expliquer les connaissances physiques et de santé",
+        "ii. Appliquer les connaissances pour concevoir et analyser des plans d'action",
+        "iii. Appliquer et justifier des stratégies et techniques"
+      ],
+      aspectsFormatted: "i. Expliquer les connaissances physiques et de santé ; ii. Appliquer les connaissances pour concevoir et analyser des plans d'action ; iii. Appliquer et justifier des stratégies et techniques.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Étude des règles, biomécanique, tactiques de jeu et principes d'échauffement/sécurité.",
+      formativeAssessment: "Questionnaires sur les règles et analyse vidéo de gestes techniques.",
+      summativeAssessment: "Épreuve théorique sur les connaissances motrices et la conception de stratégies sportives."
+    },
+    B: {
+      name: 'Planifier la performance',
+      strands: [
+        "i. Concevoir, expliquer et justifier un plan d'amélioration de la performance",
+        "ii. Développer des objectifs réalistes et mesurables"
+      ],
+      aspectsFormatted: "i. Concevoir, expliquer et justifier un plan d'amélioration de la performance ; ii. Développer des objectifs réalistes et mesurables.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Élaboration d'un programme d'entraînement personnalisé avec objectifs mesurables.",
+      formativeAssessment: "Validation du carnet d'entraînement par l'enseignant.",
+      summativeAssessment: "Dossier de planification de la performance sportive argumenté."
+    },
+    C: {
+      name: 'Appliquer et performer',
+      strands: [
+        "i. Démontrer et appliquer une variété de compétences et techniques motrices",
+        "ii. Appliquer des tactiques, stratégies et concepts de mouvement",
+        "iii. Participer activement en respectant les règles et la sécurité"
+      ],
+      aspectsFormatted: "i. Démontrer et appliquer une variété de compétences et techniques motrices ; ii. Appliquer des tactiques, stratégies et concepts de mouvement ; iii. Participer activement en respectant les règles et la sécurité.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Situations de match, parcours d'habileté motrice et enchaînements gymniques.",
+      formativeAssessment: "Observation critériée continue et rétroaction technique directe.",
+      summativeAssessment: "Prestation sportive sommative évaluée en situation motrice authentique."
+    },
+    D: {
+      name: 'Réfléchir et améliorer la performance',
+      strands: [
+        "i. Expliquer et démontrer des stratégies d'amélioration",
+        "ii. Analyser et évaluer la performance",
+        "iii. Réfléchir sur ses objectifs et son engagement personnel"
+      ],
+      aspectsFormatted: "i. Expliquer et démontrer des stratégies d'amélioration ; ii. Analyser et évaluer la performance ; iii. Réfléchir sur ses objectifs et son engagement personnel.",
+      expectedLevel: 'Niveau 5-6 attendu /8',
+      activities: "Analyse vidéo de ses prestations motrices et bilan d'auto-évaluation du cycle.",
+      formativeAssessment: "Auto-positionnement sur carnet de bord après chaque séance.",
+      summativeAssessment: "Bilan réflexif écrit ou oral sur la progression motrice et les perspectives d'amélioration."
+    }
+  }
+};
+
+/**
+ * Trouver la catégorie de matière correspondante
+ */
+export function getSubjectCategory(subjectName?: string): string {
+  const s = (subjectName || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (s.includes('math')) return 'mathematiques';
+  if (s.includes('scien') || s.includes('physiq') || s.includes('chimie') || s.includes('biolog')) return 'sciences';
+  if (s.includes('hist') || s.includes('geo') || s.includes('individ') || s.includes('societ') || s.includes('humain') || s.includes('econom')) return 'individus_societes';
+  if (s.includes('art') || s.includes('musiq') || s.includes('theatr') || s.includes('visuel')) return 'arts';
+  if (s.includes('design') || s.includes('techno') || s.includes('inform')) return 'design';
+  if (s.includes('sport') || s.includes('physiq') || s.includes('eps') || s.includes('sante') || s.includes('phe')) return 'education_physique';
+  return 'langue_litterature';
+}
+
+/**
+ * Obtenir les informations officielles d'un critère standard pour une matière donnée
+ */
+export function getStandardIBCriterion(subject: string, criterion: 'A' | 'B' | 'C' | 'D'): StandardIBCriterionInfo {
+  const cat = getSubjectCategory(subject);
+  const group = STANDARD_IB_CRITERIA_BY_SUBJECT[cat] || STANDARD_IB_CRITERIA_BY_SUBJECT.langue_litterature;
+  return group[criterion] || STANDARD_IB_CRITERIA_BY_SUBJECT.langue_litterature[criterion];
+}
+

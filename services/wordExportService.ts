@@ -20,6 +20,7 @@ import {
 import { UnitPlan, AssessmentData, ServiceActionPlan } from "../types";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
 import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit, AnnualCalendar, SCHOOL_WEEKS_2026_2027, SUBJECT_COLORS, CalendarEntry } from "./geminiService";
+import { getStandardIBCriterion } from "./ibCriteriaService";
 
 // Cache en mémoire des modèles Word téléchargés pour un export ultra-rapide
 const templateCache: Record<string, ArrayBuffer> = {};
@@ -416,14 +417,29 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
   const startDate = calDates.startDate || plan.startDate || '';
   const endDate   = calDates.endDate   || plan.endDate   || '';
 
-  const objectives = Array.isArray(plan.objectives) ? plan.objectives : [];
+  const rawObjectives = Array.isArray(plan.objectives) ? plan.objectives : [];
+  const objectives = rawObjectives
+    .map(o => String(o).trim().toUpperCase().charAt(0))
+    .filter(o => ['A', 'B', 'C', 'D'].includes(o))
+    .filter((o, i, arr) => arr.indexOf(o) === i);
+
   const atl = Array.isArray(plan.atlSkills) ? plan.atlSkills : (plan.atlSkills ? [plan.atlSkills as string] : []);
   const related = Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts : [];
 
+  const effectiveSchoolYear = (plan.schoolYear && !plan.schoolYear.includes('2024') && !plan.schoolYear.includes('2025'))
+    ? plan.schoolYear
+    : '2026/2027';
+
   const objectifsTxt = objectives.map(cr => {
-    const d = plan.objectivesDetails?.find(x => x.criterion === cr);
-    return `Critère ${cr}${d?.aspects ? ' – ' + d.aspects : ''}${d?.expectedLevel ? ' (niveau attendu : ' + d.expectedLevel + ')' : ''}`;
-  }).join('\n') || c(plan.content?.slice(0, 200));
+    const d = plan.objectivesDetails?.find(x => (x.criterion || '').toUpperCase() === cr);
+    const std = getStandardIBCriterion(plan.subject || '', cr as 'A' | 'B' | 'C' | 'D');
+    const rawAspects = d?.aspects ? String(d.aspects).trim() : '';
+    const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
+      ? rawAspects
+      : std.aspectsFormatted;
+    const level = d?.expectedLevel ? ` (niveau attendu : ${d.expectedLevel})` : '';
+    return `Critère ${cr} [${std.name}] : ${aspects}${level}`;
+  }).join('\n\n') || c(plan.content?.slice(0, 200));
 
   const contenuTxt = [
     c(plan.content),
@@ -466,7 +482,7 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
 
   const evalFormTxt = [
     c(plan.formativeAssessment),
-    plan.objectivesDetails?.map(d => d.formativeAssessment ? `Critère ${d.criterion} : ${c(d.formativeAssessment)}` : '').filter(Boolean).join('\n') || '',
+    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => d.formativeAssessment ? `Critère ${d.criterion} : ${c(d.formativeAssessment)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
   const evalSommTxt = [
@@ -475,7 +491,7 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     plan.summativeDetails?.consigne          ? 'Consigne : ' + c(plan.summativeDetails.consigne) : '',
     plan.summativeDetails?.productionAttendue ? 'Production attendue : ' + c(plan.summativeDetails.productionAttendue) : '',
     plan.summativeDetails?.duree             ? 'Durée : ' + c(plan.summativeDetails.duree) : '',
-    plan.objectivesDetails?.map(d => d.summativeAssessment ? `Critère ${d.criterion} : ${c(d.summativeAssessment)}` : '').filter(Boolean).join('\n') || '',
+    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => d.summativeAssessment ? `Critère ${d.criterion} : ${c(d.summativeAssessment)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
   const difftxt = [
@@ -554,12 +570,33 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     plan.interdisciplinaryLinksText ? 'Liens interdisciplinaires : ' + c(plan.interdisciplinaryLinksText) : '',
   ].filter(Boolean).join('\n\n');
 
-  const dureeTxt = [
-    c(plan.duration),
-    plan.numberOfHours   ? plan.numberOfHours + ' h' : '',
-    plan.numberOfPeriods ? plan.numberOfPeriods + ' périodes' : '',
-    startDate && endDate ? `Du ${startDate} au ${endDate}` : startDate ? `À partir du ${startDate}` : '',
-  ].filter(Boolean).join(' — ');
+  // ── Nettoyage anti-répétition de la durée ──
+  const cleanHours = () => {
+    const raw = (plan.numberOfHours || plan.duration || '').trim();
+    if (!raw) return '';
+    const num = raw.replace(/[^\d.,]/g, '').trim();
+    return num ? `${num} heures` : raw;
+  };
+
+  const cleanPeriods = () => {
+    const raw = (plan.numberOfPeriods || '').trim();
+    if (!raw) return '';
+    const num = raw.replace(/[^\d.,]/g, '').trim();
+    return num ? `${num} périodes` : raw;
+  };
+
+  const hoursStr = cleanHours();
+  const periodsStr = cleanPeriods();
+  const dateRangeStr = (startDate && endDate)
+    ? `Du ${startDate} au ${endDate}`
+    : startDate ? `À partir du ${startDate}` : '';
+
+  const dureeParts: string[] = [];
+  if (hoursStr) dureeParts.push(hoursStr);
+  if (periodsStr) dureeParts.push(periodsStr);
+  if (dateRangeStr) dureeParts.push(dateRangeStr);
+
+  const dureeTxt = dureeParts.join(' — ');
 
   const dataDict = {
     // ── En-tête du plan (Page 1) ───────────────────────────────────────────────
@@ -580,15 +617,15 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     titre:                    c(plan.title),
     Titre:                    c(plan.title),
     TITRE:                    c(plan.title),
-    annee_pei:                c(plan.gradeLevel ? `${plan.gradeLevel} (${plan.schoolYear || '2026-2027'})` : (plan.schoolYear || '2026-2027')),
-    annee:                    c(plan.schoolYear || '2026-2027'),
+    annee_pei:                c(plan.gradeLevel ? `${plan.gradeLevel} (${effectiveSchoolYear})` : effectiveSchoolYear),
+    annee:                    c(effectiveSchoolYear),
     niveau:                   c(plan.gradeLevel),
     classe:                   c(plan.gradeLevel),
     Classe:                   c(plan.gradeLevel),
     duree:                    dureeTxt || c(plan.duration) || '18 heures',
     duree_unite:              dureeTxt || c(plan.duration) || '18 heures',
-    heures:                   c(plan.numberOfHours || plan.duration || '18'),
-    periodes:                 c(plan.numberOfPeriods || ''),
+    heures:                   hoursStr || c(plan.numberOfHours || plan.duration || '18 heures'),
+    periodes:                 periodsStr || c(plan.numberOfPeriods || ''),
 
     // ── Recherche : définition de l'objectif de l'unité ───────────────────────
     concept_cle:              c(plan.keyConcept) + (plan.keyConceptDefinition ? '\n' + c(plan.keyConceptDefinition) : ''),
@@ -670,9 +707,11 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     // ── Données additionnelles & métadonnées ──────────────────────────────────
     date_debut:               startDate,
     date_fin:                 endDate,
-    annee_scolaire:           c(plan.schoolYear || '2026-2027'),
-    nombre_periodes:          c(plan.numberOfPeriods || ''),
-    nombre_heures:            c(plan.numberOfHours || plan.duration),
+    annee_scolaire:           c(effectiveSchoolYear),
+    Annee_scolaire:           c(effectiveSchoolYear),
+    ANNEE_SCOLAIRE:           c(effectiveSchoolYear),
+    nombre_periodes:          periodsStr || c(plan.numberOfPeriods || ''),
+    nombre_heures:            hoursStr || c(plan.numberOfHours || plan.duration),
     prerequis:                prerequisTxt,
     prérequis:                prerequisTxt,
     Date:                     c(startDate || new Date().toLocaleDateString('fr-FR')),
@@ -726,6 +765,41 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     differentiation_contenu:  c(plan.differentiationDetails?.contentDifferentiation),
     differentiation_processus: c(plan.differentiationDetails?.processDifferentiation),
     differentiation_produit:  c(plan.differentiationDetails?.productDifferentiation),
+    details_objectifs:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => {
+      const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
+      const std = getStandardIBCriterion(plan.subject || '', cr);
+      const rawAspects = d.aspects ? String(d.aspects).trim() : '';
+      const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
+        ? rawAspects
+        : std.aspectsFormatted;
+      return `Critère ${d.criterion} [${std.name}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
+    }).join('\n\n') || '',
+    objectifs_details:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => {
+      const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
+      const std = getStandardIBCriterion(plan.subject || '', cr);
+      const rawAspects = d.aspects ? String(d.aspects).trim() : '';
+      const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
+        ? rawAspects
+        : std.aspectsFormatted;
+      return `Critère ${d.criterion} [${std.name}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
+    }).join('\n\n') || '',
+    objectifs_liste:          (plan.objectivesDetails || []).filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => {
+      const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
+      const std = getStandardIBCriterion(plan.subject || '', cr);
+      const rawAspects = d.aspects ? String(d.aspects).trim() : '';
+      const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
+        ? rawAspects
+        : std.aspectsFormatted;
+      return {
+        critere: d.criterion,
+        titre: std.name,
+        aspects,
+        niveau_attendu: d.expectedLevel || 'Niveau 5-6 /8',
+        activites: d.activities || std.activities,
+        eval_formative: d.formativeAssessment || std.formativeAssessment,
+        eval_sommative: d.summativeAssessment || std.summativeAssessment,
+      };
+    }),
   };
 
   return dataDict;
