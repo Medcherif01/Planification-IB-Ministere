@@ -29,7 +29,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "recharts": "^3.4.1",
-    "tsx": "^4.23.12"
+    "tsx": "^4.23.12",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

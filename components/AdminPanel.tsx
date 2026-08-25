@@ -3,7 +3,7 @@ import {
   Users, Plus, Edit2, Trash2, Shield, BookOpen, CheckCircle,
   XCircle, Clock, Download, Upload, RefreshCw, Eye, EyeOff,
   AlertCircle, Loader2, ChevronDown, ChevronUp, X, Save,
-  Bell, UserCheck, UserX, Database, FileText
+  Bell, UserCheck, UserX, Database, FileText, FileSpreadsheet, Check
 } from 'lucide-react';
 import {
   listUsers, createTeacher, updateTeacher, deleteTeacher,
@@ -11,13 +11,14 @@ import {
   type AppUser, type ModificationRequest
 } from '../services/authService';
 import { SUBJECTS } from '../constants';
+import { downloadCompleteExcelBackup, importAllDataFromExcel } from '../services/excelBackupService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface AdminPanelProps {
   onClose: () => void;
-  onExportCSV: () => void;
-  onImportCSV: (file: File) => void;
+  onExportCSV?: () => void;
+  onImportCSV?: (file: File) => void;
 }
 
 type AdminTab = 'users' | 'requests' | 'data';
@@ -179,124 +180,190 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   // ── Import state ───────────────────────────────────────────────────────────
   const [importStatus, setImportStatus] = useState<'' | 'loading' | 'success' | 'error'>('');
   const [importMessage, setImportMessage] = useState('');
-  const [importStats, setImportStats] = useState<{ imported: number; skipped: number; errors: number } | null>(null);
+  const [importProgress, setImportProgress] = useState<{ step: string; percent: number } | null>(null);
+  const [importStats, setImportStats] = useState<{
+    units: number;
+    interdisciplinary: number;
+    sea: number;
+    users: number;
+    exams: number;
+    criteria?: number;
+    calendars?: number;
+    errors: string[];
+  } | null>(null);
 
-  // ── Import file handler ────────────────────────────────────────────────────
+  // ── Export Excel state ─────────────────────────────────────────────────────
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportProgressMsg, setExportProgressMsg] = useState('');
+
+  const handleExportExcelAll = async () => {
+    setExportLoading(true);
+    setExportProgressMsg('Préparation du fichier Excel...');
+    try {
+      await downloadCompleteExcelBackup((step) => {
+        setExportProgressMsg(step);
+      });
+    } catch (e: any) {
+      alert('Erreur lors de l\'exportation Excel : ' + (e.message || e));
+    } finally {
+      setExportLoading(false);
+      setExportProgressMsg('');
+    }
+  };
+
+  // ── Import file handler (Excel & CSV) ──────────────────────────────────────
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (importRef.current) importRef.current.value = '';
 
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+
+    // Confirmation
+    const confirmMsg = `Vous êtes sur le point de restaurer les données depuis le fichier "${file.name}".\n\n` +
+      `Cette opération synchronisera toutes les unités, matières, classes, projets interdisciplinaires, SEA, enseignants et examens.\n\n` +
+      `L'import n'écrase pas inutilement vos données : il restaure et consolide votre base.\n\n` +
+      `Voulez-vous continuer ?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
     setImportStatus('loading');
-    setImportMessage('Lecture du fichier CSV...');
+    setImportMessage('Lecture du fichier en cours...');
     setImportStats(null);
+    setImportProgress({ step: 'Initialisation...', percent: 5 });
 
     try {
-      const text = await file.text();
-      // Supprimer le BOM UTF-8 si présent
-      const cleanText = text.replace(/^\uFEFF/, '');
-      const lines = cleanText.split('\n').filter(l => l.trim());
+      if (isExcel) {
+        // Restauration complète depuis Excel (.xlsx)
+        const result = await importAllDataFromExcel(file, (step, percent) => {
+          setImportMessage(step);
+          setImportProgress({ step, percent });
+        });
 
-      if (lines.length < 2) {
-        throw new Error('Fichier CSV vide ou invalide (au moins 1 ligne d\'entête + 1 ligne de données requises)');
-      }
-
-      // Parse CSV en respectant les guillemets
-      const parseCSVLine = (line: string): string[] => {
-        const result: string[] = [];
-        let current = '';
-        let inQuotes = false;
-        for (let i = 0; i < line.length; i++) {
-          const ch = line[i];
-          if (ch === '"') {
-            if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-            else inQuotes = !inQuotes;
-          } else if (ch === ',' && !inQuotes) {
-            result.push(current); current = '';
-          } else {
-            current += ch;
-          }
-        }
-        result.push(current);
-        return result;
-      };
-
-      const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase()
-        .replace(/é/g, 'e').replace(/è/g, 'e').replace(/ê/g, 'e')
-        .replace(/à/g, 'a').replace(/â/g, 'a')
-        .replace(/ô/g, 'o').replace(/î/g, 'i').replace(/ù/g, 'u')
-        .replace(/ç/g, 'c').replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''));
-
-      setImportMessage(`${lines.length - 1} ligne(s) à importer...`);
-
-      let imported = 0;
-      let skipped = 0;
-      let errors = 0;
-
-      // Demander confirmation
-      const confirmMsg = `Vous êtes sur le point d'importer ${lines.length - 1} unité(s) depuis le fichier "${file.name}".\n\nL'import ne supprime PAS les données existantes — il les complète.\n\nConfirmer l'import ?`;
-      if (!window.confirm(confirmMsg)) {
-        setImportStatus('');
-        setImportMessage('');
-        return;
-      }
-
-      for (let i = 1; i < lines.length; i++) {
-        const values = parseCSVLine(lines[i]);
-        if (values.length < 3) { errors++; continue; }
-
-        // Construire un objet plan depuis les colonnes CSV
-        const planData: Record<string, string> = {};
-        headers.forEach((h, idx) => { planData[h] = values[idx] || ''; });
-
-        // Trouver titre, matière, niveau
-        const title = planData['titre'] || planData['title'] || values[0] || '';
-        const subject = planData['matiere'] || planData['subject'] || values[1] || '';
-        const gradeLevel = planData['niveau'] || planData['grade'] || planData['gradelevel'] || values[2] || '';
-
-        if (!title || !subject || !gradeLevel) { skipped++; continue; }
-
-        try {
-          const response = await fetch('/api/planifications', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-User-Role': 'admin',
-              'X-Import-Mode': 'restore', // Signaler qu'on est en mode restauration
-            },
-            body: JSON.stringify({
-              id: `import_${Date.now()}_${i}`,
-              title,
-              subject,
-              gradeLevel,
-              teacherName: planData['enseignant'] || planData['teacher'] || '',
-              duration: planData['duree'] || planData['duration'] || '',
-              keyConcept: planData['concept_cle'] || planData['keyconcept'] || '',
-              globalContext: planData['contexte_mondial'] || planData['globalcontext'] || '',
-              statementOfInquiry: planData['enonce_de_recherche'] || planData['statementofinquiry'] || '',
-              objectives: (planData['objectifs'] || planData['objectives'] || '').split(';').map(s => s.trim()).filter(Boolean),
-              atlSkills: (planData['atl'] || planData['atlskills'] || '').split(';').map(s => s.trim()).filter(Boolean),
-              content: planData['contenu'] || planData['content'] || '',
-              formativeAssessment: planData['evaluation_formative'] || planData['formativeassessment'] || '',
-              summativeAssessment: planData['evaluation_sommative'] || planData['summativeassessment'] || '',
-              resources: planData['ressources'] || planData['resources'] || '',
-            }),
+        if (result.success) {
+          setImportStatus('success');
+          setImportMessage(result.message);
+          setImportStats({
+            units: result.stats.units,
+            interdisciplinary: result.stats.interdisciplinary,
+            sea: result.stats.sea,
+            users: result.stats.users,
+            exams: result.stats.exams,
+            criteria: result.stats.criteria,
+            calendars: result.stats.calendars,
+            errors: result.stats.errors,
           });
-          if (response.ok) { imported++; }
-          else { errors++; }
-        } catch { errors++; }
+          if (onImportCSV) onImportCSV(file);
+          await loadUsers();
+          await loadRequests();
+        } else {
+          setImportStatus('error');
+          setImportMessage(result.message);
+        }
+      } else {
+        // Import CSV Fallback
+        const text = await file.text();
+        const cleanText = text.replace(/^\uFEFF/, '');
+        const lines = cleanText.split('\n').filter(l => l.trim());
+
+        if (lines.length < 2) {
+          throw new Error('Fichier CSV vide ou invalide (au moins 1 ligne d\'entête + 1 ligne de données requises)');
+        }
+
+        const parseCSVLine = (line: string): string[] => {
+          const result: string[] = [];
+          let current = '';
+          let inQuotes = false;
+          for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (ch === '"') {
+              if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+              else inQuotes = !inQuotes;
+            } else if (ch === ',' && !inQuotes) {
+              result.push(current); current = '';
+            } else {
+              current += ch;
+            }
+          }
+          result.push(current);
+          return result;
+        };
+
+        const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase()
+          .replace(/é/g, 'e').replace(/è/g, 'e').replace(/ê/g, 'e')
+          .replace(/à/g, 'a').replace(/â/g, 'a')
+          .replace(/ô/g, 'o').replace(/î/g, 'i').replace(/ù/g, 'u')
+          .replace(/ç/g, 'c').replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''));
+
+        let imported = 0;
+        let skipped = 0;
+        let errors = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+          const values = parseCSVLine(lines[i]);
+          if (values.length < 3) { errors++; continue; }
+
+          const planData: Record<string, string> = {};
+          headers.forEach((h, idx) => { planData[h] = values[idx] || ''; });
+
+          const title = planData['titre'] || planData['title'] || values[0] || '';
+          const subject = planData['matiere'] || planData['subject'] || values[1] || '';
+          const gradeLevel = planData['niveau'] || planData['grade'] || planData['gradelevel'] || values[2] || '';
+
+          if (!title || !subject || !gradeLevel) { skipped++; continue; }
+
+          try {
+            const response = await fetch('/api/planifications', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-User-Role': 'admin',
+                'X-Import-Mode': 'restore',
+              },
+              body: JSON.stringify({
+                subject,
+                grade: gradeLevel,
+                plans: [{
+                  id: `import_${Date.now()}_${i}`,
+                  title,
+                  subject,
+                  gradeLevel,
+                  teacherName: planData['enseignant'] || planData['teacher'] || '',
+                  duration: planData['duree'] || planData['duration'] || '',
+                  keyConcept: planData['concept_cle'] || planData['keyconcept'] || '',
+                  globalContext: planData['contexte_mondial'] || planData['globalcontext'] || '',
+                  statementOfInquiry: planData['enonce_de_recherche'] || planData['statementofinquiry'] || '',
+                  objectives: (planData['objectifs'] || planData['objectives'] || '').split(';').map(s => s.trim()).filter(Boolean),
+                  atlSkills: (planData['atl'] || planData['atlskills'] || '').split(';').map(s => s.trim()).filter(Boolean),
+                  content: planData['contenu'] || planData['content'] || '',
+                  formativeAssessment: planData['evaluation_formative'] || planData['formativeassessment'] || '',
+                  summativeAssessment: planData['evaluation_sommative'] || planData['summativeassessment'] || '',
+                  resources: planData['ressources'] || planData['resources'] || '',
+                }],
+              }),
+            });
+            if (response.ok) { imported++; }
+            else { errors++; }
+          } catch { errors++; }
+        }
+
+        setImportStats({
+          units: imported,
+          interdisciplinary: 0,
+          sea: 0,
+          users: 0,
+          exams: 0,
+          errors: errors > 0 ? [`${errors} ligne(s) non importée(s)`] : [],
+        });
+        setImportStatus('success');
+        setImportMessage(`Import CSV terminé : ${imported} unité(s) importée(s), ${skipped} ignorée(s), ${errors} erreur(s).`);
+        if (onImportCSV) onImportCSV(file);
       }
-
-      setImportStats({ imported, skipped, errors });
-      setImportStatus('success');
-      setImportMessage(`Import terminé : ${imported} unité(s) importée(s), ${skipped} ignorée(s), ${errors} erreur(s).`);
-
-      // Appeler le callback parent
-      onImportCSV(file);
-
     } catch (e: any) {
       setImportStatus('error');
-      setImportMessage(e.message || 'Erreur lors de l\'import CSV');
+      setImportMessage(e.message || 'Erreur lors de la lecture du fichier');
+    } finally {
+      setImportProgress(null);
     }
   };
 
@@ -602,86 +669,180 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
 
             {/* ══ TAB: DATA ════════════════════════════════════════════════════ */}
             {activeTab === 'data' && (
-              <div className="space-y-4">
-                <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                  <Database size={16} /> Gestion des données
-                </h3>
-
-                {/* Export */}
-                <div className="bg-green-50 border border-green-200 rounded-2xl p-5">
-                  <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
-                    <Download size={16} /> Export complet — CSV
-                  </h4>
-                  <p className="text-sm text-green-700 mb-4">
-                    Téléchargez toutes les données de la base de données en format CSV. Utile pour sauvegarde et archivage.
+              <div className="space-y-6">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <Database className="text-indigo-600" size={20} /> Sauvegarde et Restauration Complète
+                  </h3>
+                  <p className="text-sm text-slate-600 mt-1">
+                    Exportez et importez toutes vos données (Unités, Matières, Classes, Enseignants, Projets Interdisciplinaires, SEA, Évaluations, Critères IB et Calendriers) dans un seul fichier Excel sécurisé.
                   </p>
-                  <button
-                    onClick={onExportCSV}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-semibold shadow transition"
-                  >
-                    <Download size={15} /> Exporter toutes les données (CSV)
-                  </button>
                 </div>
 
-                {/* Import */}
-                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5">
-                  <h4 className="font-semibold text-blue-800 mb-2 flex items-center gap-2">
-                    <Upload size={16} /> Import / Restauration — CSV
-                  </h4>
-                  <p className="text-sm text-blue-700 mb-2">
-                    Restaurez les données depuis un fichier CSV précédemment exporté. Cette opération peut compléter ou remplacer les données existantes.
-                  </p>
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-xs text-yellow-800 flex items-start gap-2">
-                    <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
-                    <span>⚠️ L'import ne supprime pas les données existantes — il les complète. Évitez les doublons en important uniquement des données absentes.</span>
+                {/* Export Card - EXCEL */}
+                <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl p-6 shadow-sm">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h4 className="font-bold text-emerald-900 text-base mb-1.5 flex items-center gap-2">
+                        <FileSpreadsheet className="text-emerald-700" size={20} /> Sauvegarde Complète — Format Excel (.xlsx)
+                      </h4>
+                      <p className="text-sm text-emerald-800 mb-4 max-w-xl">
+                        Génère un classeur Excel multi-feuilles avec l'intégralité des données de votre établissement. Vous pourrez réimporter ce fichier à tout moment sans perte d'information, même en cas de changement de cluster MongoDB ou de réinitialisation.
+                      </p>
+                      <div className="flex flex-wrap gap-2 text-xs text-emerald-700 font-medium mb-4">
+                        <span className="bg-emerald-100/80 px-2.5 py-1 rounded-md">✓ Unités PEI</span>
+                        <span className="bg-emerald-100/80 px-2.5 py-1 rounded-md">✓ Projets Interdisciplinaires</span>
+                        <span className="bg-emerald-100/80 px-2.5 py-1 rounded-md">✓ Évaluations & SEA</span>
+                        <span className="bg-emerald-100/80 px-2.5 py-1 rounded-md">✓ Comptes Enseignants</span>
+                        <span className="bg-emerald-100/80 px-2.5 py-1 rounded-md">✓ Critères IB & Calendriers</span>
+                      </div>
+                    </div>
                   </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleExportExcelAll}
+                      disabled={exportLoading}
+                      className="flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition"
+                    >
+                      {exportLoading ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" /> {exportProgressMsg || 'Exportation en cours...'}
+                        </>
+                      ) : (
+                        <>
+                          <Download size={16} /> Télécharger la sauvegarde complète (Excel)
+                        </>
+                      )}
+                    </button>
+
+                    {onExportCSV && (
+                      <button
+                        onClick={onExportCSV}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold shadow-sm transition"
+                        title="Export simple au format CSV"
+                      >
+                        <FileText size={14} /> Export CSV
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Import Card */}
+                <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-2xl p-6 shadow-sm">
+                  <h4 className="font-bold text-indigo-900 text-base mb-1.5 flex items-center gap-2">
+                    <Upload className="text-indigo-700" size={20} /> Restauration & Import — Excel (.xlsx) / CSV
+                  </h4>
+                  <p className="text-sm text-indigo-800 mb-3 max-w-xl">
+                    Restaurez instantanément l'ensemble de vos données depuis un fichier Excel (.xlsx) exporté précédemment. Le système réinjecte automatiquement toutes les unités, classes, enseignants et projets.
+                  </p>
+
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-4 text-xs text-amber-900 flex items-start gap-2.5">
+                    <AlertCircle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold">Sécurité des données :</span> L'import consolide et restaure les données sans écraser arbitrairement les informations existantes. Idéal pour synchroniser un nouveau cluster de base de données.
+                    </div>
+                  </div>
+
                   <input
                     ref={importRef}
                     type="file"
-                    accept=".csv"
+                    accept=".xlsx,.xls,.csv"
                     onChange={handleImportFile}
                     className="hidden"
                   />
-                  <button
-                    onClick={() => importRef.current?.click()}
-                    disabled={importStatus === 'loading'}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-xl text-sm font-semibold shadow transition"
-                  >
-                    {importStatus === 'loading'
-                      ? <><Loader2 size={15} className="animate-spin" /> Import en cours...</>
-                      : <><Upload size={15} /> Importer / Restaurer depuis CSV</>
-                    }
-                  </button>
-                  {/* Résultat import */}
-                  {importStatus === 'success' && (
-                    <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800 flex items-start gap-2">
-                      <CheckCircle size={15} className="text-green-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-semibold">{importMessage}</p>
-                        {importStats && (
-                          <p className="text-xs text-green-700 mt-1">
-                            ✅ {importStats.imported} importées · ⏭️ {importStats.skipped} ignorées · ❌ {importStats.errors} erreurs
-                          </p>
-                        )}
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => importRef.current?.click()}
+                      disabled={importStatus === 'loading'}
+                      className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition"
+                    >
+                      {importStatus === 'loading' ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" /> {importMessage || 'Restauration en cours...'}
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={16} /> Sélectionner un fichier de sauvegarde (.xlsx / .csv)
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Progress bar */}
+                  {importProgress && (
+                    <div className="mt-4 bg-white border border-indigo-100 rounded-xl p-3 shadow-sm">
+                      <div className="flex justify-between text-xs font-semibold text-indigo-800 mb-1">
+                        <span>{importProgress.step}</span>
+                        <span>{importProgress.percent}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${importProgress.percent}%` }}
+                        />
                       </div>
                     </div>
                   )}
+
+                  {/* Résultat import */}
+                  {importStatus === 'success' && (
+                    <div className="mt-4 bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-sm text-emerald-900">
+                      <div className="flex items-start gap-2.5">
+                        <CheckCircle size={18} className="text-emerald-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold">{importMessage}</p>
+                          {importStats && (
+                            <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-medium">
+                              <span className="bg-emerald-100/70 p-2 rounded-lg text-emerald-800">
+                                📘 Unités : <strong>{importStats.units}</strong>
+                              </span>
+                              <span className="bg-emerald-100/70 p-2 rounded-lg text-emerald-800">
+                                🔗 Interdisciplinaire : <strong>{importStats.interdisciplinary}</strong>
+                              </span>
+                              <span className="bg-emerald-100/70 p-2 rounded-lg text-emerald-800">
+                                🌿 SEA : <strong>{importStats.sea}</strong>
+                              </span>
+                              <span className="bg-emerald-100/70 p-2 rounded-lg text-emerald-800">
+                                👥 Enseignants : <strong>{importStats.users}</strong>
+                              </span>
+                              <span className="bg-emerald-100/70 p-2 rounded-lg text-emerald-800">
+                                📝 Examens : <strong>{importStats.exams}</strong>
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {importStatus === 'error' && (
-                    <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 flex items-start gap-2">
-                      <AlertCircle size={15} className="text-red-500 flex-shrink-0 mt-0.5" />
-                      <p>{importMessage}</p>
+                    <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2.5">
+                      <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Erreur de restauration</p>
+                        <p className="text-xs mt-0.5">{importMessage}</p>
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Info */}
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5">
-                  <h4 className="font-semibold text-slate-700 mb-2 flex items-center gap-2">
-                    <FileText size={16} /> Format CSV
+                {/* Instructions */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 text-xs text-slate-600 space-y-2">
+                  <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                    <FileSpreadsheet size={15} className="text-slate-700" /> Structure du fichier de sauvegarde Excel
                   </h4>
-                  <p className="text-sm text-slate-600">
-                    Le fichier CSV exporté contient toutes les unités planifiées avec : titre, matière, niveau, enseignant, concepts, énoncé de recherche, objectifs, ATL, évaluations, différenciation, ressources, réflexions, et critères d'évaluation.
+                  <p>
+                    Le fichier <code>.xlsx</code> généré comprend plusieurs feuilles structurées avec les métadonnées complètes et la charge utile brute :
                   </p>
+                  <ul className="list-disc list-inside space-y-1 text-slate-600 pl-2">
+                    <li><strong>Unités PEI</strong> : Titres, matières, niveaux de classes, enseignants, concepts clés, contextes mondiaux, énoncés, questions, objectifs, ATL, évaluations et critères.</li>
+                    <li><strong>Interdisciplinaire</strong> : Titres, matières impliquées, intégration conceptuelle et déroulement.</li>
+                    <li><strong>SEA (Service et Action)</strong> : Résultats d'apprentissage, étapes, objectifs et réflexions.</li>
+                    <li><strong>Enseignants & Rôles</strong> : Liste des comptes enseignants, matières assignées et statuts d'accès.</li>
+                    <li><strong>Examens & Évaluations Critériées</strong> : Questions, barèmes, critères et points.</li>
+                  </ul>
                 </div>
               </div>
             )}

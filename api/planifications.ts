@@ -1,5 +1,6 @@
 import { MongoClient, ServerApiVersion } from 'mongodb';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import * as XLSX from 'xlsx';
 
 // Accepte MONGO_URL ou MONGODB_URI (les deux noms sont courants)
 const MONGO_URL = (process.env.MONGO_URL || process.env.MONGODB_URI || '').trim();
@@ -88,18 +89,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.method === 'GET') {
         const { subject, grade, export: exportType } = req.query;
 
-        if (exportType === 'excel') {
-          const headers = ['Titre', 'Matière', 'Niveau', 'Dernière mise à jour'];
-          const rows: string[][] = [];
+        if (exportType === 'excel' || exportType === 'xlsx') {
+          const wb = XLSX.utils.book_new();
+          const rows: any[] = [];
           for (const item of inMemoryStore.values()) {
             for (const p of item.plans || []) {
-              rows.push([p.title || '', p.subject || item.subject, p.gradeLevel || item.grade, item.lastUpdated || '']);
+              rows.push({
+                'ID_Unité': p.id || '',
+                'Titre': p.title || '',
+                'Matière': p.subject || item.subject,
+                'Niveau_Classe': p.gradeLevel || item.grade,
+                'Enseignant': p.teacherName || '',
+                'Durée': p.duration || '',
+                'Année_Scolaire': p.schoolYear || '2026/2027',
+                'Concept_Clé': p.keyConcept || '',
+                'Contexte_Mondial': p.globalContext || '',
+                'Énoncé_de_Recherche': p.statementOfInquiry || '',
+                'Dernière_Mise_à_Jour': item.lastUpdated || '',
+                '_full_data_json': JSON.stringify(p),
+              });
             }
           }
-          const csvContent = '\uFEFF' + [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-          res.setHeader('Content-Type', 'text/csv;charset=utf-8');
-          res.setHeader('Content-Disposition', `attachment; filename="export_PEI_${new Date().toISOString().slice(0,10)}.csv"`);
-          return res.status(200).send(csvContent);
+          const ws = XLSX.utils.json_to_sheet(rows);
+          XLSX.utils.book_append_sheet(wb, ws, 'Unités PEI');
+          const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+          res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          res.setHeader('Content-Disposition', `attachment; filename="export_PEI_${new Date().toISOString().slice(0,10)}.xlsx"`);
+          return res.status(200).send(buffer);
         }
 
         if (!subject && grade) {
@@ -151,67 +167,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'GET') {
       const { subject, grade, export: exportType } = req.query;
 
-      // ── Export Excel/CSV: toutes les données ──────────────────────────────
-      if (exportType === 'excel') {
+      // ── Export Excel: toutes les données complètes ──────────────────────
+      if (exportType === 'excel' || exportType === 'xlsx') {
         const allPlanifications = await collection.find({}).toArray();
-        
-        // Construire le CSV avec BOM UTF-8
-        const headers = [
-          'Titre', 'Matière', 'Niveau', 'Enseignant', 'Durée', 'Année scolaire',
-          'Concept clé', 'Concepts connexes', 'Contexte mondial', 'Énoncé de recherche',
-          'Questions factuelles', 'Questions conceptuelles', 'Questions débattables',
-          'Objectifs', 'ATL', 'Contenu',
-          'Activités apprentissage', 'Évaluation formative', 'Évaluation sommative',
-          'Différenciation', 'Ressources',
-          'Réflexion avant', 'Réflexion pendant', 'Réflexion après',
-          'Critères évaluation', 'Séances (nombre)', 'Dernière mise à jour détails', 'Date modification'
-        ];
+        const wb = XLSX.utils.book_new();
+        const rows: any[] = [];
 
-        const rows: string[][] = [];
         for (const planif of allPlanifications) {
           const plans = planif.plans || [];
           for (const p of plans) {
-            rows.push([
-              p.title || '',
-              p.subject || '',
-              p.gradeLevel || '',
-              p.teacherName || '',
-              p.duration || '',
-              p.schoolYear || '',
-              p.keyConcept || '',
-              (p.relatedConcepts || []).join('; '),
-              p.globalContext || '',
-              p.statementOfInquiry || '',
-              (p.inquiryQuestions?.factual || []).join(' | '),
-              (p.inquiryQuestions?.conceptual || []).join(' | '),
-              (p.inquiryQuestions?.debatable || []).join(' | '),
-              (p.objectives || []).join('; '),
-              (Array.isArray(p.atlSkills) ? p.atlSkills : [p.atlSkills || '']).join('; '),
-              (p.content || '').replace(/\n/g, ' '),
-              (p.learningExperiences || '').replace(/\n/g, ' '),
-              (p.formativeAssessment || '').replace(/\n/g, ' '),
-              (p.summativeAssessment || '').replace(/\n/g, ' '),
-              (p.differentiation || '').replace(/\n/g, ' '),
-              (p.resources || '').replace(/\n/g, ' '),
-              (p.reflection?.prior || '').replace(/\n/g, ' '),
-              (p.reflection?.during || '').replace(/\n/g, ' '),
-              (p.reflection?.after || '').replace(/\n/g, ' '),
-              (p.assessments || []).map((a: any) => `Critère ${a.criterion}: ${a.criterionName}`).join('; '),
-              String((p.sessions || []).length),
-              p.lastDetailUpdate || '',
-              planif.lastUpdated || '',
-            ]);
+            rows.push({
+              'ID_Unité': p.id || '',
+              'Titre': p.title || '',
+              'Matière': p.subject || '',
+              'Niveau_Classe': p.gradeLevel || '',
+              'Enseignant': p.teacherName || '',
+              'Durée': p.duration || '',
+              'Année_Scolaire': p.schoolYear || '2026/2027',
+              'Nb_Heures': p.numberOfHours || '',
+              'Nb_Périodes': p.numberOfPeriods || '',
+              'Date_Début': p.startDate || '',
+              'Date_Fin': p.endDate || '',
+              'Concept_Clé': p.keyConcept || '',
+              'Concepts_Connexes': (p.relatedConcepts || []).join('; '),
+              'Contexte_Mondial': p.globalContext || '',
+              'Énoncé_de_Recherche': p.statementOfInquiry || '',
+              'Questions_Factuelles': (p.inquiryQuestions?.factual || []).join(' | '),
+              'Questions_Conceptuelles': (p.inquiryQuestions?.conceptual || []).join(' | '),
+              'Questions_Débat': (p.inquiryQuestions?.debatable || []).join(' | '),
+              'Objectifs_IB': (p.objectives || []).join('; '),
+              'Compétences_ATL': (Array.isArray(p.atlSkills) ? p.atlSkills : [p.atlSkills || '']).join('; '),
+              'Contenu_Notions': (p.content || '').replace(/\n/g, ' '),
+              'Processus_Apprentissage': (p.learningExperiences || '').replace(/\n/g, ' '),
+              'Évaluation_Formative': (p.formativeAssessment || '').replace(/\n/g, ' '),
+              'Évaluation_Sommative': (p.summativeAssessment || '').replace(/\n/g, ' '),
+              'Différenciation': (p.differentiation || '').replace(/\n/g, ' '),
+              'Ressources': (p.resources || '').replace(/\n/g, ' '),
+              'Réflexion_Avant': (p.reflection?.prior || '').replace(/\n/g, ' '),
+              'Réflexion_Pendant': (p.reflection?.during || '').replace(/\n/g, ' '),
+              'Réflexion_Après': (p.reflection?.after || '').replace(/\n/g, ' '),
+              'Critères_Évaluation': (p.assessments || []).map((a: any) => `Critère ${a.criterion}: ${a.criterionName}`).join('; '),
+              'Nb_Séances': String((p.sessions || []).length),
+              'Dernière_Mise_à_Jour': p.lastDetailUpdate || planif.lastUpdated || '',
+              '_full_data_json': JSON.stringify(p),
+            });
           }
         }
 
-        const BOM = '\uFEFF';
-        const csvContent = BOM + [headers, ...rows]
-          .map(row => row.map((cell: string) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-          .join('\n');
+        const ws = XLSX.utils.json_to_sheet(rows);
+        XLSX.utils.book_append_sheet(wb, ws, 'Unités PEI');
+        const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
 
-        res.setHeader('Content-Type', 'text/csv;charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="export_toutes_donnees_PEI_${new Date().toISOString().slice(0,10)}.csv"`);
-        return res.status(200).send(csvContent);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="export_toutes_donnees_PEI_${new Date().toISOString().slice(0,10)}.xlsx"`);
+        return res.status(200).send(buffer);
       }
 
       // Si seulement grade est fourni, retourner toutes les matières pour cette classe

@@ -250,19 +250,21 @@ const createQuestionParagraphs = (question: any, index: number, isEnglish: boole
       break;
       
     default:
-      // Lignes pour réponse
-      paragraphs.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: '............................................................................................................................',
-              size: 22,
-                  font: FONT_NAME,
-            }),
-          ],
-          spacing: { after: 120 },
-        })
-      );
+      // Lignes pour réponse adaptées aux marges
+      for (let l = 0; l < 4; l++) {
+        paragraphs.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: '.'.repeat(82),
+                size: 22,
+                font: FONT_NAME,
+              }),
+            ],
+            spacing: { after: 100 },
+          })
+        );
+      }
   }
   
   return paragraphs;

@@ -205,8 +205,8 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
         const rawTitle = clean(ex.title).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim();
         // Strip "Critère X :" prefix from criterionReference (template shows criterion header separately)
         const rawRef = clean(ex.criterionReference).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim();
-        // Answer lines: 5 lines of exactly 161 dots each, separated by \n
-        const DOT_LINE = '·'.repeat(161);
+        // Answer lines: 5 lines of dots aligned precisely to standard page margins
+        const DOT_LINE = '.'.repeat(82);
         const reponse_lines = Array(5).fill(DOT_LINE).join('\n');
         return {
             numero: index + 1,
@@ -246,7 +246,7 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
       exercices_ar: exercises.map((ex, index) => {
         const rawTitleAr = (ex as any).title_ar ? clean((ex as any).title_ar).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim() : "(تمرين)";
         const rawRefAr = (ex as any).criterionReference_ar ? clean((ex as any).criterionReference_ar).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim() : "";
-        const DOT_LINE_AR = '·'.repeat(161);
+        const DOT_LINE_AR = '.'.repeat(82);
         const reponse_lines_ar = Array(5).fill(DOT_LINE_AR).join('\n');
         return {
           numero: index + 1,
