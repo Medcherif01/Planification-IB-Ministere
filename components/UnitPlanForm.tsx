@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail } from '../types';
 import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS, SUBJECTS } from '../constants';
 import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan } from '../services/geminiService';
-import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw } from 'lucide-react';
+import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock } from 'lucide-react';
 
 interface UnitPlanFormProps {
   initialPlan?: UnitPlan;
@@ -93,6 +93,15 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
     sessions: [],
     formativeDetails: [],
   });
+
+  const [allowUnlock, setAllowUnlock] = useState(false);
+
+  // Synchroniser le plan lorsque initialPlan change (notamment après génération IA)
+  useEffect(() => {
+    if (initialPlan) {
+      setPlan(initialPlan);
+    }
+  }, [initialPlan]);
 
   const [topicsInput, setTopicsInput] = useState('');
   const [isFullGenerating, setIsFullGenerating] = useState(false);
@@ -327,8 +336,8 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
   const labelClass = "block text-sm font-medium text-slate-600 mb-1";
 
   const isReadOnly = (field: string) => {
-    if (!detailUpdateMode) return false;
-    // En mode mise à jour détails, certains champs sont verrouillés
+    if (!detailUpdateMode || allowUnlock) return false;
+    // En mode mise à jour détails, certains champs sont verrouillés par défaut
     const locked = ['title', 'subject', 'gradeLevel', 'objectives', 'assessments', 'atlSkills'];
     return locked.includes(field);
   };
@@ -336,8 +345,8 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
   return (
     <div className="max-w-5xl mx-auto bg-white shadow-xl rounded-xl overflow-hidden border border-slate-200">
       {/* Header */}
-      <div className="bg-slate-800 text-white p-5 flex justify-between items-center sticky top-0 z-10">
-        <div className="flex items-center space-x-3">
+      <div className="bg-slate-800 text-white p-5 flex flex-wrap justify-between items-center gap-3 sticky top-0 z-10">
+        <div className="flex items-center space-x-3 flex-wrap gap-2">
           <button onClick={onCancel} className="p-2 hover:bg-slate-700 rounded-full transition">
             <ArrowLeft size={20} />
           </button>
@@ -346,9 +355,19 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
             {detailUpdateMode ? "Mise à jour des détails" : initialPlan ? "Modifier le plan d'unité" : "Nouveau plan d'unité"}
           </h2>
           {detailUpdateMode && (
-            <span className="bg-amber-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-              🔒 Titre / Objectifs / Critères / ATL verrouillés
-            </span>
+            <button
+              type="button"
+              onClick={() => setAllowUnlock(!allowUnlock)}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium transition ${
+                allowUnlock
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+              }`}
+              title={allowUnlock ? "Champs déverrouillés pour modification" : "Cliquer pour déverrouiller tous les champs"}
+            >
+              {allowUnlock ? <Unlock size={13} /> : <Lock size={13} />}
+              {allowUnlock ? "Champs déverrouillés" : "Champs de base verrouillés (cliquer pour déverrouiller)"}
+            </button>
           )}
         </div>
         <div className="flex items-center gap-2">

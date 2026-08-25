@@ -839,6 +839,21 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       // ── Merge final complet ───────────────────────────────────────────────
       const merged: UnitPlan = {
         ...detailUpdatePlan,
+        // ── Cadrage conceptuel & recherche (complété si vide/minimal) ──
+        keyConcept:         pick(detailUpdatePlan.keyConcept, g.keyConcept) ?? detailUpdatePlan.keyConcept,
+        keyConceptDefinition: pick(detailUpdatePlan.keyConceptDefinition, g.keyConceptDefinition) ?? detailUpdatePlan.keyConceptDefinition,
+        relatedConcepts:    (detailUpdatePlan.relatedConcepts && detailUpdatePlan.relatedConcepts.length > 0)
+                              ? detailUpdatePlan.relatedConcepts : (g.relatedConcepts ?? detailUpdatePlan.relatedConcepts),
+        globalContext:      pick(detailUpdatePlan.globalContext, g.globalContext) ?? detailUpdatePlan.globalContext,
+        globalContextAspects: pick(detailUpdatePlan.globalContextAspects, g.globalContextAspects) ?? detailUpdatePlan.globalContextAspects,
+        statementOfInquiry: pick(detailUpdatePlan.statementOfInquiry, g.statementOfInquiry) ?? detailUpdatePlan.statementOfInquiry,
+        statementExplanation: pick(detailUpdatePlan.statementExplanation, g.statementExplanation) ?? detailUpdatePlan.statementExplanation,
+        inquiryQuestions:   (detailUpdatePlan.inquiryQuestions && (detailUpdatePlan.inquiryQuestions.factual?.length || detailUpdatePlan.inquiryQuestions.conceptual?.length || detailUpdatePlan.inquiryQuestions.debatable?.length))
+                              ? detailUpdatePlan.inquiryQuestions : (g.inquiryQuestions ?? detailUpdatePlan.inquiryQuestions),
+        objectives:         (detailUpdatePlan.objectives && detailUpdatePlan.objectives.length > 0)
+                              ? detailUpdatePlan.objectives : (g.objectives ?? detailUpdatePlan.objectives),
+        atlSkills:          (detailUpdatePlan.atlSkills && (Array.isArray(detailUpdatePlan.atlSkills) ? detailUpdatePlan.atlSkills.length > 0 : Boolean(detailUpdatePlan.atlSkills)))
+                              ? detailUpdatePlan.atlSkills : (g.atlSkills ?? detailUpdatePlan.atlSkills),
         // ── Section A : Informations générales ──
         numberOfPeriods:    pick(detailUpdatePlan.numberOfPeriods, g.numberOfPeriods)    ?? detailUpdatePlan.numberOfPeriods,
         numberOfHours:      pick(detailUpdatePlan.numberOfHours,   g.numberOfHours)      ?? detailUpdatePlan.numberOfHours,
@@ -861,6 +876,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
         // ── Section L/M : Évaluations ──
         formativeAssessment: pick(detailUpdatePlan.formativeAssessment, g.formativeAssessment) ?? detailUpdatePlan.formativeAssessment,
         summativeAssessment: pick(detailUpdatePlan.summativeAssessment, g.summativeAssessment) ?? detailUpdatePlan.summativeAssessment,
+        summativeDetails:    pick(detailUpdatePlan.summativeDetails, g.summativeDetails) ?? detailUpdatePlan.summativeDetails,
         // ── Section N : Différenciation ──
         differentiationDetails: mergedDD,
         differentiation:    pick(detailUpdatePlan.differentiation, g.differentiation) ?? detailUpdatePlan.differentiation,

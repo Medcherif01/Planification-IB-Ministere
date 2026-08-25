@@ -3432,7 +3432,8 @@ Retourne un tableau JSON de 2 objets InterdisciplinaryUnit complets.`;
 // ─────────────────────────────────────────────────────────────────────────────
 // GÉNÉRATION IA DES DÉTAILS D'UNITÉ — Version complète (3 appels séparés)
 // Couvre TOUS les champs A→R du plan d'unité IB PEI :
-// infos générales, contexte élèves, processus, séances,
+// infos générales, contexte élèves, cadrage conceptuel, questions,
+// objectifs / critères, ATL, contenu, processus (5 phases), séances,
 // différenciation, réflexion, cohérence, liens interdisciplinaires,
 // contenu détaillé, évaluations formative/sommative
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3440,7 +3441,7 @@ export const generateUnitDetailsWithAI = async (
   plan: UnitPlan,
   onProgress?: (msg: string) => void
 ): Promise<Partial<UnitPlan>> => {
-  onProgress?.('Analyse de l\'unité en cours...');
+  onProgress?.('Analyse globale de l\'unité en cours...');
 
   // Informations de base de l'unité
   const unitInfo = [
@@ -3453,184 +3454,206 @@ export const generateUnitDetailsWithAI = async (
     'Concepts connexes: ' + (Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts.join(', ') : ''),
     'Contexte mondial: ' + (plan.globalContext || 'Non défini'),
     'Énoncé de recherche: ' + (plan.statementOfInquiry || 'Non défini'),
-    'Objectifs: ' + (plan.objectives || []).join(', '),
+    'Objectifs / Critères: ' + (plan.objectives || []).join(', '),
     'ATL: ' + (Array.isArray(plan.atlSkills) ? plan.atlSkills : [plan.atlSkills || '']).join(', '),
     'Contenu: ' + (plan.content || '').slice(0, 400),
     'Évaluation sommative: ' + (plan.summativeAssessment || '').slice(0, 200),
   ].join('\n');
 
-  // ── Appel 1: Infos générales + Contexte élèves + Contenu détaillé ────────
-  onProgress?.('Génération du contexte élèves et du contenu détaillé (1/3)...');
+  // ── Appel 1: Cadrage conceptuel + Contexte élèves + Contenu + Objectifs ───
+  onProgress?.('Cadrage conceptuel, contexte élèves et contenu (1/3)...');
 
-  const prompt1 = `Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide pour cette unité:
+  const prompt1 = `Tu es expert pédagogique international IB PEI (Programme d'éducation intermédiaire). Génère UNIQUEMENT un objet JSON valide et riche pour cette unité :
 
 ${unitInfo}
 
-Format JSON attendu (toutes les valeurs en français, détaillées, conformes IB PEI):
+Format JSON attendu (toutes les valeurs en français, professionnelles, rigoureuses, conformes aux exigences IB PEI) :
 {
+  "keyConcept": "${plan.keyConcept || 'Concept clé'}",
+  "keyConceptDefinition": "Définition approfondie et contextualisée du concept clé pour cette unité",
+  "relatedConcepts": ${JSON.stringify(plan.relatedConcepts && plan.relatedConcepts.length > 0 ? plan.relatedConcepts : ["Concept connexe 1", "Concept connexe 2"])},
+  "globalContext": "${plan.globalContext || 'Contexte mondial'}",
+  "globalContextAspects": "Exploration spécifique et aspects concrets du contexte mondial choisis",
+  "statementOfInquiry": "${plan.statementOfInquiry || 'Énoncé de recherche synthétique reliant concept clé, concepts connexes et contexte mondial'}",
+  "statementExplanation": "Explication et justification conceptuelle de l'énoncé de recherche",
+  "inquiryQuestions": {
+    "factual": ["Question factuelle 1 ?", "Question factuelle 2 ?", "Question factuelle 3 ?"],
+    "conceptual": ["Question conceptuelle 1 ?", "Question conceptuelle 2 ?"],
+    "debatable": ["Question invitant au débat 1 ?", "Question invitant au débat 2 ?"]
+  },
+  "objectives": ${JSON.stringify(plan.objectives && plan.objectives.length >= 2 ? plan.objectives : ["A", "B", "C", "D"])},
+  "atlSkills": ${JSON.stringify(plan.atlSkills && plan.atlSkills.length > 0 ? plan.atlSkills : ["Compétences de communication", "Compétences de pensée critique", "Compétences de recherche", "Compétences d'autogestion"])},
   "schoolYear": "2026-2027",
-  "numberOfPeriods": "nombre de périodes selon durée",
-  "numberOfHours": "nombre d'heures selon durée",
-  "startDate": "date de début estimée",
-  "endDate": "date de fin estimée",
-  "prerequisites": "prérequis détaillés pour cette unité",
+  "numberOfPeriods": "20 périodes",
+  "numberOfHours": "${plan.duration || '18 heures'}",
+  "startDate": "date de début",
+  "endDate": "date de fin",
+  "prerequisites": "Prérequis disciplinaires et compétences préalables indispensables",
   "studentContext": {
-    "priorKnowledge": "Ce que les élèves savent déjà en lien avec cette unité",
-    "acquiredSkills": "Compétences déjà maîtrisées par les élèves",
-    "linksPreviousUnits": "Connexions avec les unités précédentes de la même matière",
-    "specificNeeds": "Besoins spécifiques identifiés des élèves",
-    "profileDiversity": "Diversité culturelle, sociale, linguistique de la classe",
-    "culturalContexts": "Contextes culturels et locaux pertinents",
-    "anticipatedDifficulties": "Obstacles prévisibles à anticiper"
+    "priorKnowledge": "Connaissances et acquis antérieurs précis des élèves en lien direct avec l'unité",
+    "acquiredSkills": "Compétences disciplinaires et ATL déjà maîtrisées",
+    "linksPreviousUnits": "Liens explicites avec les unités précédentes",
+    "specificNeeds": "Besoins d'apprentissage spécifiques et adaptations nécessaires",
+    "profileDiversity": "Diversité des profils d'apprenants, profils linguistiques et culturels",
+    "culturalContexts": "Contextes culturels, locaux et internationaux mobilisés",
+    "anticipatedDifficulties": "Obstacles conceptuels et méthodologiques à anticiper"
   },
   "contentDetails": {
-    "knowledges": "Savoirs théoriques à acquérir dans cette unité",
-    "notions": "Notions et termes clés à maîtriser",
-    "vocabulary": "Vocabulaire disciplinaire essentiel",
-    "methods": "Démarches méthodologiques à enseigner",
-    "techniques": "Techniques spécifiques à la matière",
-    "disciplinarySkills": "Compétences disciplinaires et savoir-faire",
-    "mandatoryContent": "Contenu obligatoire du programme IB",
-    "selectedContent": "Contenu sélectionné et justification",
-    "nationalLinks": "Correspondances avec le programme national français"
+    "knowledges": "Savoirs théoriques et connaissances fondamentales à acquérir",
+    "notions": "Notions clés et concepts disciplinaires",
+    "vocabulary": "Vocabulaire disciplinaire essentiel et termes spécialisés",
+    "methods": "Démarches méthodologiques et protocoles",
+    "techniques": "Techniques et savoir-faire spécifiques",
+    "disciplinarySkills": "Compétences disciplinaires ciblées",
+    "mandatoryContent": "Contenus obligatoires du guide pédagogique IB PEI",
+    "selectedContent": "Contenus choisis et justification didactique",
+    "nationalLinks": "Correspondances précises avec le programme national"
   },
   "objectivesDetails": [
-    {"criterion": "A", "aspects": "Aspects évalués du critère A", "expectedLevel": "Niveau attendu /8", "activities": "Activités liées au critère A", "formativeAssessment": "Évaluation formative critère A", "summativeAssessment": "Évaluation sommative critère A"},
-    {"criterion": "B", "aspects": "Aspects évalués du critère B", "expectedLevel": "Niveau attendu /8", "activities": "Activités liées au critère B", "formativeAssessment": "Évaluation formative critère B", "summativeAssessment": "Évaluation sommative critère B"}
+    {"criterion": "A", "aspects": "Aspects évalués du critère A", "expectedLevel": "Niveau 5-6 attendu /8", "activities": "Activités développant le critère A", "formativeAssessment": "Évaluation formative critère A", "summativeAssessment": "Évaluation sommative critère A"},
+    {"criterion": "B", "aspects": "Aspects évalués du critère B", "expectedLevel": "Niveau 5-6 attendu /8", "activities": "Activités développant le critère B", "formativeAssessment": "Évaluation formative critère B", "summativeAssessment": "Évaluation sommative critère B"},
+    {"criterion": "C", "aspects": "Aspects évalués du critère C", "expectedLevel": "Niveau 5-6 attendu /8", "activities": "Activités développant le critère C", "formativeAssessment": "Évaluation formative critère C", "summativeAssessment": "Évaluation sommative critère C"},
+    {"criterion": "D", "aspects": "Aspects évalués du critère D", "expectedLevel": "Niveau 5-6 attendu /8", "activities": "Activités développant le critère D", "formativeAssessment": "Évaluation formative critère D", "summativeAssessment": "Évaluation sommative critère D"}
   ],
-  "formativeAssessment": "Description détaillée des évaluations formatives: modalités, fréquence, feedback",
-  "summativeAssessment": "Description complète de l'évaluation sommative: tâche, critères, produit attendu",
-  "interdisciplinaryLinks": "Liens avec autres matières IB, connexions conceptuelles et thématiques"
+  "formativeAssessment": "Dispositif d'évaluation formative continue : observation, rétroaction descriptive, auto-évaluation et régulation",
+  "summativeAssessment": "Tâche sommative authentique, signifiante et critériée en lien direct avec l'énoncé de recherche",
+  "summativeDetails": {
+    "consigne": "Consigne détaillée pour la réalisation de la tâche sommative",
+    "productionAttendue": "Format et livrable attendu des élèves",
+    "duree": "2 heures",
+    "grille": "Critères d'évaluation IB appliqués avec descripteurs de niveaux"
+  },
+  "interdisciplinaryLinks": "Connexions interdisciplinaires concrètes avec d'autres matières du PEI"
 }
 
-Règles: JSON valide uniquement, pas de markdown, français, spécifique à la matière "${plan.subject}" pour ${plan.gradeLevel}.`;
+Règles : JSON valide uniquement, sans balises markdown superflues, français soigné et adapté à la matière "${plan.subject}" niveau ${plan.gradeLevel}.`;
 
-  const raw1 = await callGeminiViaProxy(prompt1, undefined, { temperature: 0.6, maxOutputTokens: 3500 });
+  const raw1 = await callGeminiViaProxy(prompt1, undefined, { temperature: 0.5, maxOutputTokens: 4000 });
 
-  // ── Appel 2: Processus d'apprentissage + Séances ─────────────────────────
-  onProgress?.('Génération du processus d\'apprentissage et des séances (2/3)...');
+  // ── Appel 2: Processus d'apprentissage (5 phases) + Séances détaillées ───
+  onProgress?.('Processus d\'apprentissage en 5 phases et séances (2/3)...');
 
-  const prompt2 = `Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide pour cette unité:
+  const prompt2 = `Tu es expert pédagogique IB PEI. Génère UNIQUEMENT un objet JSON valide pour le processus d'apprentissage et la séquence de séances :
 
 ${unitInfo}
 
-Format JSON attendu (français, détaillé, conforme IB PEI):
+Format JSON attendu (français, ultra détaillé, conforme IB PEI) :
 {
   "learningProcess": {
-    "phase1_activation": "Activation des connaissances antérieures: stratégies concrètes",
-    "phase2_acquisition": "Acquisition des nouvelles connaissances: méthodes et ressources",
-    "phase3_practice": "Mise en pratique guidée: exercices et activités progressives",
-    "phase4_transfer": "Application et transfert dans nouveaux contextes",
-    "phase5_reflection": "Réflexion métacognitive et consolidation des apprentissages"
+    "phase1_activation": "Phase 1 - Activation des connaissances antérieures et engagement par une situation déclenchante ou question provocatrice",
+    "phase2_acquisition": "Phase 2 - Acquisition des nouveaux savoirs et méthodes : recherche guidée, analyse de documents, modélisation",
+    "phase3_practice": "Phase 3 - Pratique guidée et structurée : applications progressives, ateliers collaboratifs, rétroaction formative",
+    "phase4_transfer": "Phase 4 - Transfert et application autonome dans des situations authentiques et complexes",
+    "phase5_reflection": "Phase 5 - Réflexion métacognitive, auto-évaluation sur les compétences ATL et consolidation"
   },
   "sessions": [
     {
       "numero": 1,
       "duree": "2h",
-      "objectifApprentissage": "Objectif précis de la séance 1",
-      "contenu": "Contenu spécifique travaillé",
-      "activite": "Activité détaillée avec modalités",
-      "roleEnseignant": "Rôle et actions de l'enseignant",
-      "roleEleves": "Rôle et actions des élèves",
-      "atl": "Compétence ATL mobilisée",
-      "evaluationFormative": "Comment on évalue les apprentissages en séance",
-      "differenciation": "Adaptation pour élèves en difficulté et avancés",
-      "ressources": "Ressources et matériaux utilisés",
-      "questionsRecherche": "Question de recherche de la séance"
+      "objectifApprentissage": "Objectif d'apprentissage précis de la séance 1",
+      "contenu": "Contenus et notions abordés",
+      "activite": "Description détaillée de l'activité des élèves",
+      "roleEnseignant": "Rôle de l'enseignant (guide, facilitateur)",
+      "roleEleves": "Rôle des élèves (chercheurs, praticiens)",
+      "atl": "Compétence ATL spécifique mise en œuvre",
+      "evaluationFormative": "Modalité d'évaluation formative de la séance",
+      "differenciation": "Différenciation : soutien (étayage) et approfondissement",
+      "ressources": "Ressources, supports et matériel utilisés",
+      "questionsRecherche": "Question de recherche directrice de la séance"
     },
-    {"numero": 2, "duree": "2h", "objectifApprentissage": "Obj. séance 2", "contenu": "Contenu 2", "activite": "Activité 2", "roleEnseignant": "Rôle ens. 2", "roleEleves": "Rôle élèves 2", "atl": "ATL 2", "evaluationFormative": "Éval. form. 2", "differenciation": "Diff. 2", "ressources": "Ressources 2", "questionsRecherche": "Question 2"},
-    {"numero": 3, "duree": "2h", "objectifApprentissage": "Obj. séance 3", "contenu": "Contenu 3", "activite": "Activité 3", "roleEnseignant": "Rôle ens. 3", "roleEleves": "Rôle élèves 3", "atl": "ATL 3", "evaluationFormative": "Éval. form. 3", "differenciation": "Diff. 3", "ressources": "Ressources 3", "questionsRecherche": "Question 3"},
-    {"numero": 4, "duree": "2h", "objectifApprentissage": "Obj. séance 4", "contenu": "Contenu 4", "activite": "Activité 4", "roleEnseignant": "Rôle ens. 4", "roleEleves": "Rôle élèves 4", "atl": "ATL 4", "evaluationFormative": "Éval. form. 4", "differenciation": "Diff. 4", "ressources": "Ressources 4", "questionsRecherche": "Question 4"},
-    {"numero": 5, "duree": "2h", "objectifApprentissage": "Obj. séance 5", "contenu": "Contenu 5", "activite": "Activité 5", "roleEnseignant": "Rôle ens. 5", "roleEleves": "Rôle élèves 5", "atl": "ATL 5", "evaluationFormative": "Éval. form. 5", "differenciation": "Diff. 5", "ressources": "Ressources 5", "questionsRecherche": "Question 5"}
+    {"numero": 2, "duree": "2h", "objectifApprentissage": "Objectif séance 2", "contenu": "Contenu 2", "activite": "Activité 2", "roleEnseignant": "Rôle ens. 2", "roleEleves": "Rôle élèves 2", "atl": "ATL 2", "evaluationFormative": "Éval. form. 2", "differenciation": "Diff. 2", "ressources": "Ressources 2", "questionsRecherche": "Question 2"},
+    {"numero": 3, "duree": "2h", "objectifApprentissage": "Objectif séance 3", "contenu": "Contenu 3", "activite": "Activité 3", "roleEnseignant": "Rôle ens. 3", "roleEleves": "Rôle élèves 3", "atl": "ATL 3", "evaluationFormative": "Éval. form. 3", "differenciation": "Diff. 3", "ressources": "Ressources 3", "questionsRecherche": "Question 3"},
+    {"numero": 4, "duree": "2h", "objectifApprentissage": "Objectif séance 4", "contenu": "Contenu 4", "activite": "Activité 4", "roleEnseignant": "Rôle ens. 4", "roleEleves": "Rôle élèves 4", "atl": "ATL 4", "evaluationFormative": "Éval. form. 4", "differenciation": "Diff. 4", "ressources": "Ressources 4", "questionsRecherche": "Question 4"},
+    {"numero": 5, "duree": "2h", "objectifApprentissage": "Objectif séance 5", "contenu": "Contenu 5", "activite": "Activité 5", "roleEnseignant": "Rôle ens. 5", "roleEleves": "Rôle élèves 5", "atl": "ATL 5", "evaluationFormative": "Éval. form. 5", "differenciation": "Diff. 5", "ressources": "Ressources 5", "questionsRecherche": "Question 5"}
   ],
-  "learningExperiences": "Description globale des expériences d'apprentissage et stratégies pédagogiques de l'unité",
-  "teachingStrategies": "Stratégies et méthodes principales de l'enseignant pour cette unité",
-  "studentActivities": "Vue d'ensemble des activités et productions des élèves"
+  "learningExperiences": "Synthèse des expériences d'apprentissage favorisant la recherche et la démarche active",
+  "teachingStrategies": "Stratégies d'enseignement : questionnement socratique, démarche d'investigation, pédagogie explicite, différenciation",
+  "studentActivities": "Activités concrètes des élèves : analyses documentaires, résolutions de problèmes, productions créatives, synthèses"
 }
 
-Règles: JSON valide uniquement, pas de markdown, français, spécifique à "${plan.subject}" pour ${plan.gradeLevel}.`;
+Règles : JSON valide uniquement, français, spécifique à "${plan.subject}" pour ${plan.gradeLevel}.`;
 
-  const raw2 = await callGeminiViaProxy(prompt2, undefined, { temperature: 0.6, maxOutputTokens: 3500 });
+  const raw2 = await callGeminiViaProxy(prompt2, undefined, { temperature: 0.5, maxOutputTokens: 4000 });
 
-  // ── Appel 3: Différenciation + Réflexion + Cohérence ─────────────────────
-  onProgress?.('Génération de la différenciation et de la réflexion (3/3)...');
+  // ── Appel 3: Différenciation + Réflexion (Avant/Pendant/Après) + Cohérence ──
+  onProgress?.('Différenciation, réflexion complète et cohérence (3/3)...');
 
-  const prompt3 = `Tu es expert IB PEI. Génère UNIQUEMENT un objet JSON valide pour cette unité:
+  const prompt3 = `Tu es expert pédagogique IB PEI. Génère UNIQUEMENT un objet JSON valide pour la différenciation, la réflexion et la cohérence :
 
 ${unitInfo}
 
-Format JSON attendu (français, détaillé, conforme IB PEI):
+Format JSON attendu (français, complet, conforme IB PEI) :
 {
   "differentiationDetails": {
     "supportStudents": {
-      "vocabulary": "Soutien vocabulaire et terminologie pour élèves en difficulté",
-      "visualSupports": "Supports visuels, schémas, organisateurs graphiques",
-      "models": "Modèles et exemples fournis",
-      "adaptedInstructions": "Instructions simplifiées et reformulées",
-      "intermediateSteps": "Décomposition des tâches en étapes intermédiaires",
-      "smallGroups": "Travail en petits groupes avec pair aidant",
-      "individualSupport": "Soutien individualisé et suivi personnalisé",
-      "extraTime": "Temps supplémentaire accordé",
-      "additionalResources": "Ressources complémentaires simplifiées"
+      "vocabulary": "Glossaire bilingue/illustré, cartes de vocabulaire, fiches mémo",
+      "visualSupports": "Organisateurs graphiques, infographies, schémas conceptuels, vidéos sous-titrées",
+      "models": "Exemples modèles décortiqués, productions témoins annotées",
+      "adaptedInstructions": "Consignes découpées en étapes simples, reformulation orale",
+      "intermediateSteps": "Feuilles de route guidées avec jalons intermédiaires et étayage",
+      "smallGroups": "Groupes de besoins flexibles, tutorat par les pairs",
+      "individualSupport": "Entretiens individuels réguliers et aide ciblée de l'enseignant",
+      "extraTime": "Aménagement du temps de travail et des évaluations",
+      "additionalResources": "Ressources adaptées avec niveaux de lecture progressifs"
     },
     "advancedStudents": {
-      "deepening": "Approfondissement et enrichissement du contenu",
-      "autonomousResearch": "Recherche autonome sur des thèmes connexes",
-      "complexProblems": "Résolution de problèmes complexes et ouverts",
-      "challenges": "Défis supplémentaires et tâches d'extension",
-      "transfer": "Transfert dans contextes nouveaux et inattendus",
-      "advancedProduction": "Productions créatives et approfondies"
+      "deepening": "Lectures et sources expertes, analyse critique avancée",
+      "autonomousResearch": "Enquêtes et projets de recherche autonomes",
+      "complexProblems": "Situations-problèmes ouvertes avec variables multiples",
+      "challenges": "Défis interdisciplinaires et productions d'extension",
+      "transfer": "Transfert conceptuel vers de nouveaux contextes contemporains",
+      "advancedProduction": "Formats de restitution exigeants (article scientifique, capsule vidéo, plaidoyer)"
     },
-    "contentDifferentiation": "Adaptation du niveau de complexité et de profondeur du contenu",
-    "processDifferentiation": "Variation des modalités, rythmes et méthodes de travail",
-    "productDifferentiation": "Choix du type et du niveau de production finale"
+    "contentDifferentiation": "Différenciation par les contenus : niveaux de complexité et supports variés",
+    "processDifferentiation": "Différenciation par les processus : démarches, rythmes et regroupements modulables",
+    "productDifferentiation": "Différenciation par les productions : choix des modes d'expression et livrables"
   },
   "reflectionDetails": {
     "before": {
-      "priorKnowledge": "Connaissances antérieures identifiées et évaluées",
-      "studentNeeds": "Besoins des élèves identifiés avant l'unité",
-      "anticipatedDifficulties": "Difficultés prévisibles et stratégies d'anticipation",
-      "relevance": "Pertinence et sens de l'unité pour les élèves",
-      "previousLinks": "Liens avec les unités précédentes établis",
-      "plannedStrategies": "Stratégies pédagogiques planifiées",
-      "plannedDifferentiation": "Différenciation planifiée dès le départ",
-      "expectedOutcomes": "Résultats d'apprentissage attendus"
+      "priorKnowledge": "Évaluation diagnostique des acquis et représentations initiales des élèves",
+      "studentNeeds": "Prise en compte des profils d'apprentissage et besoins individuels",
+      "anticipatedDifficulties": "Obstacles conceptuels et barrières linguistiques anticipés",
+      "relevance": "Ancrage de l'unité dans le vécu et les préoccupations réelles des apprenants",
+      "previousLinks": "Articulation avec les concepts et compétences des unités précédentes",
+      "plannedStrategies": "Choix délibéré des stratégies d'investigation et d'étayage",
+      "plannedDifferentiation": "Planification proactive des dispositifs de soutien et d'enrichissement",
+      "expectedOutcomes": "Indicateurs de réussite et résultats d'apprentissage ciblés"
     },
     "during": {
-      "progressObserved": "Progression des élèves observée en cours d'unité",
-      "difficulties": "Difficultés rencontrées et comment elles ont été gérées",
-      "effectiveStrategies": "Stratégies qui ont bien fonctionné",
-      "ineffectiveStrategies": "Stratégies à améliorer ou remplacer",
-      "studentParticipation": "Niveau d'engagement et participation des élèves",
-      "adjustmentsMade": "Ajustements apportés en cours d'unité",
-      "planningChanges": "Modifications au planning initial",
-      "emergingNeeds": "Besoins émergents identifiés"
+      "progressObserved": "Observation continue de l'appropriation des concepts et des compétences ATL",
+      "difficulties": "Gestion en temps réel des blocages et incompréhensions constatés",
+      "effectiveStrategies": "Dispositifs pédagogiques ayant suscité forte adhésion et progrès",
+      "ineffectiveStrategies": "Activités nécessitant un réajustement ou une simplification",
+      "studentParticipation": "Niveau d'engagement, autonomie et collaboration des élèves",
+      "adjustmentsMade": "Modifications du rythme, des supports ou des regroupements",
+      "planningChanges": "Adaptations du calendrier prévisionnel des séances",
+      "emergingNeeds": "Nouveaux besoins identifiés nécessitant une remédiation"
     },
     "after": {
-      "achievedObjectives": "Objectifs pleinement atteints par les élèves",
-      "partialObjectives": "Objectifs partiellement atteints à consolider",
-      "studentDifficulties": "Difficultés persistantes à traiter",
-      "assessmentResults": "Résultats et analyse de l'évaluation sommative",
-      "activityEfficiency": "Efficacité des activités proposées",
-      "teachingEfficiency": "Efficacité de l'enseignement dispensé",
-      "differentiationEfficiency": "Efficacité de la différenciation mise en place",
-      "successes": "Points forts et réussites de l'unité",
-      "improvements": "Améliorations à apporter",
-      "modificationsNext": "Modifications pour la prochaine fois",
-      "elementsToKeep": "Éléments à conserver",
-      "elementsToRemove": "Éléments à supprimer",
-      "elementsToAdd": "Éléments à ajouter"
+      "achievedObjectives": "Bilan des critères et compétences pleinement maîtrisés par la majorité",
+      "partialObjectives": "Objectifs partiellement atteints nécessitant un réinvestissement",
+      "studentDifficulties": "Points de vigilance persistants à transmettre pour l'année suivante",
+      "assessmentResults": "Analyse qualitative et quantitative des résultats sommatiques",
+      "activityEfficiency": "Évaluation de la pertinence des tâches et expériences proposées",
+      "teachingEfficiency": "Auto-évaluation des pratiques d'enseignement et de posture",
+      "differentiationEfficiency": "Impact mesuré des dispositifs de différenciation mis en place",
+      "successes": "Grandes réussites de l'unité à consolider et partager",
+      "improvements": "Pistes concrètes d'amélioration pour la prochaine itération",
+      "modificationsNext": "Modifications prioritaires à intégrer au plan d'unité",
+      "elementsToKeep": "Activités, supports et déclencheurs incontournables à conserver",
+      "elementsToRemove": "Séquences trop lourdes ou peu stimulantes à supprimer",
+      "elementsToAdd": "Nouvelles ressources ou passerelles interdisciplinaires à ajouter"
     }
   },
-  "verticalCoherence": "Cohérence verticale: liens avec les niveaux précédents et suivants du programme IB",
-  "horizontalCoherence": "Cohérence horizontale: liens avec les autres matières du même niveau",
-  "resources": "Liste complète des ressources: manuels, articles, sites, matériaux, outils numériques",
-  "differentiation": "Résumé global de la stratégie de différenciation de l'unité"
+  "verticalCoherence": "Cohérence verticale : continuité des compétences et concepts avec les années N-1 et N+1 du PEI",
+  "horizontalCoherence": "Cohérence horizontale : synergies et résonances avec les autres disciplines du même niveau",
+  "resources": "Manuels, articles, corpus documentaires, simulateurs numériques, matériel de laboratoire, plateformes interactives",
+  "differentiation": "Stratégie globale de différenciation inclusive garantissant l'accès et le dépassement pour chaque élève"
 }
 
-Règles: JSON valide uniquement, pas de markdown, français, spécifique à "${plan.subject}" pour ${plan.gradeLevel}.`;
+Règles : JSON valide uniquement, français, spécifique à "${plan.subject}" pour ${plan.gradeLevel}.`;
 
-  const raw3 = await callGeminiViaProxy(prompt3, undefined, { temperature: 0.6, maxOutputTokens: 3500 });
+  const raw3 = await callGeminiViaProxy(prompt3, undefined, { temperature: 0.5, maxOutputTokens: 4000 });
 
   onProgress?.('Traitement des résultats...');
 
@@ -3858,6 +3881,17 @@ Règles: JSON valide uniquement, pas de markdown, français, spécifique à "${p
   } catch { /* calendrier non disponible, on garde les dates IA */ }
 
   return {
+    // Cadrage conceptuel & recherche
+    keyConcept: (p1.keyConcept as string) || plan.keyConcept,
+    keyConceptDefinition: (p1.keyConceptDefinition as string) || plan.keyConceptDefinition,
+    relatedConcepts: (p1.relatedConcepts as string[]) || plan.relatedConcepts,
+    globalContext: (p1.globalContext as string) || plan.globalContext,
+    globalContextAspects: (p1.globalContextAspects as string) || plan.globalContextAspects,
+    statementOfInquiry: (p1.statementOfInquiry as string) || plan.statementOfInquiry,
+    statementExplanation: (p1.statementExplanation as string) || plan.statementExplanation,
+    inquiryQuestions: (p1.inquiryQuestions as UnitPlan['inquiryQuestions']) || plan.inquiryQuestions,
+    objectives: (p1.objectives as string[]) || plan.objectives,
+    atlSkills: (p1.atlSkills as string[]) || plan.atlSkills,
     // Infos générales mises à jour
     schoolYear: (p1.schoolYear as string) || '2026-2027',
     numberOfPeriods: (p1.numberOfPeriods as string) || '',
@@ -3874,6 +3908,7 @@ Règles: JSON valide uniquement, pas de markdown, français, spécifique à "${p
     // Évaluations
     formativeAssessment: (p1.formativeAssessment as string) || plan.formativeAssessment || '',
     summativeAssessment: (p1.summativeAssessment as string) || plan.summativeAssessment || '',
+    summativeDetails: (p1.summativeDetails as UnitPlan['summativeDetails']) || plan.summativeDetails,
     // Liens interdisciplinaires (texte simple)
     interdisciplinaryLinksText: (p1.interdisciplinaryLinks as string) || undefined,
     // Processus d'apprentissage + séances
