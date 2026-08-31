@@ -1,4 +1,5 @@
 import type { UnitPlan } from '../types';
+import { deduplicatePlans } from './excelBackupService';
 
 // URL de l'API — toujours relative en production (Vercel) pour éviter les problèmes CORS.
 // En développement local, pointe vers le serveur vite/vercel dev sur le port 3000.
@@ -25,7 +26,7 @@ export async function loadPlansFromDatabase(
     const cleanGrade = grade.trim();
     
     if (!cleanSubject || !cleanGrade || cleanSubject.startsWith('_') || /^[_\s]+$/.test(cleanSubject)) {
-      return loadPlansFromLocalStorage(subject, grade);
+      return deduplicatePlans(loadPlansFromLocalStorage(subject, grade));
     }
     
     const response = await fetch(
@@ -33,7 +34,7 @@ export async function loadPlansFromDatabase(
     );
 
     if (!response.ok) {
-      return loadPlansFromLocalStorage(subject, grade);
+      return deduplicatePlans(loadPlansFromLocalStorage(subject, grade));
     }
 
     const data: PlanificationData = await response.json();
@@ -42,13 +43,13 @@ export async function loadPlansFromDatabase(
     // Si le serveur n'a pas de données, vérifier si localStorage en a
     if (serverPlans.length === 0) {
       const localPlans = loadPlansFromLocalStorage(subject, grade);
-      if (localPlans.length > 0) return localPlans;
+      if (localPlans.length > 0) return deduplicatePlans(localPlans);
     }
     
-    return serverPlans;
+    return deduplicatePlans(serverPlans);
   } catch (error) {
     // Fallback vers localStorage si l'API échoue
-    return loadPlansFromLocalStorage(subject, grade);
+    return deduplicatePlans(loadPlansFromLocalStorage(subject, grade));
   }
 }
 
@@ -62,7 +63,7 @@ export async function loadAllPlansForGrade(grade: string): Promise<UnitPlan[]> {
     );
 
     if (!response.ok) {
-      return loadAllPlansForGradeFromLocalStorage(grade);
+      return deduplicatePlans(loadAllPlansForGradeFromLocalStorage(grade));
     }
 
     const data = await response.json();
@@ -75,12 +76,12 @@ export async function loadAllPlansForGrade(grade: string): Promise<UnitPlan[]> {
           allPlans.push(...planData.plans);
         }
       });
-      if (allPlans.length > 0) return allPlans;
+      if (allPlans.length > 0) return deduplicatePlans(allPlans);
     }
     
-    return loadAllPlansForGradeFromLocalStorage(grade);
+    return deduplicatePlans(loadAllPlansForGradeFromLocalStorage(grade));
   } catch (error) {
-    return loadAllPlansForGradeFromLocalStorage(grade);
+    return deduplicatePlans(loadAllPlansForGradeFromLocalStorage(grade));
   }
 }
 
@@ -96,6 +97,7 @@ export async function savePlansToDatabase(
     // Valider les paramètres avant l'appel API
     const cleanSubject = subject.trim();
     const cleanGrade = grade.trim();
+    const cleanPlans = deduplicatePlans(plans);
     
     if (!cleanSubject || !cleanGrade || cleanSubject.startsWith('_') || /^[_\s]+$/.test(cleanSubject)) {
       console.error(`❌ Paramètres invalides pour la sauvegarde: subject="${cleanSubject}", grade="${cleanGrade}"`);
@@ -110,7 +112,7 @@ export async function savePlansToDatabase(
       body: JSON.stringify({
         subject: cleanSubject,
         grade: cleanGrade,
-        plans
+        plans: cleanPlans
       })
     });
 
@@ -122,7 +124,7 @@ export async function savePlansToDatabase(
     console.log('✅ Planifications sauvegardées dans MongoDB:', result);
     
     // Sauvegarder aussi dans localStorage comme backup
-    savePlansToLocalStorage(subject, grade, plans);
+    savePlansToLocalStorage(subject, grade, cleanPlans);
     
     return true;
   } catch (error) {
@@ -130,7 +132,7 @@ export async function savePlansToDatabase(
     
     // Fallback vers localStorage si l'API échoue
     console.warn('Sauvegarde dans localStorage comme fallback');
-    savePlansToLocalStorage(subject, grade, plans);
+    savePlansToLocalStorage(subject, grade, deduplicatePlans(plans));
     
     return false;
   }
@@ -257,7 +259,7 @@ function loadPlansFromLocalStorage(subject: string, grade: string): UnitPlan[] {
   const allPlanifications = loadSharedPlanifications();
   const key = getPlanningKey(subject, grade);
   if (allPlanifications[key] && Array.isArray(allPlanifications[key]) && allPlanifications[key].length > 0) {
-    return allPlanifications[key];
+    return deduplicatePlans(allPlanifications[key]);
   }
   // Also check individual local storage key
   try {
@@ -266,10 +268,11 @@ function loadPlansFromLocalStorage(subject: string, grade: string): UnitPlan[] {
     if (directData) {
       const parsed = JSON.parse(directData);
       if (Array.isArray(parsed) && parsed.length > 0) {
+        const clean = deduplicatePlans(parsed);
         // Sync to shared
-        allPlanifications[key] = parsed;
+        allPlanifications[key] = clean;
         saveSharedPlanifications(allPlanifications);
-        return parsed;
+        return clean;
       }
     }
   } catch (_) {}
@@ -277,13 +280,14 @@ function loadPlansFromLocalStorage(subject: string, grade: string): UnitPlan[] {
 }
 
 function savePlansToLocalStorage(subject: string, grade: string, plans: UnitPlan[]): void {
+  const cleanPlans = deduplicatePlans(plans);
   const allPlanifications = loadSharedPlanifications();
   const key = getPlanningKey(subject, grade);
-  allPlanifications[key] = plans;
+  allPlanifications[key] = cleanPlans;
   saveSharedPlanifications(allPlanifications);
   try {
     const directKey = `plans_${subject}_${grade}`;
-    localStorage.setItem(directKey, JSON.stringify(plans));
+    localStorage.setItem(directKey, JSON.stringify(cleanPlans));
   } catch (_) {}
 }
 
@@ -301,7 +305,7 @@ function loadAllPlansForGradeFromLocalStorage(grade: string): UnitPlan[] {
     }
   });
   
-  return allPlans;
+  return deduplicatePlans(allPlans);
 }
 
 // ===== MIGRATION AUTOMATIQUE localStorage → MongoDB =====

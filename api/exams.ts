@@ -75,9 +75,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json(filtered);
       }
       if (req.method === 'POST') {
-        const exam = { ...req.body, id: req.body.id || `exam_${Date.now()}`, createdAt: new Date(), updatedAt: new Date() };
-        inMemoryExams.unshift(exam);
-        return res.status(201).json({ success: true, id: exam.id, exam });
+        const exam = { ...req.body, id: req.body.id || `exam_${Date.now()}`, createdAt: req.body.createdAt || new Date(), updatedAt: new Date() };
+        const existingIdx = inMemoryExams.findIndex(e => (e.id && e.id === exam.id) || (e.subject === exam.subject && e.grade === exam.grade && e.semester === exam.semester && e.title?.toLowerCase() === exam.title?.toLowerCase()));
+        if (existingIdx !== -1) {
+          inMemoryExams[existingIdx] = exam;
+        } else {
+          inMemoryExams.unshift(exam);
+        }
+        return res.status(200).json({ success: true, id: exam.id, exam });
       }
       if (req.method === 'DELETE') {
         const { id } = req.query;
@@ -109,7 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json(exams);
     }
 
-    // POST: Sauvegarder un nouvel examen
+    // POST: Sauvegarder un nouvel examen ou mettre à jour un existant (remplacement sans doublon)
     if (req.method === 'POST') {
       const exam = req.body;
 
@@ -119,14 +124,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      exam.createdAt = new Date();
       exam.updatedAt = new Date();
+      if (!exam.createdAt) {
+        exam.createdAt = new Date();
+      }
 
-      const result = await collection.insertOne(exam);
+      const query: any = {};
+      if (exam.id) {
+        query.$or = [
+          { id: exam.id },
+          { _id: exam.id },
+          { subject: exam.subject, grade: exam.grade, semester: exam.semester, title: exam.title }
+        ];
+      } else {
+        query.subject = exam.subject;
+        query.grade = exam.grade;
+        query.semester = exam.semester;
+        query.title = exam.title;
+      }
 
-      return res.status(201).json({
+      const result = await collection.updateOne(
+        query,
+        { $set: exam },
+        { upsert: true }
+      );
+
+      return res.status(200).json({
         success: true,
-        id: result.insertedId,
+        id: exam.id || result.upsertedId,
         exam
       });
     }

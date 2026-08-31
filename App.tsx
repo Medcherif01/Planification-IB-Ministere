@@ -7,6 +7,7 @@ import HomeScreen from './components/HomeScreen';
 import ExamsWizard from './components/ExamsWizard';
 import { sanitizeUnitPlan } from './services/geminiService';
 import { loadPlansFromDatabase, savePlansToDatabase, migrateLocalStorageToMongoDB, needsMigration, cleanupInvalidLocalStorageKeys } from './services/databaseService';
+import { mergePlansWithReplacement, deduplicatePlans } from './services/excelBackupService';
 import { getCurrentUser, setCurrentUser, type AppUser } from './services/authService';
 
 // ─── Initialisation synchrone depuis localStorage ───────────────────────────
@@ -236,11 +237,7 @@ const App: React.FC = () => {
       subject: plan.subject || session?.subject || '',
       gradeLevel: plan.gradeLevel || session?.grade || '',
     };
-    if (editingPlan && editingPlan.id) {
-      setCurrentPlans(prev => prev.map(p => (p.id === planToSave.id ? planToSave : p)));
-    } else {
-      setCurrentPlans(prev => [planToSave, ...prev]);
-    }
+    setCurrentPlans(prev => mergePlansWithReplacement(prev, [planToSave]));
     setView(AppView.DASHBOARD);
     localStorage.setItem('currentView', AppView.DASHBOARD);
   };
@@ -260,7 +257,7 @@ const App: React.FC = () => {
       subject: session.subject,
       gradeLevel: session.grade,
     }));
-    setCurrentPlans(signedPlans);
+    setCurrentPlans(deduplicatePlans(signedPlans));
     alert(
       `✅ Planification enregistrée pour ${session.subject} - ${session.grade}\n\n` +
       `${signedPlans.length} unités créées.`
@@ -270,13 +267,13 @@ const App: React.FC = () => {
   const handleAddSingleUnit = (plan: UnitPlan) => {
     if (!session) return;
     const signed = { ...plan, subject: session.subject, gradeLevel: session.grade };
-    setCurrentPlans(prev => [...prev, signed]);
+    setCurrentPlans(prev => mergePlansWithReplacement(prev, [signed]));
   };
 
   const handleUpdateUnit = (plan: UnitPlan) => {
     if (!session) return;
     const signed = { ...plan, subject: session.subject, gradeLevel: session.grade };
-    setCurrentPlans(prev => prev.map(p => p.id === signed.id ? signed : p));
+    setCurrentPlans(prev => mergePlansWithReplacement(prev, [signed]));
   };
 
   const handleCancel = () => {

@@ -159,6 +159,215 @@ const sanitizeRowForExcel = (row: Record<string, any>): Record<string, any> => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// COMPARAISON & DÉDOUBLONNAGE INTELLIGENT (REMPLACEMENT SANS DOUBLONS)
+// ─────────────────────────────────────────────────────────────────────────────
+export const normalizeTextForComparison = (str: string | undefined | null): string => {
+  if (!str) return '';
+  return String(str)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // retirer accents
+    .replace(/[^a-z0-9]/g, '') // garder uniquement lettres et chiffres
+    .trim();
+};
+
+export const extractUnitNumber = (title: string | undefined | null): string | null => {
+  if (!title) return null;
+  const match = title.match(/unit[eé]?\s*(\d+)/i);
+  return match ? match[1] : null;
+};
+
+/**
+ * Détermine si deux plans d'unité représentent la même unité pédagogique.
+ */
+export const isSameUnitPlan = (a: UnitPlan, b: UnitPlan): boolean => {
+  if (!a || !b) return false;
+
+  // 1. Même identifiant strict
+  if (a.id && b.id && String(a.id).trim() === String(b.id).trim()) return true;
+
+  const subjA = normalizeSubject(a.subject);
+  const subjB = normalizeSubject(b.subject);
+  const gradeA = normalizeGrade(a.gradeLevel);
+  const gradeB = normalizeGrade(b.gradeLevel);
+
+  // Doivent appartenir à la même matière et au même niveau
+  if (subjA !== subjB || gradeA !== gradeB) {
+    return false;
+  }
+
+  // 2. Titre normalisé identique
+  const normTitleA = normalizeTextForComparison(a.title);
+  const normTitleB = normalizeTextForComparison(b.title);
+  if (normTitleA && normTitleB && normTitleA === normTitleB) {
+    return true;
+  }
+
+  // 3. Même numéro d'unité (ex: "Unité 1 : ..." vs "Unité 1 - ...")
+  const numA = extractUnitNumber(a.title);
+  const numB = extractUnitNumber(b.title);
+  if (numA && numB && numA === numB) {
+    return true;
+  }
+
+  // 4. Énoncé de recherche significatif identique
+  const soiA = normalizeTextForComparison(a.statementOfInquiry);
+  const soiB = normalizeTextForComparison(b.statementOfInquiry);
+  if (soiA && soiB && soiA.length > 15 && soiA === soiB) {
+    return true;
+  }
+
+  // 5. Chapitres / Notions clés identiques
+  const chapA = normalizeTextForComparison(a.chapters || a.content);
+  const chapB = normalizeTextForComparison(b.chapters || b.content);
+  if (chapA && chapB && chapA.length > 20 && chapA === chapB) {
+    return true;
+  }
+
+  return false;
+};
+
+/**
+ * Fusionne une liste entrante dans une liste existante en REMPLAÇANT
+ * les unités identiques au lieu de créer des doublons.
+ */
+export const mergePlansWithReplacement = (
+  existingList: UnitPlan[],
+  incomingList: UnitPlan[]
+): UnitPlan[] => {
+  const result: UnitPlan[] = [...existingList];
+
+  for (const incoming of incomingList) {
+    if (!incoming) continue;
+    const matchIdx = result.findIndex(existing => isSameUnitPlan(existing, incoming));
+
+    if (matchIdx !== -1) {
+      // Remplacer l'élément existant par les nouvelles informations tout en conservant l'ID stable
+      const existingId = result[matchIdx].id;
+      result[matchIdx] = {
+        ...incoming,
+        id: existingId || incoming.id,
+      };
+    } else {
+      result.push(incoming);
+    }
+  }
+
+  return result;
+};
+
+/**
+ * Dédoublonne un tableau de plans en remplaçant les doublons
+ */
+export const deduplicatePlans = (plans: UnitPlan[]): UnitPlan[] => {
+  return mergePlansWithReplacement([], plans);
+};
+
+// ─── Dédoublonnage Interdisciplinaire ───────────────────────────────────────
+export const isSameInterdisciplinary = (a: any, b: any): boolean => {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  const gradeA = normalizeGrade(a.grade);
+  const gradeB = normalizeGrade(b.grade);
+  if (gradeA !== gradeB) return false;
+  const titleA = normalizeTextForComparison(a.title || a.themeTitle);
+  const titleB = normalizeTextForComparison(b.title || b.themeTitle);
+  return Boolean(titleA && titleB && titleA === titleB);
+};
+
+export const mergeInterWithReplacement = (existingList: any[], incomingList: any[]): any[] => {
+  const result = [...existingList];
+  for (const incoming of incomingList) {
+    if (!incoming) continue;
+    const matchIdx = result.findIndex(e => isSameInterdisciplinary(e, incoming));
+    if (matchIdx !== -1) {
+      result[matchIdx] = { ...incoming, id: result[matchIdx].id || incoming.id };
+    } else {
+      result.push(incoming);
+    }
+  }
+  return result;
+};
+
+// ─── Dédoublonnage Service et Action (SEA) ──────────────────────────────────
+export const isSameSEA = (a: any, b: any): boolean => {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  const gradeA = normalizeGrade(a.grade);
+  const gradeB = normalizeGrade(b.grade);
+  if (gradeA !== gradeB) return false;
+  const titleA = normalizeTextForComparison(a.projectTitle || a.title);
+  const titleB = normalizeTextForComparison(b.projectTitle || b.title);
+  return Boolean(titleA && titleB && titleA === titleB);
+};
+
+export const mergeSEAWithReplacement = (existingList: any[], incomingList: any[]): any[] => {
+  const result = [...existingList];
+  for (const incoming of incomingList) {
+    if (!incoming) continue;
+    const matchIdx = result.findIndex(e => isSameSEA(e, incoming));
+    if (matchIdx !== -1) {
+      result[matchIdx] = { ...incoming, id: result[matchIdx].id || incoming.id };
+    } else {
+      result.push(incoming);
+    }
+  }
+  return result;
+};
+
+// ─── Dédoublonnage Enseignants / Utilisateurs ───────────────────────────────
+export const isSameUser = (a: any, b: any): boolean => {
+  if (!a || !b) return false;
+  const userA = normalizeTextForComparison(a.username);
+  const userB = normalizeTextForComparison(b.username);
+  if (userA && userB && userA === userB) return true;
+  const dispA = normalizeTextForComparison(a.displayName);
+  const dispB = normalizeTextForComparison(b.displayName);
+  return Boolean(dispA && dispB && dispA === dispB);
+};
+
+export const mergeUsersWithReplacement = (existingList: any[], incomingList: any[]): any[] => {
+  const result = [...existingList];
+  for (const incoming of incomingList) {
+    if (!incoming) continue;
+    const matchIdx = result.findIndex(e => isSameUser(e, incoming));
+    if (matchIdx !== -1) {
+      result[matchIdx] = { ...incoming, id: result[matchIdx].id || incoming.id };
+    } else {
+      result.push(incoming);
+    }
+  }
+  return result;
+};
+
+// ─── Dédoublonnage Examens ──────────────────────────────────────────────────
+export const isSameExam = (a: any, b: any): boolean => {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  const gradeA = normalizeGrade(a.grade);
+  const gradeB = normalizeGrade(b.grade);
+  const subjA = normalizeSubject(a.subject);
+  const subjB = normalizeSubject(b.subject);
+  if (gradeA !== gradeB || subjA !== subjB) return false;
+  const titleA = normalizeTextForComparison(a.title);
+  const titleB = normalizeTextForComparison(b.title);
+  return Boolean(titleA && titleB && titleA === titleB);
+};
+
+export const mergeExamsWithReplacement = (existingList: any[], incomingList: any[]): any[] => {
+  const result = [...existingList];
+  for (const incoming of incomingList) {
+    if (!incoming) continue;
+    const matchIdx = result.findIndex(e => isSameExam(e, incoming));
+    if (matchIdx !== -1) {
+      result[matchIdx] = { ...incoming, id: result[matchIdx].id || incoming.id };
+    } else {
+      result.push(incoming);
+    }
+  }
+  return result;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORT COMPLET EN EXCEL (.XLSX) MULTI-FEUILLES
 // ─────────────────────────────────────────────────────────────────────────────
 export const exportAllDataToExcel = async (
@@ -168,7 +377,7 @@ export const exportAllDataToExcel = async (
 
   const allUnitsMap = new Map<string, UnitPlan>();
 
-  // a) Charger depuis l'API MongoDB
+    // a) Charger depuis l'API MongoDB
   for (const grade of PEI_GRADES) {
     try {
       const gradePlans = await loadAllPlansForGrade(grade);
@@ -226,30 +435,32 @@ export const exportAllDataToExcel = async (
     }
   }
 
-  const allUnits = Array.from(allUnitsMap.values());
+  // Dédoublonner et unifier strictement toutes les unités
+  const allUnits = deduplicatePlans(Array.from(allUnitsMap.values()));
   onProgress?.('Collecte des unités interdisciplinaires et SEA...', 35);
 
   let allInter: InterdisciplinaryUnit[] = [];
   try {
     const rawInter = localStorage.getItem('interdisciplinary_units');
-    if (rawInter) allInter = JSON.parse(rawInter);
+    if (rawInter) allInter = mergeInterWithReplacement([], JSON.parse(rawInter));
   } catch (_) {}
 
   let allSEA: ServiceActionPlan[] = [];
   try {
     const rawSEA = localStorage.getItem('sea_plans');
-    if (rawSEA) allSEA = JSON.parse(rawSEA);
+    if (rawSEA) allSEA = mergeSEAWithReplacement([], JSON.parse(rawSEA));
   } catch (_) {}
 
   onProgress?.('Collecte des utilisateurs, examens et critères...', 60);
 
   let allUsers: AppUser[] = [];
   try {
-    allUsers = await listUsers();
+    const fetchedUsers = await listUsers();
+    allUsers = mergeUsersWithReplacement([], fetchedUsers);
   } catch (_) {
     try {
       const rawUsers = localStorage.getItem('app_users');
-      if (rawUsers) allUsers = JSON.parse(rawUsers);
+      if (rawUsers) allUsers = mergeUsersWithReplacement([], JSON.parse(rawUsers));
     } catch (_) {}
   }
 
@@ -268,11 +479,12 @@ export const exportAllDataToExcel = async (
 
   let allExams: Exam[] = [];
   try {
-    allExams = await loadExamsFromDatabase();
+    const fetchedExams = await loadExamsFromDatabase();
+    allExams = mergeExamsWithReplacement([], fetchedExams);
   } catch (_) {
     try {
       const rawExams = localStorage.getItem('saved_exams');
-      if (rawExams) allExams = JSON.parse(rawExams);
+      if (rawExams) allExams = mergeExamsWithReplacement([], JSON.parse(rawExams));
     } catch (_) {}
   }
 
@@ -722,13 +934,8 @@ export const importAllDataFromExcel = async (
               plans: [],
             };
           }
-          // Éviter les doublons stricts par id ou titre dans le même groupe
-          const existingIdx = groupedPlans[groupKey].plans.findIndex(p => p.id === plan?.id || (p.title && p.title.toLowerCase() === plan?.title?.toLowerCase()));
-          if (existingIdx !== -1) {
-            groupedPlans[groupKey].plans[existingIdx] = plan;
-          } else {
-            groupedPlans[groupKey].plans.push(plan);
-          }
+          // Remplacer l'unité si elle existe déjà dans le groupe importé (dédoublonnage intelligent)
+          groupedPlans[groupKey].plans = mergePlansWithReplacement(groupedPlans[groupKey].plans, [plan]);
           stats.units++;
         }
       }
@@ -747,17 +954,9 @@ export const importAllDataFromExcel = async (
     for (const groupKey of Object.keys(groupedPlans)) {
       const { subject, grade, plans } = groupedPlans[groupKey];
       
-      // Fusionner avec les plans existants
+      // Remplacer/mettre à jour les plans existants sans créer de doublons
       const existingLocalPlans = sharedPlans[groupKey] || [];
-      const mergedPlansMap = new Map<string, UnitPlan>();
-      
-      for (const p of existingLocalPlans) {
-        if (p.id) mergedPlansMap.set(p.id, p);
-      }
-      for (const p of plans) {
-        mergedPlansMap.set(p.id, p);
-      }
-      const finalPlansList = Array.from(mergedPlansMap.values());
+      const finalPlansList = mergePlansWithReplacement(existingLocalPlans, plans);
 
       // 1. Sauvegarder dans myp_shared_planifications (source de vérité localStorage)
       sharedPlans[groupKey] = finalPlansList;
@@ -831,7 +1030,7 @@ export const importAllDataFromExcel = async (
       if (restoredInter.length > 0) {
         try {
           const existing: InterdisciplinaryUnit[] = JSON.parse(localStorage.getItem('interdisciplinary_units') || '[]');
-          const merged = [...existing.filter(e => !restoredInter.some(r => r.id === e.id)), ...restoredInter];
+          const merged = mergeInterWithReplacement(existing, restoredInter);
           localStorage.setItem('interdisciplinary_units', JSON.stringify(merged));
         } catch (_) {}
       }
@@ -882,7 +1081,7 @@ export const importAllDataFromExcel = async (
       if (restoredSEA.length > 0) {
         try {
           const existing: ServiceActionPlan[] = JSON.parse(localStorage.getItem('sea_plans') || '[]');
-          const merged = [...existing.filter(e => !restoredSEA.some(r => r.id === e.id)), ...restoredSEA];
+          const merged = mergeSEAWithReplacement(existing, restoredSEA);
           localStorage.setItem('sea_plans', JSON.stringify(merged));
         } catch (_) {}
       }
@@ -946,7 +1145,7 @@ export const importAllDataFromExcel = async (
       if (restoredUsers.length > 0) {
         try {
           const existing: AppUser[] = JSON.parse(localStorage.getItem('app_users') || '[]');
-          const merged = [...existing.filter(e => !restoredUsers.some(r => r.username === e.username)), ...restoredUsers];
+          const merged = mergeUsersWithReplacement(existing, restoredUsers);
           localStorage.setItem('app_users', JSON.stringify(merged));
         } catch (_) {}
       }
@@ -1003,7 +1202,7 @@ export const importAllDataFromExcel = async (
       if (restoredExams.length > 0) {
         try {
           const existing: Exam[] = JSON.parse(localStorage.getItem('saved_exams') || '[]');
-          const merged = [...existing.filter(e => !restoredExams.some(r => r.id === e.id)), ...restoredExams];
+          const merged = mergeExamsWithReplacement(existing, restoredExams);
           localStorage.setItem('saved_exams', JSON.stringify(merged));
         } catch (_) {}
       }
