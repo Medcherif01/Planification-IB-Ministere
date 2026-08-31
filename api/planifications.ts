@@ -305,13 +305,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // DELETE: Supprimer une planification
+    // DELETE: Supprimer une planification ou toutes les planifications
     if (req.method === 'DELETE') {
-      const { subject, grade } = req.query;
+      const { subject, grade, all } = req.query;
+
+      if (all === 'true') {
+        const result = await collection.deleteMany({});
+        return res.status(200).json({
+          success: true,
+          deleted: result.deletedCount,
+          message: 'Toutes les planifications ont été réinitialisées'
+        });
+      }
 
       if (!subject || !grade) {
         return res.status(400).json({ 
-          error: 'Les paramètres subject et grade sont requis' 
+          error: 'Les paramètres subject et grade sont requis (ou all=true)' 
         });
       }
 

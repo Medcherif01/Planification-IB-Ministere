@@ -942,32 +942,52 @@ export const importAllDataFromExcel = async (
     }
 
     // ── Enregistrer les unités vers MongoDB ET tous les caches localStorage ──
-    onProgress?.('Enregistrement des unités dans la base de données...', 50);
+    onProgress?.('Nettoyage et réinitialisation des anciennes planifications...', 45);
 
-    // Charger les planifications partagées existantes
-    let sharedPlans: Record<string, UnitPlan[]> = {};
+    // 1. Réinitialiser la collection MongoDB pour repartir sur une base propre conforme au fichier Excel
     try {
-      const rawShared = localStorage.getItem('myp_shared_planifications');
-      if (rawShared) sharedPlans = JSON.parse(rawShared);
+      await fetch('/api/planifications?all=true', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': 'admin',
+        },
+      });
+    } catch (err) {
+      console.warn('Note: Réinitialisation MongoDB avant import:', err);
+    }
+
+    // 2. Nettoyer les anciens caches individuels localStorage (plans_*)
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('plans_')) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
     } catch (_) {}
+
+    // 3. Préparer le nouveau dictionnaire de planifications partagées
+    const newSharedPlans: Record<string, UnitPlan[]> = {};
+    let totalRestoredUnits = 0;
 
     for (const groupKey of Object.keys(groupedPlans)) {
       const { subject, grade, plans } = groupedPlans[groupKey];
-      
-      // Remplacer/mettre à jour les plans existants sans créer de doublons
-      const existingLocalPlans = sharedPlans[groupKey] || [];
-      const finalPlansList = mergePlansWithReplacement(existingLocalPlans, plans);
+      const finalPlansList = deduplicatePlans(plans);
+      totalRestoredUnits += finalPlansList.length;
 
-      // 1. Sauvegarder dans myp_shared_planifications (source de vérité localStorage)
-      sharedPlans[groupKey] = finalPlansList;
+      // a. Sauvegarder dans newSharedPlans
+      newSharedPlans[groupKey] = finalPlansList;
 
-      // 2. Sauvegarder dans plans_${subject}_${grade} (cache individuel)
+      // b. Sauvegarder dans plans_${subject}_${grade} (cache individuel)
       try {
         const localKey = `plans_${subject}_${grade}`;
         localStorage.setItem(localKey, JSON.stringify(finalPlansList));
       } catch (_) {}
 
-      // 3. Sauvegarder dans MongoDB via API
+      // c. Sauvegarder dans MongoDB via API
       try {
         await fetch('/api/planifications', {
           method: 'POST',
@@ -983,8 +1003,10 @@ export const importAllDataFromExcel = async (
       }
     }
 
+    stats.units = totalRestoredUnits;
+
     try {
-      localStorage.setItem('myp_shared_planifications', JSON.stringify(sharedPlans));
+      localStorage.setItem('myp_shared_planifications', JSON.stringify(newSharedPlans));
     } catch (_) {}
 
     // ── 2. RESTAURER LES UNITÉS INTERDISCIPLINAIRES ──────────────────────────
@@ -1029,9 +1051,7 @@ export const importAllDataFromExcel = async (
 
       if (restoredInter.length > 0) {
         try {
-          const existing: InterdisciplinaryUnit[] = JSON.parse(localStorage.getItem('interdisciplinary_units') || '[]');
-          const merged = mergeInterWithReplacement(existing, restoredInter);
-          localStorage.setItem('interdisciplinary_units', JSON.stringify(merged));
+          localStorage.setItem('interdisciplinary_units', JSON.stringify(restoredInter));
         } catch (_) {}
       }
     }
@@ -1080,9 +1100,7 @@ export const importAllDataFromExcel = async (
 
       if (restoredSEA.length > 0) {
         try {
-          const existing: ServiceActionPlan[] = JSON.parse(localStorage.getItem('sea_plans') || '[]');
-          const merged = mergeSEAWithReplacement(existing, restoredSEA);
-          localStorage.setItem('sea_plans', JSON.stringify(merged));
+          localStorage.setItem('sea_plans', JSON.stringify(restoredSEA));
         } catch (_) {}
       }
     }
@@ -1201,9 +1219,7 @@ export const importAllDataFromExcel = async (
 
       if (restoredExams.length > 0) {
         try {
-          const existing: Exam[] = JSON.parse(localStorage.getItem('saved_exams') || '[]');
-          const merged = mergeExamsWithReplacement(existing, restoredExams);
-          localStorage.setItem('saved_exams', JSON.stringify(merged));
+          localStorage.setItem('saved_exams', JSON.stringify(restoredExams));
         } catch (_) {}
       }
     }
