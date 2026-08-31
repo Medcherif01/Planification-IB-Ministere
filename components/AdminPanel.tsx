@@ -11,7 +11,12 @@ import {
   type AppUser, type ModificationRequest
 } from '../services/authService';
 import { SUBJECTS } from '../constants';
-import { downloadCompleteExcelBackup, importAllDataFromExcel } from '../services/excelBackupService';
+import {
+  downloadCompleteExcelBackup,
+  downloadCompleteCSVBackup,
+  importAllDataFromExcel,
+  importAllDataFromCSV
+} from '../services/excelBackupService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -192,7 +197,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     errors: string[];
   } | null>(null);
 
-  // ── Export Excel state ─────────────────────────────────────────────────────
+  // ── Export state ───────────────────────────────────────────────────────────
   const [exportLoading, setExportLoading] = useState(false);
   const [exportProgressMsg, setExportProgressMsg] = useState('');
 
@@ -211,153 +216,89 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     }
   };
 
+  const handleExportCSVAll = async () => {
+    setExportLoading(true);
+    setExportProgressMsg('Préparation du fichier CSV...');
+    try {
+      await downloadCompleteCSVBackup((step) => {
+        setExportProgressMsg(step);
+      });
+    } catch (e: any) {
+      alert('Erreur lors de l\'exportation CSV : ' + (e.message || e));
+    } finally {
+      setExportLoading(false);
+      setExportProgressMsg('');
+    }
+  };
+
   // ── Import file handler (Excel & CSV) ──────────────────────────────────────
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (importRef.current) importRef.current.value = '';
 
-    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+    const isCsv = file.name.toLowerCase().endsWith('.csv');
+    const isExcel = file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
 
     // Confirmation
     const confirmMsg = `Vous êtes sur le point de restaurer les données depuis le fichier "${file.name}".\n\n` +
-      `Cette opération synchronisera toutes les unités, matières, classes, projets interdisciplinaires, SEA, enseignants et examens.\n\n` +
-      `L'import n'écrase pas inutilement vos données : il restaure et consolide votre base.\n\n` +
+      `Cette opération synchronisera et remplacera toutes les unités et plans correspondants pour garantir une base propre sans doublons.\n\n` +
       `Voulez-vous continuer ?`;
 
     if (!window.confirm(confirmMsg)) return;
 
     setImportStatus('loading');
-    setImportMessage('Lecture du fichier en cours...');
+    setImportMessage('Lecture et analyse du fichier en cours...');
     setImportStats(null);
     setImportProgress({ step: 'Initialisation...', percent: 5 });
 
     try {
-      if (isExcel) {
-        // Restauration complète depuis Excel (.xlsx)
-        const result = await importAllDataFromExcel(file, (step, percent) => {
+      let result;
+      if (isCsv) {
+        // Restauration complète depuis CSV (.csv)
+        result = await importAllDataFromCSV(file, (step, percent) => {
           setImportMessage(step);
           setImportProgress({ step, percent });
         });
+      } else if (isExcel) {
+        // Restauration complète depuis Excel (.xlsx)
+        result = await importAllDataFromExcel(file, (step, percent) => {
+          setImportMessage(step);
+          setImportProgress({ step, percent });
+        });
+      } else {
+        throw new Error('Format de fichier non pris en charge. Veuillez sélectionner un fichier .xlsx ou .csv.');
+      }
 
-        if (result.success) {
-          setImportStatus('success');
-          setImportMessage(result.message);
+      if (result.success) {
+        setImportStatus('success');
+        setImportMessage(result.message);
+        setImportStats({
+          units: result.stats.units,
+          interdisciplinary: result.stats.interdisciplinary,
+          sea: result.stats.sea,
+          users: result.stats.users,
+          exams: result.stats.exams,
+          criteria: result.stats.criteria,
+          calendars: result.stats.calendars,
+          errors: result.stats.errors,
+        });
+        if (onImportCSV) onImportCSV(file);
+        await loadUsers();
+        await loadRequests();
+      } else {
+        setImportStatus('error');
+        setImportMessage(result.message);
+        if (result.stats?.errors?.length) {
           setImportStats({
-            units: result.stats.units,
-            interdisciplinary: result.stats.interdisciplinary,
-            sea: result.stats.sea,
-            users: result.stats.users,
-            exams: result.stats.exams,
-            criteria: result.stats.criteria,
-            calendars: result.stats.calendars,
+            units: result.stats.units || 0,
+            interdisciplinary: result.stats.interdisciplinary || 0,
+            sea: result.stats.sea || 0,
+            users: result.stats.users || 0,
+            exams: result.stats.exams || 0,
             errors: result.stats.errors,
           });
-          if (onImportCSV) onImportCSV(file);
-          await loadUsers();
-          await loadRequests();
-        } else {
-          setImportStatus('error');
-          setImportMessage(result.message);
         }
-      } else {
-        // Import CSV Fallback
-        const text = await file.text();
-        const cleanText = text.replace(/^\uFEFF/, '');
-        const lines = cleanText.split('\n').filter(l => l.trim());
-
-        if (lines.length < 2) {
-          throw new Error('Fichier CSV vide ou invalide (au moins 1 ligne d\'entête + 1 ligne de données requises)');
-        }
-
-        const parseCSVLine = (line: string): string[] => {
-          const result: string[] = [];
-          let current = '';
-          let inQuotes = false;
-          for (let i = 0; i < line.length; i++) {
-            const ch = line[i];
-            if (ch === '"') {
-              if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-              else inQuotes = !inQuotes;
-            } else if (ch === ',' && !inQuotes) {
-              result.push(current); current = '';
-            } else {
-              current += ch;
-            }
-          }
-          result.push(current);
-          return result;
-        };
-
-        const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase()
-          .replace(/é/g, 'e').replace(/è/g, 'e').replace(/ê/g, 'e')
-          .replace(/à/g, 'a').replace(/â/g, 'a')
-          .replace(/ô/g, 'o').replace(/î/g, 'i').replace(/ù/g, 'u')
-          .replace(/ç/g, 'c').replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''));
-
-        let imported = 0;
-        let skipped = 0;
-        let errors = 0;
-
-        for (let i = 1; i < lines.length; i++) {
-          const values = parseCSVLine(lines[i]);
-          if (values.length < 3) { errors++; continue; }
-
-          const planData: Record<string, string> = {};
-          headers.forEach((h, idx) => { planData[h] = values[idx] || ''; });
-
-          const title = planData['titre'] || planData['title'] || values[0] || '';
-          const subject = planData['matiere'] || planData['subject'] || values[1] || '';
-          const gradeLevel = planData['niveau'] || planData['grade'] || planData['gradelevel'] || values[2] || '';
-
-          if (!title || !subject || !gradeLevel) { skipped++; continue; }
-
-          try {
-            const response = await fetch('/api/planifications', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-User-Role': 'admin',
-                'X-Import-Mode': 'restore',
-              },
-              body: JSON.stringify({
-                subject,
-                grade: gradeLevel,
-                plans: [{
-                  id: `import_${Date.now()}_${i}`,
-                  title,
-                  subject,
-                  gradeLevel,
-                  teacherName: planData['enseignant'] || planData['teacher'] || '',
-                  duration: planData['duree'] || planData['duration'] || '',
-                  keyConcept: planData['concept_cle'] || planData['keyconcept'] || '',
-                  globalContext: planData['contexte_mondial'] || planData['globalcontext'] || '',
-                  statementOfInquiry: planData['enonce_de_recherche'] || planData['statementofinquiry'] || '',
-                  objectives: (planData['objectifs'] || planData['objectives'] || '').split(';').map(s => s.trim()).filter(Boolean),
-                  atlSkills: (planData['atl'] || planData['atlskills'] || '').split(';').map(s => s.trim()).filter(Boolean),
-                  content: planData['contenu'] || planData['content'] || '',
-                  formativeAssessment: planData['evaluation_formative'] || planData['formativeassessment'] || '',
-                  summativeAssessment: planData['evaluation_sommative'] || planData['summativeassessment'] || '',
-                  resources: planData['ressources'] || planData['resources'] || '',
-                }],
-              }),
-            });
-            if (response.ok) { imported++; }
-            else { errors++; }
-          } catch { errors++; }
-        }
-
-        setImportStats({
-          units: imported,
-          interdisciplinary: 0,
-          sea: 0,
-          users: 0,
-          exams: 0,
-          errors: errors > 0 ? [`${errors} ligne(s) non importée(s)`] : [],
-        });
-        setImportStatus('success');
-        setImportMessage(`Import CSV terminé : ${imported} unité(s) importée(s), ${skipped} ignorée(s), ${errors} erreur(s).`);
-        if (onImportCSV) onImportCSV(file);
       }
     } catch (e: any) {
       setImportStatus('error');
@@ -699,7 +640,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
                     <button
                       onClick={handleExportExcelAll}
                       disabled={exportLoading}
@@ -711,9 +652,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                         </>
                       ) : (
                         <>
-                          <Download size={16} /> Télécharger la sauvegarde complète (Excel)
+                          <Download size={16} /> Sauvegarde Complète (Excel .xlsx)
                         </>
                       )}
+                    </button>
+
+                    <button
+                      onClick={handleExportCSVAll}
+                      disabled={exportLoading}
+                      className="flex items-center gap-2 px-5 py-3 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition"
+                      title="Sauvegarde complète au format standard CSV (UTF-8 avec BOM)"
+                    >
+                      <Download size={16} /> Sauvegarde Complète (CSV .csv)
                     </button>
 
                     {onExportCSV && (
@@ -722,7 +672,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                         className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold shadow-sm transition"
                         title="Export simple au format CSV"
                       >
-                        <FileText size={14} /> Export CSV
+                        <FileText size={14} /> Export CSV Simple
                       </button>
                     )}
                   </div>
@@ -731,10 +681,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                 {/* Import Card */}
                 <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-2xl p-6 shadow-sm">
                   <h4 className="font-bold text-indigo-900 text-base mb-1.5 flex items-center gap-2">
-                    <Upload className="text-indigo-700" size={20} /> Restauration & Import — Excel (.xlsx) / CSV
+                    <Upload className="text-indigo-700" size={20} /> Restauration & Import — Excel (.xlsx) / CSV (.csv)
                   </h4>
                   <p className="text-sm text-indigo-800 mb-3 max-w-xl">
-                    Restaurez instantanément l'ensemble de vos données depuis un fichier Excel (.xlsx) exporté précédemment. Le système réinjecte automatiquement toutes les unités, classes, enseignants et projets.
+                    Restaurez instantanément l'ensemble de vos données depuis un fichier Excel (<code>.xlsx</code>) ou CSV (<code>.csv</code>). Le système analyse automatiquement les colonnes, remplace les unités et plans sans créer de doublons, et réinjecte toutes les données dans votre base.
                   </p>
 
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-4 text-xs text-amber-900 flex items-start gap-2.5">
