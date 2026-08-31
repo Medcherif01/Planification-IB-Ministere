@@ -508,6 +508,9 @@ const sanitizeAssessmentData = (data: any): AssessmentData | undefined => {
 
 // Helper to sanitize Plan data from AI
 export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string): UnitPlan => {
+  if (!plan || typeof plan !== 'object') {
+    plan = {};
+  }
   // Ensure inquiryQuestions is always an object with arrays
   const iq = plan.inquiryQuestions || plan.questions_recherche || {};
   
@@ -522,32 +525,39 @@ export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string)
 
   // ── RÈGLE IB OBLIGATOIRE : ≥ 2 critères, ≥ 3 sous-aspects par critère ────
   assessments = enforceAssessmentsRules(assessments, subject || plan.subject || '', false, gradeLevel || plan.gradeLevel || '');
-  console.log(`✅ Critères après validation IB : ${assessments.map(a => `${a.criterion}(${a.strands.length} sous-aspects)`).join(', ')}`);
 
   return {
+    ...plan, // Preserve ALL detailed nested structures (studentContext, sessions, details, reflections, etc.)
     id: plan.id || Date.now().toString(),
     teacherName: plan.teacherName || "",
     title: plan.title || plan.titre || "Nouvelle Unité",
     subject: subject || plan.subject || plan.matiere || "",
     gradeLevel: gradeLevel || plan.gradeLevel || plan.niveau || "",
     duration: plan.duration || plan.duree || "10 heures",
+    schoolYear: plan.schoolYear || plan.annee_scolaire || "2026/2027",
+    numberOfHours: plan.numberOfHours || plan.nombre_heures || "",
+    numberOfPeriods: plan.numberOfPeriods || plan.nombre_periodes || "",
+    startDate: plan.startDate || plan.date_debut || "",
+    endDate: plan.endDate || plan.date_fin || "",
+    prerequisites: plan.prerequisites || plan.prerequis || "",
     chapters: plan.chapters || plan.chapitres || "",
     
     keyConcept: plan.keyConcept || plan.concept_cle || "",
     relatedConcepts: Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts : 
-                     Array.isArray(plan.concepts_connexes) ? plan.concepts_connexes : [],
+                     Array.isArray(plan.concepts_connexes) ? plan.concepts_connexes : 
+                     typeof plan.relatedConcepts === 'string' ? plan.relatedConcepts.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean) : [],
     
     globalContext: plan.globalContext || plan.contexte_mondial || "",
     statementOfInquiry: plan.statementOfInquiry || plan.enonce_recherche || "",
     
     inquiryQuestions: {
-      factual: Array.isArray(iq.factual) ? iq.factual : Array.isArray(iq.factuelles) ? iq.factuelles : [],
-      conceptual: Array.isArray(iq.conceptual) ? iq.conceptual : Array.isArray(iq.conceptuelles) ? iq.conceptuelles : [],
-      debatable: Array.isArray(iq.debatable) ? iq.debatable : Array.isArray(iq.debat) ? iq.debat : []
+      factual: Array.isArray(iq.factual) ? iq.factual : Array.isArray(iq.factuelles) ? iq.factuelles : typeof iq.factual === 'string' ? [iq.factual] : [],
+      conceptual: Array.isArray(iq.conceptual) ? iq.conceptual : Array.isArray(iq.conceptuelles) ? iq.conceptuelles : typeof iq.conceptual === 'string' ? [iq.conceptual] : [],
+      debatable: Array.isArray(iq.debatable) ? iq.debatable : Array.isArray(iq.debat) ? iq.debat : typeof iq.debatable === 'string' ? [iq.debatable] : []
     },
     
-    objectives: Array.isArray(plan.objectives) ? plan.objectives : Array.isArray(plan.objectifs) ? plan.objectifs : [],
-    atlSkills: Array.isArray(plan.atlSkills) ? plan.atlSkills : Array.isArray(plan.approches_apprentissage) ? plan.approches_apprentissage : [],
+    objectives: Array.isArray(plan.objectives) ? plan.objectives : Array.isArray(plan.objectifs) ? plan.objectifs : typeof plan.objectives === 'string' ? plan.objectives.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean) : [],
+    atlSkills: Array.isArray(plan.atlSkills) ? plan.atlSkills : Array.isArray(plan.approches_apprentissage) ? plan.approches_apprentissage : typeof plan.atlSkills === 'string' ? plan.atlSkills.split(/[\n;]/).map((s: string) => s.trim()).filter(Boolean) : [],
     
     // Check for content/contenu
     content: plan.content || plan.contenu || "",

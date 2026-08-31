@@ -256,7 +256,24 @@ function saveSharedPlanifications(planifications: SharedPlanifications): void {
 function loadPlansFromLocalStorage(subject: string, grade: string): UnitPlan[] {
   const allPlanifications = loadSharedPlanifications();
   const key = getPlanningKey(subject, grade);
-  return allPlanifications[key] || [];
+  if (allPlanifications[key] && Array.isArray(allPlanifications[key]) && allPlanifications[key].length > 0) {
+    return allPlanifications[key];
+  }
+  // Also check individual local storage key
+  try {
+    const directKey = `plans_${subject}_${grade}`;
+    const directData = localStorage.getItem(directKey);
+    if (directData) {
+      const parsed = JSON.parse(directData);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Sync to shared
+        allPlanifications[key] = parsed;
+        saveSharedPlanifications(allPlanifications);
+        return parsed;
+      }
+    }
+  } catch (_) {}
+  return [];
 }
 
 function savePlansToLocalStorage(subject: string, grade: string, plans: UnitPlan[]): void {
@@ -264,6 +281,10 @@ function savePlansToLocalStorage(subject: string, grade: string, plans: UnitPlan
   const key = getPlanningKey(subject, grade);
   allPlanifications[key] = plans;
   saveSharedPlanifications(allPlanifications);
+  try {
+    const directKey = `plans_${subject}_${grade}`;
+    localStorage.setItem(directKey, JSON.stringify(plans));
+  } catch (_) {}
 }
 
 function loadAllPlansForGradeFromLocalStorage(grade: string): UnitPlan[] {

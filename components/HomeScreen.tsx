@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AppMode } from '../types';
 import { SUBJECTS, PEI_GRADES } from '../constants';
 import { loadAllPlansForGrade, loadPlansFromDatabase } from '../services/databaseService';
@@ -20,12 +20,12 @@ import {
   Loader2, CheckCircle, AlertCircle, Download, RefreshCw,
   Users, Layers, Sparkles, FileText, Eye, Trash2, ChevronDown,
   ChevronUp, BookMarked, GraduationCap, FolderOpen, ExternalLink,
-  Table, Shield, Lock, Calendar, FileSpreadsheet,
+  Table, Shield, Lock, Calendar, FileSpreadsheet, Upload,
 } from 'lucide-react';
 import AdminPanel from './AdminPanel';
 import CalendarView from './CalendarView';
 import type { AppUser } from '../services/authService';
-import { downloadCompleteExcelBackup } from '../services/excelBackupService';
+import { downloadCompleteExcelBackup, importAllDataFromExcel } from '../services/excelBackupService';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface HomeScreenProps {
@@ -166,37 +166,11 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
   // Special counts per grade (for grade cards)
   const [specialCounts, setSpecialCounts] = useState<Record<string, { inter: number; sea: number }>>({});
 
-  // ── Load grade stats ──────────────────────────────────────────────────────
-  useEffect(() => {
-    const loadStats = async () => {
-      setGradeStatsLoading(true);
-      const counts: Record<string, number> = {};
-      const specials: Record<string, { inter: number; sea: number }> = {};
-
-      const rawInter = localStorage.getItem('interdisciplinary_units');
-      const rawSEA = localStorage.getItem('sea_plans');
-      const allInter: InterdisciplinaryUnit[] = rawInter ? JSON.parse(rawInter) : [];
-      const allSEA: ServiceActionPlan[] = rawSEA ? JSON.parse(rawSEA) : [];
-
-      await Promise.all(PEI_GRADES.map(async (grade) => {
-        try {
-          const plans = await loadAllPlansForGrade(grade);
-          counts[grade] = plans.length;
-        } catch {
-          counts[grade] = 0;
-        }
-        specials[grade] = {
-          inter: allInter.filter(u => u.grade === grade).length,
-          sea: allSEA.filter(s => s.grade === grade).length,
-        };
-      }));
-
-      setGradeUnitCounts(counts);
-      setSpecialCounts(specials);
-      setGradeStatsLoading(false);
-    };
-    loadStats();
-  }, []);
+  // Direct Excel import state
+  const [isImportingExcel, setIsImportingExcel] = useState(false);
+  const [importExcelMsg, setImportExcelMsg] = useState('');
+  const [importExcelPercent, setImportExcelPercent] = useState(0);
+  const excelInputRef = useRef<HTMLInputElement>(null);
 
   // ── Load subject counts when grade is selected ────────────────────────────
   const loadSubjectData = useCallback(async (grade: string) => {
@@ -223,6 +197,89 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
     setSavedInter(allInter.filter(u => u.grade === grade));
     setSavedSEA(allSEA.filter(s => s.grade === grade));
   }, []);
+
+  // ── Load grade stats ──────────────────────────────────────────────────────
+  const loadStats = useCallback(async () => {
+    setGradeStatsLoading(true);
+    const counts: Record<string, number> = {};
+    const specials: Record<string, { inter: number; sea: number }> = {};
+
+    const rawInter = localStorage.getItem('interdisciplinary_units');
+    const rawSEA = localStorage.getItem('sea_plans');
+    const allInter: InterdisciplinaryUnit[] = rawInter ? JSON.parse(rawInter) : [];
+    const allSEA: ServiceActionPlan[] = rawSEA ? JSON.parse(rawSEA) : [];
+
+    await Promise.all(PEI_GRADES.map(async (grade) => {
+      try {
+        const plans = await loadAllPlansForGrade(grade);
+        counts[grade] = plans.length;
+      } catch {
+        counts[grade] = 0;
+      }
+      specials[grade] = {
+        inter: allInter.filter(u => u.grade === grade).length,
+        sea: allSEA.filter(s => s.grade === grade).length,
+      };
+    }));
+
+    setGradeUnitCounts(counts);
+    setSpecialCounts(specials);
+    setGradeStatsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadStats();
+
+    const handleDataUpdate = () => {
+      loadStats();
+      if (selectedGrade) {
+        loadSubjectData(selectedGrade);
+      }
+    };
+
+    window.addEventListener('planifications_updated', handleDataUpdate);
+    window.addEventListener('storage', handleDataUpdate);
+
+    return () => {
+      window.removeEventListener('planifications_updated', handleDataUpdate);
+      window.removeEventListener('storage', handleDataUpdate);
+    };
+  }, [loadStats, selectedGrade, loadSubjectData]);
+
+  // ── Direct Excel Import Handler ───────────────────────────────────────────
+  const handleDirectExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (excelInputRef.current) excelInputRef.current.value = '';
+
+    const confirmMsg = `Voulez-vous importer et restaurer toutes les données depuis "${file.name}" ?\n\nToutes les planifications, matières, projets et utilisateurs seront synchronisés et affichés.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsImportingExcel(true);
+    setImportExcelMsg('Lecture du fichier Excel...');
+    setImportExcelPercent(10);
+
+    try {
+      const result = await importAllDataFromExcel(file, (step, percent) => {
+        setImportExcelMsg(step);
+        setImportExcelPercent(percent);
+      });
+
+      if (result.success) {
+        await loadStats();
+        if (selectedGrade) await loadSubjectData(selectedGrade);
+        alert(`✅ ${result.message}`);
+      } else {
+        alert(`⚠️ Erreur d'importation : ${result.message}`);
+      }
+    } catch (err: any) {
+      alert(`Erreur : ${err?.message || err}`);
+    } finally {
+      setIsImportingExcel(false);
+      setImportExcelMsg('');
+      setImportExcelPercent(0);
+    }
+  };
 
   const handleGradeSelect = (grade: string) => {
     setSelectedGrade(grade);
@@ -453,18 +510,40 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
 
             {/* Bouton Sauvegarde Excel — admin seulement */}
             {isAdmin && (
-              <button
-                onClick={handleExportAllCSV}
-                disabled={isExportingCSV}
-                title="Télécharger une sauvegarde complète de toutes les données au format Excel (.xlsx)"
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/80 hover:bg-emerald-400 disabled:opacity-60 text-white rounded-lg text-xs font-semibold transition border border-emerald-300/40 shadow-sm"
-              >
-                {isExportingCSV
-                  ? <Loader2 size={13} className="animate-spin" />
-                  : <FileSpreadsheet size={13} />
-                }
-                <span className="hidden sm:inline">{isExportingCSV ? 'Sauvegarde…' : 'Sauvegarde Excel'}</span>
-              </button>
+              <>
+                <button
+                  onClick={handleExportAllCSV}
+                  disabled={isExportingCSV}
+                  title="Télécharger une sauvegarde complète de toutes les données au format Excel (.xlsx)"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/80 hover:bg-emerald-400 disabled:opacity-60 text-white rounded-lg text-xs font-semibold transition border border-emerald-300/40 shadow-sm"
+                >
+                  {isExportingCSV
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <FileSpreadsheet size={13} />
+                  }
+                  <span className="hidden sm:inline">{isExportingCSV ? 'Sauvegarde…' : 'Sauvegarde Excel'}</span>
+                </button>
+
+                <input
+                  type="file"
+                  ref={excelInputRef}
+                  accept=".xlsx, .xls"
+                  className="hidden"
+                  onChange={handleDirectExcelImport}
+                />
+                <button
+                  onClick={() => excelInputRef.current?.click()}
+                  disabled={isImportingExcel}
+                  title="Importer et restaurer toutes les données depuis un fichier Excel (.xlsx)"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600/80 hover:bg-cyan-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold transition border border-cyan-300/40 shadow-sm"
+                >
+                  {isImportingExcel
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <Upload size={13} />
+                  }
+                  <span className="hidden sm:inline">{isImportingExcel ? 'Importation…' : 'Importer Excel'}</span>
+                </button>
+              </>
             )}
 
             {/* Bouton Admin Panel — admin seulement */}
@@ -499,6 +578,25 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-8">
+
+        {/* ══ Bandeau d'importation Excel en cours ══ */}
+        {isImportingExcel && (
+          <div className="mb-6 bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-2xl p-5 shadow-xl animate-pulse">
+            <div className="flex items-center gap-3 mb-2">
+              <Loader2 className="animate-spin text-white" size={24} />
+              <div>
+                <h3 className="font-bold text-base">Restauration et synchronisation des données Excel en cours…</h3>
+                <p className="text-xs text-blue-100">{importExcelMsg || 'Traitement des feuilles et des cellules…'}</p>
+              </div>
+            </div>
+            <div className="w-full bg-white/20 rounded-full h-2.5 mt-3 overflow-hidden">
+              <div
+                className="bg-cyan-300 h-2.5 rounded-full transition-all duration-300"
+                style={{ width: `${Math.max(5, importExcelPercent)}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* ══ Bandeau enseignant ══ */}
         {!isAdmin && currentUser && (
