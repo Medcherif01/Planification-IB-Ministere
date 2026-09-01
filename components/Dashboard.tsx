@@ -13,6 +13,7 @@ import IbCriteriaEditor from './IbCriteriaEditor';
 import HoursCalculatorModal from './HoursCalculatorModal';
 import AssessmentViewerModal from './AssessmentViewerModal';
 import UnitPlanFormImport from './UnitPlanForm';
+import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 
 interface DashboardProps {
   currentSubject: string;
@@ -1822,22 +1823,8 @@ Chapitre 4 : Algèbre et équations
                                 </div>
                             )}
                             
-                            {/* Affichage des chapitres inclus */}
-                            {plan.chapters && (
-                                <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
-                                    <p className="text-xs font-bold text-amber-900 mb-2 flex items-center gap-1">
-                                        <BookOpen size={14} />
-                                        Chapitres inclus
-                                    </p>
-                                    <ul className="text-xs text-slate-800 space-y-1 ml-4">
-                                        {plan.chapters.split('\n').filter(line => line.trim()).map((chapter, idx) => (
-                                            <li key={idx} className="list-disc">
-                                                {chapter.trim().replace(/^-\s*/, '')}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            )}
+                            {/* Affichage des chapitres et leçons sous forme de tirets et en couleurs */}
+                            <ChaptersLessonsViewer plan={plan} variant="card" />
                             
                             {/* Affichage des critères d'évaluation */}
                             {plan.assessments && plan.assessments.length > 0 && (

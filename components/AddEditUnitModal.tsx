@@ -21,6 +21,7 @@ import {
   PenLine,
   Sparkles,
 } from 'lucide-react';
+import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 
 // ─── IB Criteria by subject (simplified) ─────────────────────────────────────
 const IB_CRITERIA_OPTIONS = [
@@ -421,6 +422,14 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
                 placeholder={"- Chapitre 1 : ...\n- Chapitre 2 : ...\n- Chapitre 3 : ..."}
                 className="w-full p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none resize-none"
               />
+              {chapters.trim() && (
+                <div className="mt-2">
+                  <p className="text-[11px] font-bold text-slate-500 mb-1 flex items-center gap-1">
+                    <Sparkles size={12} className="text-blue-500" /> Aperçu des chapitres et leçons (tirets et couleurs) :
+                  </p>
+                  <ChaptersLessonsViewer chapters={chapters} variant="preview" showTitle={false} />
+                </div>
+              )}
             </div>
 
             {/* Critères d'évaluation */}

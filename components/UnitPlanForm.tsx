@@ -3,6 +3,7 @@ import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail } from '../
 import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS, SUBJECTS } from '../constants';
 import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan } from '../services/geminiService';
 import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock } from 'lucide-react';
+import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 
 interface UnitPlanFormProps {
   initialPlan?: UnitPlan;
@@ -496,6 +497,13 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
             </div>
           )}
 
+          {/* ── Aperçu des Chapitres et Leçons au format tirets et couleurs ── */}
+          {(plan.chapters || (plan.lessons && plan.lessons.length > 0) || (plan.sessions && plan.sessions.length > 0)) && (
+            <div className="mb-2">
+              <ChaptersLessonsViewer plan={plan} variant="full" />
+            </div>
+          )}
+
           {/* ── A. INFORMATIONS GÉNÉRALES ── */}
           <CollapsibleSection title="A. Informations générales" icon={<BookMarked size={18} className="text-blue-600" />} defaultOpen={true}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -553,6 +561,14 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
               <div className="md:col-span-2">
                 <label className={labelClass}>Chapitres / Leçons inclus dans cette unité</label>
                 <textarea value={plan.chapters || ''} onChange={(e) => handleInputChange('chapters', e.target.value)} className={`${textareaClass} h-20`} placeholder="- Chapitre 1: Introduction...&#10;- Chapitre 2: Développement..." />
+                {(plan.chapters || (plan.lessons && plan.lessons.length > 0)) && (
+                  <div className="mt-2.5">
+                    <p className="text-[11px] font-bold text-slate-500 mb-1 flex items-center gap-1">
+                      <Sparkles size={12} className="text-indigo-600" /> Aperçu dynamique des chapitres et leçons (tirets et couleurs) :
+                    </p>
+                    <ChaptersLessonsViewer plan={plan} chapters={plan.chapters} variant="preview" showTitle={false} />
+                  </div>
+                )}
               </div>
             </div>
           </CollapsibleSection>
@@ -837,6 +853,14 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
               <div className="md:col-span-2">
                 <label className={labelClass}>Leçons / Chapitres <span className="text-xs text-slate-400">(une leçon par ligne)</span></label>
                 <textarea value={plan.lessons?.join('\n') || ''} onChange={(e) => handleInputChange('lessons', e.target.value.split('\n').filter(l => l.trim()))} className={`${textareaClass} h-24`} placeholder="- Leçon 1: Introduction&#10;- Leçon 2: Développement" />
+                {(plan.lessons && plan.lessons.length > 0) && (
+                  <div className="mt-2.5">
+                    <p className="text-[11px] font-bold text-slate-500 mb-1 flex items-center gap-1">
+                      <Sparkles size={12} className="text-teal-600" /> Structure dynamique des leçons :
+                    </p>
+                    <ChaptersLessonsViewer lessons={plan.lessons} variant="preview" showTitle={false} />
+                  </div>
+                )}
               </div>
             </div>
           </CollapsibleSection>
