@@ -676,16 +676,20 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   };
 
   // ── Handler : Mise à jour groupée de toutes les unités (objectifs & aspects IB) ──
-  const handleBulkUpdateObjectives = async () => {
+  const handleBulkUpdateObjectives = async (
+    targetSubject: string = currentSubject, 
+    targetGrade: string = currentGrade,
+    skipConfirm: boolean = false
+  ): Promise<void> => {
     const toUpdate = plans.filter(
-      p => (p.subject || currentSubject) === currentSubject && (p.gradeLevel || currentGrade) === currentGrade
+      p => (p.subject || currentSubject) === targetSubject && (p.gradeLevel || currentGrade) === targetGrade
     );
     if (toUpdate.length === 0) {
-      alert("Aucune unité trouvée pour cette matière et ce niveau.");
+      if (!skipConfirm) alert("Aucune unité trouvée pour cette matière et ce niveau.");
       return;
     }
-    if (!window.confirm(
-      `Mettre à jour les objectifs spécifiques et aspects IB pour les ${toUpdate.length} unité(s) de ${currentSubject} (${currentGrade}) ?\n\n` +
+    if (!skipConfirm && !window.confirm(
+      `Mettre à jour les objectifs spécifiques et aspects IB pour les ${toUpdate.length} unité(s) de ${targetSubject} (${targetGrade}) ?\n\n` +
       `• Les critères A, B, C ou D seront rigoureusement réalignés sur le contenu réel de chaque unité.\n` +
       `• Chaque critère contiendra au moins 3 aspects officiels (i, ii, iii...).\n` +
       `• Les questions d'évaluation seront strictement conformes aux aspects.`
@@ -718,9 +722,14 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       if (!onUpdateUnit) {
         onAddPlans(currentUpdatedPlans);
       }
-      alert(`✅ Mise à jour terminée avec succès pour ${toUpdate.length} unité(s) !`);
+      if (!skipConfirm) {
+        alert(`✅ Mise à jour terminée avec succès pour ${toUpdate.length} unité(s) !`);
+      }
     } catch (e: any) {
-      alert(`❌ Erreur lors de la mise à jour groupée: ${e?.message || e}`);
+      if (!skipConfirm) {
+        alert(`❌ Erreur lors de la mise à jour groupée: ${e?.message || e}`);
+      }
+      throw e;
     } finally {
       setIsBulkUpdatingObjectives(false);
       setBulkUpdateObjectivesProgress('');
@@ -3094,6 +3103,8 @@ Chapitre 4 : Algèbre et équations
       subject={currentSubject}
       grade={currentGrade}
       onSaved={handleCriteriaSaved}
+      onUpdateUnits={(subj, grd) => handleBulkUpdateObjectives(subj, grd, true)}
+      unitCount={filteredPlans.length}
     />
 
     {/* ═══════════════════════════════════════════════════════════════════
@@ -3119,6 +3130,8 @@ Chapitre 4 : Algèbre et équations
       subject={interCriteriaSubject}
       grade={interCriteriaGrade}
       onSaved={handleCriteriaSaved}
+      onUpdateUnits={(subj, grd) => handleBulkUpdateObjectives(subj, grd, true)}
+      unitCount={plans.filter(p => (p.subject || currentSubject) === interCriteriaSubject && (p.gradeLevel || currentGrade) === interCriteriaGrade).length}
     />
 
     {/* ═══════════════════════════════════════════════════════════════════

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   X, Plus, Trash2, Save, ChevronDown, ChevronUp,
-  CheckCircle, Loader2, AlertTriangle, BookOpen, Info, Copy,
+  CheckCircle, Loader2, AlertTriangle, BookOpen, Info, Copy, RefreshCw, Sparkles,
 } from 'lucide-react';
 import {
   IbCriteriaConfig,
@@ -61,6 +61,10 @@ interface IbCriteriaEditorProps {
   grade: string;
   /** Called after a successful save so the caller can trigger assessment updates */
   onSaved?: (subject: string, grade: string) => void;
+  /** Called to perform a full update of existing units for this subject and grade */
+  onUpdateUnits?: (subject: string, grade: string) => Promise<void>;
+  /** Number of units currently present for this subject & grade */
+  unitCount?: number;
 }
 
 // PEI propagation map: PEI 1 → PEI 2, PEI 3 → PEI 4 (same group level)
@@ -70,7 +74,7 @@ const PROPAGATION_MAP: Record<string, string> = {
 };
 
 const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
-  isOpen, onClose, subject, grade, onSaved,
+  isOpen, onClose, subject, grade, onSaved, onUpdateUnits, unitCount = 0,
 }) => {
   const [criteria, setCriteria] = useState<IbCriterion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,12 +84,15 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
   const [activeTab, setActiveTab] = useState<Record<string, 'strands' | 'rubric'>>({});
   const [propagating, setPropagating] = useState(false);
   const [propagateStatus, setPropagateStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [isUpdatingUnits, setIsUpdatingUnits] = useState(false);
+  const [updateUnitsMessage, setUpdateUnitsMessage] = useState<string>('');
 
   // ── Load existing config ────────────────────────────────────────────────────
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
     setSaveStatus('idle');
+    setUpdateUnitsMessage('');
     loadCriteria(subject, grade).then(config => {
       if (config && config.criteria.length > 0) {
         setCriteria(config.criteria);
@@ -183,7 +190,7 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
   };
 
   // ── Save ───────────────────────────────────────────────────────────────────
-  const handleSave = async () => {
+  const handleSave = async (andUpdateUnits: boolean = false) => {
     // Validate: at least 1 strand per criterion, non-empty
     for (const c of criteria) {
       const filled = c.strands.filter(s => s.trim().length > 1);
@@ -201,6 +208,7 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
     }
 
     setSaving(true);
+    setUpdateUnitsMessage('');
     try {
       const config: IbCriteriaConfig = {
         subject,
@@ -210,9 +218,24 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
       };
       await saveCriteria(config);
       setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 3000);
+      setTimeout(() => setSaveStatus('idle'), 4000);
       // Notify parent so it can trigger assessment updates
       onSaved?.(subject, grade);
+
+      // Si l'utilisateur a cliqué sur "Enregistrer & Mettre à jour les unités"
+      if (andUpdateUnits && onUpdateUnits) {
+        setIsUpdatingUnits(true);
+        setUpdateUnitsMessage(`Mise à jour des ${unitCount > 0 ? unitCount : ''} unité(s) en cours selon les nouveaux objectifs et aspects...`);
+        try {
+          await onUpdateUnits(subject, grade);
+          setUpdateUnitsMessage(`✅ Les ${unitCount > 0 ? unitCount : ''} unité(s) ont été mises à jour avec succès !`);
+          setTimeout(() => setUpdateUnitsMessage(''), 5000);
+        } catch (err: any) {
+          setUpdateUnitsMessage(`❌ Erreur mise à jour unités : ${err?.message || err}`);
+        } finally {
+          setIsUpdatingUnits(false);
+        }
+      }
     } catch {
       setSaveStatus('error');
     } finally {
@@ -502,40 +525,44 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl space-y-3">
           {/* Status row */}
           <div className="text-xs text-slate-500 min-h-[18px]">
-            {saveStatus === 'saved' && (
-              <span className="flex items-center gap-1.5 text-green-600 font-semibold">
-                <CheckCircle size={14} /> Enregistré pour <strong>{grade}</strong> — les générations futures utiliseront ces critères.
+            {isUpdatingUnits ? (
+              <span className="flex items-center gap-1.5 text-indigo-600 font-semibold animate-pulse">
+                <Loader2 size={14} className="animate-spin" /> {updateUnitsMessage || 'Mise à jour des unités en cours…'}
               </span>
-            )}
-            {saveStatus === 'error' && (
+            ) : updateUnitsMessage ? (
+              <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                <CheckCircle size={14} /> {updateUnitsMessage}
+              </span>
+            ) : saveStatus === 'saved' ? (
+              <span className="flex items-center gap-1.5 text-green-600 font-semibold">
+                <CheckCircle size={14} /> Enregistré pour <strong>{grade}</strong> — les critères sont enregistrés.
+              </span>
+            ) : saveStatus === 'error' ? (
               <span className="flex items-center gap-1.5 text-red-600 font-semibold">
                 <AlertTriangle size={14} /> Erreur — critères sauvegardés en local uniquement.
               </span>
-            )}
-            {propagateStatus === 'done' && (
+            ) : propagateStatus === 'done' ? (
               <span className="flex items-center gap-1.5 text-emerald-600 font-semibold">
                 <CheckCircle size={14} /> Critères appliqués à <strong>{targetGrade}</strong> avec succès !
               </span>
-            )}
-            {propagateStatus === 'error' && (
+            ) : propagateStatus === 'error' ? (
               <span className="flex items-center gap-1.5 text-red-500 font-semibold">
                 <AlertTriangle size={14} /> Erreur lors de l'application à {targetGrade}.
               </span>
-            )}
-            {saveStatus === 'idle' && propagateStatus === 'idle' && (
-              <span>Les critères s'appliquent à : <strong>{subject}</strong> — <strong>{grade}</strong></span>
+            ) : (
+              <span>Critères configurés pour : <strong>{subject}</strong> — <strong>{grade}</strong> ({unitCount} unité{unitCount > 1 ? 's' : ''} associée{unitCount > 1 ? 's' : ''})</span>
             )}
           </div>
 
           {/* Buttons row */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
             {/* Left: propagate button (only for PEI 1 and PEI 3) */}
-            <div>
+            <div className="flex items-center gap-2">
               {targetGrade && (
                 <button
                   onClick={handlePropagate}
-                  disabled={propagating || loading || criteria.length < 2}
-                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow transition"
+                  disabled={propagating || loading || saving || isUpdatingUnits || criteria.length < 2}
+                  className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow transition"
                   title={`Copier ces objectifs tels quels vers ${subject} — ${targetGrade}`}
                 >
                   {propagating ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
@@ -544,21 +571,44 @@ const IbCriteriaEditor: React.FC<IbCriteriaEditorProps> = ({
               )}
             </div>
 
-            {/* Right: close + save */}
-            <div className="flex gap-2">
+            {/* Right: close + save + save & update units */}
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={onClose}
-                className="px-4 py-2 text-sm text-slate-600 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition font-medium"
+                disabled={isUpdatingUnits}
+                className="px-4 py-2 text-xs sm:text-sm text-slate-600 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition font-medium disabled:opacity-50"
               >
                 Fermer
               </button>
+
               <button
-                onClick={handleSave}
-                disabled={saving || loading || criteria.length < 2}
-                className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow transition"
+                onClick={() => handleSave(false)}
+                disabled={saving || isUpdatingUnits || loading || criteria.length < 2}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-semibold shadow transition"
+                title="Enregistrer uniquement les objectifs et aspects sans modifier les unités existantes"
               >
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                {saving && !isUpdatingUnits ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                 Enregistrer
+              </button>
+
+              {/* Bouton clé : Enregistrer & Mettre à jour les unités */}
+              <button
+                onClick={() => handleSave(true)}
+                disabled={saving || isUpdatingUnits || loading || criteria.length < 2}
+                className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-indigo-600 via-blue-600 to-sky-600 hover:from-indigo-700 hover:to-sky-700 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-bold shadow-lg transition hover:-translate-y-0.5"
+                title="Enregistrer les critères ET synchroniser toutes les unités existantes selon ces objectifs et aspects"
+              >
+                {isUpdatingUnits ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    <span>Mise à jour en cours…</span>
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={15} />
+                    <span>Enregistrer & Mettre à jour les unités</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
