@@ -110,6 +110,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
 
   // ── État : Mise à jour des objectifs d'une unité ──────────────────────────────
   const [updatingAssessmentId, setUpdatingAssessmentId] = useState<string | null>(null);
+  const [isBulkUpdatingObjectives, setIsBulkUpdatingObjectives] = useState(false);
+  const [bulkUpdateObjectivesProgress, setBulkUpdateObjectivesProgress] = useState<string>('');
   // ── État : Mise à jour des détails d'une unité (mode détails) ────────────────
   const [detailUpdatePlan, setDetailUpdatePlan] = useState<UnitPlan | null>(null);
   const [isDetailUpdateMode, setIsDetailUpdateMode] = useState(false);
@@ -654,7 +656,13 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     setUpdatingAssessmentId(plan.id);
     try {
       const newAssessments = await generateAssessmentsForUnit(plan);
-      const updatedPlan: UnitPlan = { ...plan, assessments: newAssessments };
+      // Synchroniser également plan.objectives avec les critères évalués
+      const dynamicObjectives = newAssessments.map(a => `Critère ${a.criterion}: ${a.criterionName}`);
+      const updatedPlan: UnitPlan = { 
+        ...plan, 
+        assessments: newAssessments,
+        objectives: dynamicObjectives.length > 0 ? dynamicObjectives : plan.objectives
+      };
       if (onUpdateUnit) {
         onUpdateUnit(updatedPlan);
       } else {
@@ -664,6 +672,58 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       alert(`Erreur mise à jour des évaluations : ${e?.message || e}`);
     } finally {
       setUpdatingAssessmentId(null);
+    }
+  };
+
+  // ── Handler : Mise à jour groupée de toutes les unités (objectifs & aspects IB) ──
+  const handleBulkUpdateObjectives = async () => {
+    const toUpdate = plans.filter(
+      p => (p.subject || currentSubject) === currentSubject && (p.gradeLevel || currentGrade) === currentGrade
+    );
+    if (toUpdate.length === 0) {
+      alert("Aucune unité trouvée pour cette matière et ce niveau.");
+      return;
+    }
+    if (!window.confirm(
+      `Mettre à jour les objectifs spécifiques et aspects IB pour les ${toUpdate.length} unité(s) de ${currentSubject} (${currentGrade}) ?\n\n` +
+      `• Les critères A, B, C ou D seront rigoureusement réalignés sur le contenu réel de chaque unité.\n` +
+      `• Chaque critère contiendra au moins 3 aspects officiels (i, ii, iii...).\n` +
+      `• Les questions d'évaluation seront strictement conformes aux aspects.`
+    )) return;
+
+    setIsBulkUpdatingObjectives(true);
+    setBulkUpdateObjectivesProgress(`0 / ${toUpdate.length} unités traitées`);
+    let currentUpdatedPlans = [...plans];
+
+    try {
+      for (let i = 0; i < toUpdate.length; i++) {
+        const plan = toUpdate[i];
+        setBulkUpdateObjectivesProgress(`${i + 1} / ${toUpdate.length} : "${plan.title}" en cours…`);
+        try {
+          const newAssessments = await generateAssessmentsForUnit(plan);
+          const dynamicObjectives = newAssessments.map(a => `Critère ${a.criterion}: ${a.criterionName}`);
+          const updated: UnitPlan = { 
+            ...plan, 
+            assessments: newAssessments,
+            objectives: dynamicObjectives.length > 0 ? dynamicObjectives : plan.objectives
+          };
+          if (onUpdateUnit) {
+            onUpdateUnit(updated);
+          }
+          currentUpdatedPlans = currentUpdatedPlans.map(p => p.id === updated.id ? updated : p);
+        } catch (err) {
+          console.warn(`Erreur lors de la mise à jour de l'unité ${plan.title}:`, err);
+        }
+      }
+      if (!onUpdateUnit) {
+        onAddPlans(currentUpdatedPlans);
+      }
+      alert(`✅ Mise à jour terminée avec succès pour ${toUpdate.length} unité(s) !`);
+    } catch (e: any) {
+      alert(`❌ Erreur lors de la mise à jour groupée: ${e?.message || e}`);
+    } finally {
+      setIsBulkUpdatingObjectives(false);
+      setBulkUpdateObjectivesProgress('');
     }
   };
 
@@ -1561,6 +1621,27 @@ Chapitre 4 : Algèbre et équations
                <BookOpen size={20} />
                Objectifs IB
              </button>
+             {/* ── Bouton Mise à jour Objectifs & Aspects IB (toutes les unités) ── */}
+             {filteredPlans.length > 0 && (
+               <button
+                 onClick={handleBulkUpdateObjectives}
+                 disabled={isBulkUpdatingObjectives}
+                 className="flex items-center gap-2 bg-sky-500/80 hover:bg-sky-500 text-white border border-sky-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                 title="Mettre à jour les objectifs spécifiques (A, B, C, D) et les aspects (i, ii, iii...) pour toutes les unités selon leur contenu"
+               >
+                 {isBulkUpdatingObjectives ? (
+                   <>
+                     <Loader2 className="animate-spin" size={20} />
+                     {bulkUpdateObjectivesProgress || 'Mise à jour...'}
+                   </>
+                 ) : (
+                   <>
+                     <RefreshCw size={20} />
+                     Mise à jour Objectifs & Aspects
+                   </>
+                 )}
+               </button>
+             )}
              {/* ── Bouton Calculateur d'heures ──────────────────── */}
              <button
                onClick={() => setIsHoursCalculatorOpen(true)}

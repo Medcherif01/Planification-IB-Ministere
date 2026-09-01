@@ -2128,7 +2128,7 @@ Règle absolue : 5 objets dans le tableau, ni plus ni moins.`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // generateAssessmentsForUnit — Génère uniquement les évaluations critériées
-// pour une unité existante (utilisé après modification manuelle d'une unité)
+// pour une unité existante (utilisé après modification manuelle d'une unité ou mise à jour ciblée)
 // ─────────────────────────────────────────────────────────────────────────────
 export const generateAssessmentsForUnit = async (plan: UnitPlan): Promise<AssessmentData[]> => {
   const subject = plan.subject || '';
@@ -2139,19 +2139,31 @@ export const generateAssessmentsForUnit = async (plan: UnitPlan): Promise<Assess
   const criteriaCount = isDesign ? 4 : 2;
   const criteriaRule = isDesign
     ? 'EXACTEMENT 4 critères A, B, C, D (Dossier de conception IB Design)'
-    : 'EXACTEMENT 2 critères choisis parmi A, B, C, D (les plus pertinents pour cette unité)';
+    : 'EXACTEMENT 2 critères (ou les critères spécifiés dans les objectifs de l\'unité) choisis parmi A, B, C, D convenant rigoureusement au contenu de cette unité';
+
+  // ── Extraction des critères souhaités depuis plan.objectives si spécifiés ──
+  const specifiedCriteria = (plan.objectives || [])
+    .map(o => {
+      const match = o.match(/Crit[èe]re\s+([A-D])|Criterion\s+([A-D])/i);
+      return match ? (match[1] || match[2]).toUpperCase() : null;
+    })
+    .filter(Boolean);
+
+  const criteriaTarget = specifiedCriteria.length > 0
+    ? `CRITÈRES CIBLÉS POUR CETTE UNITÉ SELON SON CONTENU: ${specifiedCriteria.join(', ')}`
+    : `Choisis les 2 critères (parmi A, B, C, D) les plus directement et rigoureusement liés au contenu de l'unité.`;
 
   // ── Injection des critères personnalisés saisis par l'enseignant ───────────
   const customConfig = (!isDesign && gradeLevel) ? getCriteriaSync(subject, gradeLevel) : null;
   const customCriteriaBlock = customConfig
-    ? `\n${buildCriteriaSummaryForPrompt(customConfig)}\n⚠️ UTILISE EXACTEMENT ces strands et cette grille de notation dans les évaluations générées.\n`
+    ? `\n${buildCriteriaSummaryForPrompt(customConfig)}\n⚠️ UTILISE STRICTEMENT ces aspects (strands i, ii, iii, iv) officiels IB et cette grille de notation dans les évaluations générées.\n`
     : '';
 
   const sysInstruction = getSystemInstruction(subject);
 
   const prompt = lang === 'en'
     ? `
-You are an IB MYP assessment expert. Generate ONLY the criterion-based assessments for the following existing unit. Do NOT regenerate the full unit plan.
+You are an expert IB MYP educator strictly adhering to official IB subject guides. Generate ONLY the criterion-based assessments for the following existing unit. Do NOT regenerate the full unit plan.
 
 Unit Title: "${plan.title}"
 Subject: ${subject}
@@ -2161,12 +2173,27 @@ Key Concept: ${plan.keyConcept}
 Related Concepts: ${(plan.relatedConcepts || []).join(', ')}
 Global Context: ${plan.globalContext}
 Chapters/Content: ${plan.chapters || plan.content || ''}
-Objectives: ${(plan.objectives || []).join(', ')}
+Specific Objectives / Targeted Criteria: ${(plan.objectives || []).join(', ')}
+${criteriaTarget}
 ${customCriteriaBlock}
-MANDATORY RULE: Generate ${criteriaRule}.
-Each criterion must have AT LEAST 3 strands (sub-aspects).
-Each criterion must have at least 1 exercise adapted to this specific unit.
-Design assessments for 30-minute duration.
+
+══════════════════════════════════════════════════════
+STRICT IB MYP ASSESSMENT AND STRANDS CONFORMITY RULES:
+══════════════════════════════════════════════════════
+1. DYNAMIC CRITERIA ALIGNMENT:
+   - Select the criteria (A, B, C, or D) that STRICTLY suit the unit's content, skills, and learning goals.
+   - Criteria count: ${criteriaRule}.
+2. STRANDS CONFORMITY (i, ii, iii, iv, etc.):
+   - EACH criterion must have AT LEAST 3 official strands (sub-aspects).
+   - Use official IB MYP strands for ${subject} with exact roman numerals (i, ii, iii, iv...).
+3. DIRECT RELATION BETWEEN QUESTIONS AND STRANDS:
+   - Every question/exercise MUST be in direct relation to the specific objective and its exact strands (i, ii, iii...).
+   - The "criterionReference" MUST explicitly state the exact strands assessed (e.g., "Criterion A: i, ii" or "Criterion C: i, iii, iv").
+   - Questions must genuinely assess the cognitive level required by the strand descriptor.
+   - For Language Acquisition / English subjects, all exercises, rubrics, questions, and texts MUST be 100% in ENGLISH.
+4. RESPONSE SPACE & TIMING:
+   - Design assessments for 30-minute duration.
+   - Provide structured answer lines (57 dots per line) for each question.
 
 Return ONLY a valid JSON array of assessment objects (no surrounding object, just the array):
 [
@@ -2184,7 +2211,7 @@ Return ONLY a valid JSON array of assessment objects (no surrounding object, jus
     "exercises": [
       {
         "title": "Exercise 1",
-        "content": "...",
+        "content": "...\n\nAnswer:\n.........................................................\n.........................................................",
         "criterionReference": "Criterion A: i, ii",
         "workspaceNeeded": true
       }
@@ -2193,7 +2220,8 @@ Return ONLY a valid JSON array of assessment objects (no surrounding object, jus
 ]
 `
     : `
-Tu es un expert en évaluation IB PEI. Génère UNIQUEMENT les évaluations critériées pour l'unité existante suivante. NE régénère PAS le plan complet.
+Tu es un coordonnateur et examinateur expert de l'IB PEI (Programme d'Éducation Intermédiaire). Tu appliques STRICTEMENT les guides pédagogiques officiels de l'IB pour chaque matière.
+Génère UNIQUEMENT les évaluations critériées pour l'unité existante suivante. NE régénère PAS le plan complet.
 
 Titre de l'unité: "${plan.title}"
 Matière: ${subject}
@@ -2203,12 +2231,27 @@ Concept clé: ${plan.keyConcept}
 Concepts connexes: ${(plan.relatedConcepts || []).join(', ')}
 Contexte mondial: ${plan.globalContext}
 Chapitres/Contenu: ${plan.chapters || plan.content || ''}
-Objectifs: ${(plan.objectives || []).join(', ')}
+Objectifs spécifiques / Critères visés: ${(plan.objectives || []).join(', ')}
+${criteriaTarget}
 ${customCriteriaBlock}
-RÈGLE OBLIGATOIRE: Génère ${criteriaRule}.
-Chaque critère doit avoir AU MINIMUM 3 sous-aspects (strands).
-Chaque critère doit avoir au moins 1 exercice adapté à cette unité spécifique.
-Conçois les évaluations pour une durée de 30 minutes.
+
+══════════════════════════════════════════════════════
+RÈGLES ABSOLUES DE CONFORMITÉ IB ET ALIGNEMENT DES ASPECTS (i, ii, iii, iv) :
+══════════════════════════════════════════════════════
+1. ALIGNEMENT RIGOREUX DES OBJECTIFS SPÉCIFIQUES :
+   - Sélectionne les critères (A, B, C, ou D) qui conviennent EXACTEMENT et STRICTEMENT au contenu de l'unité.
+   - Nombre de critères: ${criteriaRule}.
+2. CONFORMITÉ DES ASPECTS ET SOUS-ASPECTS (strands) :
+   - CHAQUE critère doit comporter AU MINIMUM 3 sous-aspects (strands) officiels du guide IB pour la matière ${subject}.
+   - Utilise les numérotations officielles en chiffres romains (i., ii., iii., iv., v.).
+3. RELATION DIRECTE ENTRE QUESTIONS ET ASPECTS (i, ii, iii...) :
+   - Toutes les questions et exercices DOIVENT être en relation directe avec les aspects (i, ii, iii...) du critère évalué.
+   - La clé "criterionReference" DOIT mentionner explicitement les aspects précis évalués (ex: "Critère A : i, ii" ou "Critère B : i, iii, iv").
+   - Chaque question doit évaluer précisément la compétence décrite dans l'aspect officiel correspondant.
+   - Les exercices doivent être variés, contextualisés et adaptés au niveau des élèves.
+4. FORMAT ET TEMPS :
+   - Conçois les évaluations pour une durée réaliste de 30 minutes.
+   - Fournis des lignes pointillées de réponse (57 points par ligne) pour chaque question.
 
 Retourne UNIQUEMENT un tableau JSON d'objets évaluation (pas d'objet englobant, juste le tableau) :
 [
@@ -2226,7 +2269,7 @@ Retourne UNIQUEMENT un tableau JSON d'objets évaluation (pas d'objet englobant,
     "exercises": [
       {
         "title": "Exercice 1",
-        "content": "...",
+        "content": "...\n\nRéponse :\n.........................................................\n.........................................................",
         "criterionReference": "Critère A : i, ii",
         "workspaceNeeded": true
       }
