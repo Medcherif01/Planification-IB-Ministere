@@ -5,6 +5,7 @@ import {
   generateSingleUnit,
   generateAssessmentsForUnit,
   sanitizeUnitPlan,
+  updateUnitFromConceptsAndObjectives,
 } from '../services/geminiService';
 import {
   X,
@@ -297,6 +298,37 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
       setError(`❌ Erreur: ${e?.message || e}`);
     } finally {
       setIsRegeneratingAssessments(false);
+    }
+  };
+
+  // ── Mettre à jour l'unité selon concepts et objectifs spécifiques ─────────
+  const [isUpdatingFromConcepts, setIsUpdatingFromConcepts] = useState(false);
+
+  const handleUpdateFromConceptsAndObjectives = async () => {
+    setError('');
+    setSuccessMsg('');
+    setIsUpdatingFromConcepts(true);
+    try {
+      const planToUpdate = mode === 'auto' && generatedPlan ? generatedPlan : buildManualPlan();
+      const updated = await updateUnitFromConceptsAndObjectives(planToUpdate);
+      setGeneratedPlan(updated);
+      if (mode === 'manual') {
+        if (updated.statementOfInquiry) setStatementOfInquiry(updated.statementOfInquiry);
+        if (updated.inquiryQuestions) {
+          if (updated.inquiryQuestions.factual?.length) setFactualQs(updated.inquiryQuestions.factual);
+          if (updated.inquiryQuestions.conceptual?.length) setConceptualQs(updated.inquiryQuestions.conceptual);
+          if (updated.inquiryQuestions.debatable?.length) setDebatableQs(updated.inquiryQuestions.debatable);
+        }
+        if (updated.keyConcept) setKeyConcept(updated.keyConcept);
+        if (updated.relatedConcepts) setRelatedConcepts(updated.relatedConcepts);
+        if (updated.globalContext) setGlobalContext(updated.globalContext);
+        if (updated.summativeAssessment) setSummativeAssessment(updated.summativeAssessment);
+      }
+      setSuccessMsg(`✅ Unité mise à jour selon les concepts et critères : ${updated.assessments?.length || 0} évaluation(s) critériée(s) générée(s).`);
+    } catch (e: any) {
+      setError(`❌ Erreur: ${e?.message || e}`);
+    } finally {
+      setIsUpdatingFromConcepts(false);
     }
   };
 
@@ -744,6 +776,28 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
                 </div>
               )}
 
+              {/* ── Mise à jour selon concepts & objectifs ── */}
+              <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-4">
+                <p className="text-sm text-indigo-900 font-semibold mb-1 flex items-center gap-2">
+                  <Sparkles size={16} className="text-indigo-600" />
+                  Mise à jour de l'unité selon les concepts & objectifs modifiés
+                </p>
+                <p className="text-xs text-indigo-700 mb-3">
+                  Réaligne automatiquement l'énoncé de recherche, les questions de recherche et génère des évaluations critériées IB rigoureusement adaptées aux critères et concepts de cette unité.
+                </p>
+                <button
+                  onClick={handleUpdateFromConceptsAndObjectives}
+                  disabled={isUpdatingFromConcepts}
+                  className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition shadow disabled:opacity-60"
+                >
+                  {isUpdatingFromConcepts ? (
+                    <><Loader2 className="animate-spin" size={18} />Mise à jour en cours…</>
+                  ) : (
+                    <><Sparkles size={18} className="text-amber-300" />Mettre à jour l'unité (Concepts & Objectifs)</>
+                  )}
+                </button>
+              </div>
+
               {/* ── Régénérer évaluations (mode manuel) ── */}
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
                 <p className="text-sm text-amber-800 font-semibold mb-1 flex items-center gap-2">
@@ -779,20 +833,38 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
         </div>
 
         {/* ── Footer ── */}
-        <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
-          <button
-            onClick={onClose}
-            className="px-5 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-sm transition"
-          >
-            Annuler
-          </button>
-          <button
-            onClick={handleSave}
-            className={`px-6 py-2.5 rounded-xl text-white font-bold text-sm flex items-center gap-2 transition shadow ${isEdit ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'}`}
-          >
-            <Save size={18} />
-            {isEdit ? "Enregistrer les modifications" : "Enregistrer l'unité"}
-          </button>
+        <div className="p-4 border-t border-slate-100 flex items-center justify-between gap-3 bg-slate-50 rounded-b-2xl flex-wrap">
+          <div>
+            {(isEdit || generatedPlan) && (
+              <button
+                onClick={handleUpdateFromConceptsAndObjectives}
+                disabled={isUpdatingFromConcepts}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold text-xs sm:text-sm flex items-center gap-1.5 transition shadow disabled:opacity-50"
+                title="Mettre à jour l'unité selon les modifications de concepts et critères d'évaluation"
+              >
+                {isUpdatingFromConcepts ? (
+                  <><Loader2 className="animate-spin" size={15} />Mise à jour…</>
+                ) : (
+                  <><Sparkles size={15} className="text-amber-300" />Mise à jour (Concepts & Objectifs)</>
+                )}
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-sm transition"
+            >
+              Annuler
+            </button>
+            <button
+              onClick={handleSave}
+              className={`px-5 py-2 rounded-xl text-white font-bold text-sm flex items-center gap-2 transition shadow ${isEdit ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+            >
+              <Save size={16} />
+              {isEdit ? "Enregistrer les modifications" : "Enregistrer l'unité"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UnitPlan, ServiceActionPlan } from '../types';
-import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine } from 'lucide-react';
+import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine, Sparkles } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI } from '../services/geminiService';
+import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI, updateUnitFromConceptsAndObjectives } from '../services/geminiService';
 import type { AppUser } from '../services/authService';
 import ModificationRequestModal from './ModificationRequestModal';
 import { exportUnitPlanToWord, exportAllUnitPlansToZip, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
@@ -110,8 +110,11 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
 
   // ── État : Mise à jour des objectifs d'une unité ──────────────────────────────
   const [updatingAssessmentId, setUpdatingAssessmentId] = useState<string | null>(null);
+  const [updatingUnitConceptsId, setUpdatingUnitConceptsId] = useState<string | null>(null);
   const [isBulkUpdatingObjectives, setIsBulkUpdatingObjectives] = useState(false);
   const [bulkUpdateObjectivesProgress, setBulkUpdateObjectivesProgress] = useState<string>('');
+  const [isBulkUpdatingFromConcepts, setIsBulkUpdatingFromConcepts] = useState(false);
+  const [bulkUpdateConceptsProgress, setBulkUpdateConceptsProgress] = useState<string>('');
   // ── État : Mise à jour des détails d'une unité (mode détails) ────────────────
   const [detailUpdatePlan, setDetailUpdatePlan] = useState<UnitPlan | null>(null);
   const [isDetailUpdateMode, setIsDetailUpdateMode] = useState(false);
@@ -733,6 +736,73 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     } finally {
       setIsBulkUpdatingObjectives(false);
       setBulkUpdateObjectivesProgress('');
+    }
+  };
+
+  // ── Handler : Mise à jour d'une unité selon concepts (clé, connexes) & objectifs ────────────
+  const handleUpdateUnitFromConcepts = async (plan: UnitPlan) => {
+    if (!plan.id) return;
+    setUpdatingUnitConceptsId(plan.id);
+    try {
+      const updatedPlan = await updateUnitFromConceptsAndObjectives(plan);
+      if (onUpdateUnit) {
+        onUpdateUnit(updatedPlan);
+      } else {
+        onAddPlans(plans.map(p => p.id === plan.id ? updatedPlan : p));
+      }
+      alert(`✅ L'unité "${plan.title}" a été mise à jour avec succès !\n\n• Concepts et énoncé de recherche synchronisés.\n• Évaluations critériées générées pour : ${(updatedPlan.objectives || []).join(', ')}.`);
+    } catch (e: any) {
+      alert(`Erreur mise à jour de l'unité : ${e?.message || e}`);
+    } finally {
+      setUpdatingUnitConceptsId(null);
+    }
+  };
+
+  // ── Handler : Mise à jour groupée selon concepts et objectifs ────────────
+  const handleBulkUpdateFromConcepts = async (
+    targetSubject: string = currentSubject,
+    targetGrade: string = currentGrade
+  ): Promise<void> => {
+    const toUpdate = plans.filter(
+      p => (p.subject || currentSubject) === targetSubject && (p.gradeLevel || currentGrade) === targetGrade
+    );
+    if (toUpdate.length === 0) {
+      alert("Aucune unité trouvée pour cette matière et ce niveau.");
+      return;
+    }
+    if (!window.confirm(
+      `Mettre à jour les ${toUpdate.length} unité(s) de ${targetSubject} (${targetGrade}) selon leurs concepts et objectifs ?\n\n` +
+      `• Énoncés de recherche et questions réalignés sur les concepts.\n` +
+      `• Évaluations critériées rigoureusement régénérées sur les critères appropriés pour chaque unité.`
+    )) return;
+
+    setIsBulkUpdatingFromConcepts(true);
+    setBulkUpdateConceptsProgress(`0 / ${toUpdate.length} unités traitées`);
+    let currentUpdatedPlans = [...plans];
+
+    try {
+      for (let i = 0; i < toUpdate.length; i++) {
+        const plan = toUpdate[i];
+        setBulkUpdateConceptsProgress(`${i + 1} / ${toUpdate.length} : "${plan.title}" en cours…`);
+        try {
+          const updated = await updateUnitFromConceptsAndObjectives(plan);
+          if (onUpdateUnit) {
+            onUpdateUnit(updated);
+          }
+          currentUpdatedPlans = currentUpdatedPlans.map(p => p.id === updated.id ? updated : p);
+        } catch (err) {
+          console.warn(`Erreur lors de la mise à jour de l'unité ${plan.title}:`, err);
+        }
+      }
+      if (!onUpdateUnit) {
+        onAddPlans(currentUpdatedPlans);
+      }
+      alert(`✅ Mise à jour selon concepts & objectifs terminée avec succès pour ${toUpdate.length} unité(s) !`);
+    } catch (e: any) {
+      alert(`❌ Erreur lors de la mise à jour groupée: ${e?.message || e}`);
+    } finally {
+      setIsBulkUpdatingFromConcepts(false);
+      setBulkUpdateConceptsProgress('');
     }
   };
 
@@ -1651,6 +1721,27 @@ Chapitre 4 : Algèbre et équations
                  )}
                </button>
              )}
+             {/* ── Bouton Mise à jour selon Concepts & Objectifs (toutes les unités) ── */}
+             {filteredPlans.length > 0 && (
+               <button
+                 onClick={() => handleBulkUpdateFromConcepts()}
+                 disabled={isBulkUpdatingFromConcepts}
+                 className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white border border-indigo-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                 title="Mettre à jour toutes les unités selon leurs concepts (clé, connexes) et leurs critères d'évaluation adaptés"
+               >
+                 {isBulkUpdatingFromConcepts ? (
+                   <>
+                     <Loader2 className="animate-spin" size={20} />
+                     {bulkUpdateConceptsProgress || 'Mise à jour...'}
+                   </>
+                 ) : (
+                   <>
+                     <Sparkles size={20} className="text-amber-300" />
+                     Mise à jour (Concepts & Objectifs)
+                   </>
+                 )}
+               </button>
+             )}
              {/* ── Bouton Calculateur d'heures ──────────────────── */}
              <button
                onClick={() => setIsHoursCalculatorOpen(true)}
@@ -1978,6 +2069,17 @@ Chapitre 4 : Algèbre et équations
                                 {/* ── Boutons admin uniquement : Mise à jour Évals + Ajouter Détails ── */}
                                 {isAdmin && (
                                   <>
+                                    <button
+                                        onClick={() => handleUpdateUnitFromConcepts(plan)}
+                                        disabled={updatingUnitConceptsId === plan.id}
+                                        className="flex items-center gap-1 bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200 px-2 py-1 rounded transition font-medium disabled:opacity-50 text-xs shadow-sm"
+                                        title="Mettre à jour cette unité selon les modifications des concepts et des objectifs spécifiques, avec évaluations sur les critères adaptés"
+                                    >
+                                        {updatingUnitConceptsId === plan.id
+                                          ? <Loader2 className="animate-spin" size={14}/>
+                                          : <Sparkles size={14} className="text-indigo-600"/>}
+                                        Mise à jour (Concepts & Objectifs)
+                                    </button>
                                     <button
                                         onClick={() => handleUpdateAssessments(plan)}
                                         disabled={updatingAssessmentId === plan.id}

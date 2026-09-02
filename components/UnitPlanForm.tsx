@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail } from '../types';
 import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS, SUBJECTS } from '../constants';
-import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan } from '../services/geminiService';
+import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan, updateUnitFromConceptsAndObjectives } from '../services/geminiService';
 import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock } from 'lucide-react';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 
@@ -112,6 +112,30 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [isGeneratingActivities, setIsGeneratingActivities] = useState(false);
   const [soiSuggestions, setSoiSuggestions] = useState<string[]>([]);
+  const [isUpdatingFromConcepts, setIsUpdatingFromConcepts] = useState(false);
+  const [updateStatusMsg, setUpdateStatusMsg] = useState('');
+
+  const handleUpdateFromConceptsAndObjectives = async () => {
+    setIsUpdatingFromConcepts(true);
+    setUpdateStatusMsg("Initialisation de la mise à jour...");
+    try {
+      const updated = await updateUnitFromConceptsAndObjectives(plan, (msg) => {
+        setUpdateStatusMsg(msg);
+      });
+      setPlan(updated);
+      alert(
+        `✅ Unité et évaluations mises à jour avec succès !\n\n` +
+        `• Énoncé de recherche et questions réalignés sur les concepts.\n` +
+        `• Détails des objectifs actualisés.\n` +
+        `• ${updated.assessments?.length || 0} évaluation(s) critériée(s) générée(s) pour : ${(updated.objectives || []).join(', ')}.`
+      );
+    } catch (err: any) {
+      alert(`❌ Erreur lors de la mise à jour : ${err?.message || err}`);
+    } finally {
+      setIsUpdatingFromConcepts(false);
+      setUpdateStatusMsg('');
+    }
+  };
 
   const handleInputChange = (field: keyof UnitPlan, value: any) => {
     setPlan(prev => ({ ...prev, [field]: value }));
@@ -371,7 +395,26 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={handleUpdateFromConceptsAndObjectives}
+            disabled={isUpdatingFromConcepts}
+            className="flex items-center gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-3 py-2 rounded-lg font-medium transition shadow text-xs sm:text-sm disabled:opacity-50"
+            title="Mettre à jour l'unité selon les concepts modifiés et critères spécifiques sélectionnés, avec évaluations adaptées"
+          >
+            {isUpdatingFromConcepts ? (
+              <>
+                <Loader2 className="animate-spin" size={15} />
+                <span className="max-w-[180px] truncate">{updateStatusMsg || "Mise à jour..."}</span>
+              </>
+            ) : (
+              <>
+                <Sparkles size={15} className="text-amber-300" />
+                <span>Mise à jour selon concepts & objectifs</span>
+              </>
+            )}
+          </button>
           <div className="flex bg-slate-700 rounded-lg p-1">
             <button onClick={() => setActiveTab('plan')} className={`px-3 py-1 rounded-md text-xs font-medium transition ${activeTab === 'plan' ? 'bg-white text-slate-900' : 'text-slate-300 hover:text-white'}`}>Plan</button>
             <button onClick={() => setActiveTab('assessment')} className={`px-3 py-1 rounded-md text-xs font-medium transition ${activeTab === 'assessment' ? 'bg-white text-slate-900' : 'text-slate-300 hover:text-white'}`}>Évaluations ({plan.assessments.length})</button>
@@ -428,11 +471,26 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
       {activeTab === 'assessment' && (
         <div className="p-8 bg-slate-50 min-h-[80vh]">
           <div className="max-w-4xl mx-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold text-slate-800">Aperçu des Évaluations</h3>
-              <button onClick={copyAssessmentToClipboard} className="flex items-center gap-2 text-blue-600 hover:text-blue-700 bg-white border border-blue-200 px-3 py-2 rounded-lg shadow-sm transition text-sm">
-                <Copy size={16} /> Copier
-              </button>
+            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Aperçu des Évaluations</h3>
+                <p className="text-xs text-slate-500">Évaluations critériées IB alignées sur les critères de l'unité ({plan.assessments.length} critère(s))</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleUpdateFromConceptsAndObjectives}
+                  disabled={isUpdatingFromConcepts}
+                  className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-sm transition disabled:opacity-50"
+                  title="Régénérer les évaluations selon les critères sélectionnés et concepts de l'unité"
+                >
+                  {isUpdatingFromConcepts ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} className="text-amber-300" />}
+                  Mettre à jour les évaluations
+                </button>
+                <button onClick={copyAssessmentToClipboard} className="flex items-center gap-2 text-blue-600 hover:text-blue-700 bg-white border border-blue-200 px-3 py-2 rounded-lg shadow-sm transition text-sm">
+                  <Copy size={16} /> Copier
+                </button>
+              </div>
             </div>
             {plan.assessments.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -458,8 +516,17 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
             ) : (
               <div className="bg-white p-12 rounded-lg border border-dashed border-slate-300 text-center">
                 <FileText size={48} className="mx-auto text-slate-300 mb-4" />
-                <p className="text-slate-500 mb-4">Aucune évaluation générée pour le moment.</p>
-                <p className="text-sm text-slate-400">Utilisez "Générer Auto" dans l'onglet Plan.</p>
+                <p className="text-slate-500 mb-2">Aucune évaluation générée pour le moment.</p>
+                <p className="text-xs text-slate-400 mb-4">Cliquez sur le bouton ci-dessous pour générer les évaluations selon les critères choisis.</p>
+                <button
+                  type="button"
+                  onClick={handleUpdateFromConceptsAndObjectives}
+                  disabled={isUpdatingFromConcepts}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow transition inline-flex items-center gap-1.5"
+                >
+                  {isUpdatingFromConcepts ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                  Générer les évaluations selon critères & concepts
+                </button>
               </div>
             )}
           </div>
@@ -605,6 +672,28 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
 
           {/* ── C. CONCEPTS ── */}
           <CollapsibleSection title="C. Concepts" icon={<Brain size={18} className="text-purple-600" />} defaultOpen={true}>
+            {/* Action de mise à jour rapide selon les concepts */}
+            <div className="p-3.5 mb-4 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
+                  <Sparkles size={15} className="text-purple-600" />
+                  Mise à jour de l'unité selon les concepts modifiés
+                </p>
+                <p className="text-[11px] text-purple-700 mt-0.5">
+                  Réaligne automatiquement l'énoncé de recherche, les questions de recherche et les évaluations en accord avec vos concepts (clé et connexes) et le contexte mondial.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleUpdateFromConceptsAndObjectives}
+                disabled={isUpdatingFromConcepts}
+                className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm transition disabled:opacity-50 shrink-0"
+              >
+                {isUpdatingFromConcepts ? <Loader2 className="animate-spin" size={13} /> : <RefreshCw size={13} />}
+                Actualiser l'unité selon ces concepts
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <div>
                 <label className={labelClass}>Concept clé {detailUpdateMode && <span className="text-xs text-amber-600 ml-1">🔒</span>}</label>
@@ -732,6 +821,28 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
 
           {/* ── F. OBJECTIFS SPÉCIFIQUES ── */}
           <CollapsibleSection title="F. Objectifs spécifiques du groupe de matières" icon={<CheckCircle size={18} className="text-emerald-600" />} defaultOpen={true} badge={detailUpdateMode ? "🔒 Verrouillé" : undefined} badgeColor="bg-amber-100 text-amber-700">
+            {/* Action de mise à jour des évaluations selon les critères modifiés */}
+            <div className="p-3.5 mb-4 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                  <CheckCircle size={15} className="text-emerald-600" />
+                  Mettre à jour les évaluations selon les critères sélectionnés
+                </p>
+                <p className="text-[11px] text-emerald-700 mt-0.5">
+                  Génère des évaluations critériées IB authentiques strictement ciblées sur les critères choisis pour cette unité ({plan.objectives.length > 0 ? plan.objectives.map(c => `Critère ${c}`).join(', ') : 'Sélectionnez au moins 2 critères'}).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleUpdateFromConceptsAndObjectives}
+                disabled={isUpdatingFromConcepts}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition disabled:opacity-50 shrink-0"
+              >
+                {isUpdatingFromConcepts ? <Loader2 className="animate-spin" size={13} /> : <Sparkles size={13} />}
+                Mettre à jour selon ces critères
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>Critères d'évaluation (min. 2) {detailUpdateMode && <span className="text-xs text-amber-600 ml-1">🔒</span>}</label>

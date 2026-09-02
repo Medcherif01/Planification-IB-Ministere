@@ -406,7 +406,7 @@ ${i + 1}. En lien avec « ${s} », explique et justifie ta réponse.`,
   // Interdisciplinary → exactement 3 (A, B, C)
   // Standard      → min 2, max 3
   const minCriteria = isDesignSubject(subject) ? 4 : isInterdisciplinary ? 3 : 2;
-  const maxCriteria = isDesignSubject(subject) ? 4 : isInterdisciplinary ? 3 : 3;
+  const maxCriteria = isDesignSubject(subject) ? 4 : isInterdisciplinary ? 3 : Math.max(3, assessments.length);
 
   if (result.length < minCriteria) {
     const existingLetters = result.map(a => a.criterion);
@@ -2142,12 +2142,22 @@ export const generateAssessmentsForUnit = async (plan: UnitPlan): Promise<Assess
     : 'EXACTEMENT 2 critères (ou les critères spécifiés dans les objectifs de l\'unité) choisis parmi A, B, C, D convenant rigoureusement au contenu de cette unité';
 
   // ── Extraction des critères souhaités depuis plan.objectives si spécifiés ──
-  const specifiedCriteria = (plan.objectives || [])
+  const specifiedCriteria: string[] = (plan.objectives || [])
     .map(o => {
-      const match = o.match(/Crit[èe]re\s+([A-D])|Criterion\s+([A-D])/i);
-      return match ? (match[1] || match[2]).toUpperCase() : null;
+      const match = String(o).trim().match(/Crit[èe]re\s+([A-D])|Criterion\s+([A-D])|^([A-D])$/i);
+      return match ? (match[1] || match[2] || match[3]).toUpperCase() : null;
     })
-    .filter(Boolean);
+    .filter((c): c is string => !!c);
+
+  if (specifiedCriteria.length === 0 && Array.isArray(plan.assessments)) {
+    for (const a of plan.assessments) {
+      if (a?.criterion && ['A', 'B', 'C', 'D'].includes(a.criterion.toUpperCase())) {
+        if (!specifiedCriteria.includes(a.criterion.toUpperCase())) {
+          specifiedCriteria.push(a.criterion.toUpperCase());
+        }
+      }
+    }
+  }
 
   const criteriaTarget = specifiedCriteria.length > 0
     ? `CRITÈRES CIBLÉS POUR CETTE UNITÉ SELON SON CONTENU: ${specifiedCriteria.join(', ')}`
@@ -2297,6 +2307,253 @@ Retourne UNIQUEMENT un tableau JSON d'objets évaluation (pas d'objet englobant,
   } catch (err: any) {
     throw new Error(`Erreur génération évaluations: ${err?.message || err}`);
   }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// updateUnitFromConceptsAndObjectives — Met à jour l'unité complète
+// selon les modifications apportées aux concepts (clé, connexes), au contexte
+// mondial et aux objectifs spécifiques (critères A, B, C, D).
+// Génère également les évaluations critériées strictement adaptées aux critères
+// qui conviennent pour cette unité.
+// ─────────────────────────────────────────────────────────────────────────────
+export const updateUnitFromConceptsAndObjectives = async (
+  plan: UnitPlan,
+  onProgress?: (msg: string) => void
+): Promise<UnitPlan> => {
+  onProgress?.("Analyse des concepts et des critères d'évaluation...");
+
+  const subject = plan.subject || '';
+  const gradeLevel = plan.gradeLevel || '';
+  const lang = getGenerationLanguage(subject);
+  const isDesign = isDesignSubject(subject);
+
+  // 1. Détection stricte des critères visés pour cette unité
+  let targetCriteria: string[] = [];
+  if (Array.isArray(plan.objectives)) {
+    for (const o of plan.objectives) {
+      const match = String(o).trim().match(/Crit[èe]re\s+([A-D])|Criterion\s+([A-D])|^([A-D])$/i);
+      if (match) {
+        const letter = (match[1] || match[2] || match[3]).toUpperCase();
+        if (!targetCriteria.includes(letter)) targetCriteria.push(letter);
+      }
+    }
+  }
+
+  // Fallback si non spécifié dans objectives mais présent dans assessments
+  if (targetCriteria.length === 0 && Array.isArray(plan.assessments)) {
+    for (const a of plan.assessments) {
+      if (a?.criterion && ['A', 'B', 'C', 'D'].includes(a.criterion.toUpperCase())) {
+        if (!targetCriteria.includes(a.criterion.toUpperCase())) {
+          targetCriteria.push(a.criterion.toUpperCase());
+        }
+      }
+    }
+  }
+
+  // Si toujours vide ou insuffisant, appliquer les règles IB
+  if (isDesign) {
+    targetCriteria = ['A', 'B', 'C', 'D'];
+  } else if (targetCriteria.length < 2) {
+    const defaultPairs: Record<string, string[]> = {
+      'Mathématiques': ['A', 'C'],
+      'Sciences': ['B', 'C'],
+      'Acquisition de langues': ['A', 'B'],
+      'Langue et littérature': ['A', 'D'],
+      'Individus et sociétés': ['A', 'C'],
+      'Arts': ['A', 'B'],
+      'Éducation physique et à la santé': ['A', 'D'],
+    };
+    const pair = defaultPairs[subject] || ['A', 'C'];
+    for (const p of pair) {
+      if (!targetCriteria.includes(p) && targetCriteria.length < 2) targetCriteria.push(p);
+    }
+  }
+
+  // Tri alphabétique propre
+  targetCriteria.sort();
+
+  onProgress?.(`Harmonisation de l'énoncé, des questions et des activités (Critères ${targetCriteria.join(', ')})...`);
+
+  const prompt = lang === 'en'
+    ? `
+You are an expert IB MYP coordinator and curriculum leader.
+Update this IB MYP unit plan to ensure perfect pedagogical alignment with the modified concepts, global context, and targeted assessment criteria.
+
+CURRENT UNIT DATA:
+- Title: "${plan.title}"
+- Subject: ${subject}
+- Grade: ${gradeLevel}
+- Content / Chapters: ${plan.chapters || plan.content || ''}
+- Key Concept: "${plan.keyConcept || ''}"
+- Related Concepts: ${(plan.relatedConcepts || []).join(', ')}
+- Global Context: "${plan.globalContext || ''}"
+- Targeted Assessment Criteria for this unit: ${targetCriteria.map(c => 'Criterion ' + c).join(', ')}
+
+MANDATORY IB REQUIREMENTS:
+1. Statement of Inquiry:
+   Synthesize the key concept, at least one related concept, and the global context into a rich, transferable statement specifically reflecting the unit content.
+2. Inquiry Questions:
+   - factual: 2 to 3 questions covering key knowledge
+   - conceptual: 2 to 3 questions exploring the conceptual relationships
+   - debatable: 1 to 2 questions provoking critical thought and argument
+3. Objectives Details (objectivesDetails):
+   Provide one detailed entry for EACH targeted criterion (${targetCriteria.join(', ')}):
+   - criterion: Criterion letter ("A", "B", "C", or "D")
+   - aspects: official strands worked on (e.g., "i, ii, iii")
+   - expectedLevel: expected achievement level descriptor (e.g., "5-6" or "7-8")
+   - activities: concrete learning activities designed to build these specific strands
+   - formativeAssessment: formative task linked to this criterion
+   - summativeAssessment: brief summative check description
+4. Learning Experiences:
+   Step-by-step pedagogical sequence developing the concepts, content, and criteria.
+5. ATL Skills:
+   At least 3-4 specific ATL skills supporting the criteria and conceptual inquiry.
+6. Summative Assessment Summary:
+   Clear task description evaluating criteria ${targetCriteria.join(', ')}.
+7. Formative Assessment Summary:
+   Scaffolded formative assessment checkpoints throughout the unit.
+
+Return ONLY a valid JSON object:
+{
+  "statementOfInquiry": "...",
+  "inquiryQuestions": {
+    "factual": ["...", "..."],
+    "conceptual": ["...", "..."],
+    "debatable": ["..."]
+  },
+  "objectivesDetails": [
+    {
+      "criterion": "A",
+      "aspects": "i, ii, iii",
+      "expectedLevel": "5-6",
+      "activities": "...",
+      "formativeAssessment": "...",
+      "summativeAssessment": "..."
+    }
+  ],
+  "learningExperiences": "...",
+  "atlSkills": ["...", "..."],
+  "summativeAssessment": "...",
+  "formativeAssessment": "..."
+}
+`
+    : `
+Tu es un coordonnateur expert du Programme d'Éducation Intermédiaire (PEI) de l'IB.
+Mets à jour ce plan d'unité pour garantir une cohérence pédagogique parfaite avec les concepts modifiés (clé, connexes), le contexte mondial et les objectifs spécifiques / critères sélectionnés.
+
+DONNÉES ACTUELLES DE L'UNITÉ :
+- Titre : "${plan.title}"
+- Matière : ${subject}
+- Niveau : ${gradeLevel}
+- Contenu / Chapitres : ${plan.chapters || plan.content || ''}
+- Concept clé : "${plan.keyConcept || ''}"
+- Concepts connexes : ${(plan.relatedConcepts || []).join(', ')}
+- Contexte mondial : "${plan.globalContext || ''}"
+- Critères spécifiques visés pour cette unité : ${targetCriteria.map(c => 'Critère ' + c).join(', ')}
+
+EXIGENCES PÉDAGOGIQUES IB :
+1. Énoncé de recherche (statementOfInquiry) :
+   Formule un énoncé de recherche clair et transférable synthétisant le concept clé, au moins un concept connexe et l'exploration du contexte mondial en lien direct avec le contenu de l'unité.
+2. Questions de recherche (inquiryQuestions) :
+   - factuelles : 2 à 3 questions sur les notions et faits clés
+   - conceptuelles : 2 à 3 questions explorant les concepts et leurs liens
+   - invitant au débat : 1 à 2 questions ouvertes encourageant la pensée critique
+3. Détails par objectif (objectivesDetails) :
+   Fournis une fiche pour CHAQUE critère ciblé (${targetCriteria.join(', ')}) :
+   - criterion : lettre du critère ("A", "B", "C" ou "D")
+   - aspects : sous-aspects officiels IB travaillés (ex: "i, ii, iii")
+   - expectedLevel : niveau attendu (ex: "5-6" ou "7-8")
+   - activities : activités concrètes permettant d'acquérir et développer ces aspects
+   - formativeAssessment : évaluation formative associée à ce critère
+   - summativeAssessment : description de la tâche sommative
+4. Expériences d'apprentissage (learningExperiences) :
+   Parcours structuré reliant les leçons aux critères et aux concepts.
+5. Compétences ATL (atlSkills) :
+   3 à 4 compétences précises facilitant l'acquisition des critères ciblés.
+6. Résumé de l'évaluation sommative (summativeAssessment) :
+   Description de la tâche sommative évaluant strictement les critères ${targetCriteria.join(', ')}.
+7. Résumé de l'évaluation formative (formativeAssessment) :
+   Modalités et moments d'évaluation formative.
+
+Retourne UNIQUEMENT un objet JSON valide :
+{
+  "statementOfInquiry": "...",
+  "inquiryQuestions": {
+    "factual": ["...", "..."],
+    "conceptual": ["...", "..."],
+    "debatable": ["..."]
+  },
+  "objectivesDetails": [
+    {
+      "criterion": "A",
+      "aspects": "i, ii, iii",
+      "expectedLevel": "5-6",
+      "activities": "...",
+      "formativeAssessment": "...",
+      "summativeAssessment": "..."
+    }
+  ],
+  "learningExperiences": "...",
+  "atlSkills": ["...", "..."],
+  "summativeAssessment": "...",
+  "formativeAssessment": "..."
+}
+`;
+
+  const sysInstruction = getSystemInstruction(subject);
+  let updatedData: any = {};
+
+  try {
+    const rawText = await callGeminiViaProxy(
+      prompt,
+      sysInstruction,
+      { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 16384 }
+    );
+    const cleaned = cleanJsonText(rawText);
+    updatedData = JSON.parse(cleaned);
+  } catch (err: any) {
+    console.warn("Mise à jour partielle des champs texte:", err);
+  }
+
+  // 2. Préparation du plan intermédiaire pour générer les évaluations
+  const intermediatePlan: UnitPlan = {
+    ...plan,
+    statementOfInquiry: updatedData.statementOfInquiry || plan.statementOfInquiry,
+    inquiryQuestions: updatedData.inquiryQuestions || plan.inquiryQuestions,
+    objectives: targetCriteria.map(c => `Critère ${c}`),
+    objectivesDetails: updatedData.objectivesDetails || plan.objectivesDetails,
+    learningExperiences: updatedData.learningExperiences || plan.learningExperiences,
+    atlSkills: updatedData.atlSkills || plan.atlSkills,
+    summativeAssessment: updatedData.summativeAssessment || plan.summativeAssessment,
+    formativeAssessment: updatedData.formativeAssessment || plan.formativeAssessment,
+  };
+
+  // 3. Génération des évaluations critériées strictement adaptées aux critères de cette unité
+  onProgress?.(`Génération des évaluations critériées (Critères ${targetCriteria.join(', ')})...`);
+
+  let newAssessments: AssessmentData[] = [];
+  try {
+    newAssessments = await generateAssessmentsForUnit(intermediatePlan);
+  } catch (evalErr: any) {
+    console.error("Erreur lors de la génération des évaluations:", evalErr);
+    newAssessments = plan.assessments || [];
+  }
+
+  // Mettre à jour plan.objectives avec les noms complets des critères évalués
+  const finalObjectives = targetCriteria.map(c => {
+    const foundAssessment = newAssessments.find(a => a.criterion === c);
+    return foundAssessment ? `Critère ${c}: ${foundAssessment.criterionName}` : `Critère ${c}`;
+  });
+
+  const finalPlan: UnitPlan = {
+    ...intermediatePlan,
+    objectives: finalObjectives,
+    assessments: newAssessments,
+    lastDetailUpdate: new Date().toISOString(),
+  };
+
+  onProgress?.('Mise à jour terminée avec succès !');
+  return finalPlan;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -31,6 +31,25 @@ async function startServer() {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
+  // Database offline error middleware
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (
+      err.name === 'MongooseError' ||
+      err.name === 'MongoNetworkError' ||
+      err.name === 'MongoServerSelectionError' ||
+      err.message?.includes('buffering timed out') ||
+      err.message?.includes('ECONNREFUSED')
+    ) {
+      console.warn('[AI Studio] Database offline — returning mock empty response');
+      if (req.method === 'GET') {
+        return res.json(req.path.endsWith('s') || req.path.endsWith('s/') ? [] : {});
+      }
+      return res.status(503).json({ error: 'Service temporarily unavailable (database offline)' });
+    }
+    console.error('[Server Error]', err);
+    res.status(500).json({ error: 'Internal Server Error', message: err?.message || String(err) });
+  });
+
   // Vite middleware for dev or static files for prod
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -41,7 +60,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

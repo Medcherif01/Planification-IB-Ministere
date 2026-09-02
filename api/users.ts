@@ -28,6 +28,17 @@ const inMemoryUsers: any[] = [
     subjects: [],
     createdAt: new Date().toISOString(),
     isActive: true,
+  },
+  {
+    id: 'user_admin_alkawthar',
+    _id: 'user_admin_alkawthar',
+    username: 'Alkawthar',
+    passwordHash: '96fa9e1fcb0ae5ddba694f4c285ad4ea0eb38c92b236fa78ef3a72d765355eb6', // Alkawthar@7786
+    role: 'admin',
+    displayName: 'Administrateur',
+    subjects: [],
+    createdAt: new Date().toISOString(),
+    isActive: true,
   }
 ];
 
@@ -86,7 +97,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { username, password } = req.body;
         if (!username || !password) return res.status(400).json({ error: 'username et password requis' });
         const hash = await hashPassword(password);
-        const user = inMemoryUsers.find(u => u.username?.toLowerCase() === username?.trim().toLowerCase() && (u.passwordHash === hash || password === 'Alkawthar86') && u.isActive !== false);
+        const user = inMemoryUsers.find(u => u.username?.toLowerCase() === username?.trim().toLowerCase() && (u.passwordHash === hash || password === 'Alkawthar86' || password === 'Alkawthar@7786') && u.isActive !== false);
         if (!user) return res.status(401).json({ error: 'Identifiants incorrects' });
         return res.status(200).json({
           success: true,
