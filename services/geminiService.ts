@@ -1,5 +1,5 @@
-import { UnitPlan, AssessmentData } from "../types";
-import { getCriteriaSync, buildCriteriaSummaryForPrompt, getStandardIBCriterion } from './ibCriteriaService';
+import { UnitPlan, AssessmentData, UnitGroupingPreference } from "../types";
+import { getCriteriaSync, buildCriteriaSummaryForPrompt, getStandardIBCriterion, normalizeCriterionLetter, extractCriteriaLetters, formatCriterionFullName } from './ibCriteriaService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Proxy API helper — tous les appels Gemini passent par /api/generate (Vercel
@@ -2328,44 +2328,28 @@ export const updateUnitFromConceptsAndObjectives = async (
   const isDesign = isDesignSubject(subject);
 
   // 1. Détection stricte des critères visés pour cette unité
-  let targetCriteria: string[] = [];
-  if (Array.isArray(plan.objectives)) {
-    for (const o of plan.objectives) {
-      const match = String(o).trim().match(/Crit[èe]re\s+([A-D])|Criterion\s+([A-D])|^([A-D])$/i);
-      if (match) {
-        const letter = (match[1] || match[2] || match[3]).toUpperCase();
-        if (!targetCriteria.includes(letter)) targetCriteria.push(letter);
-      }
-    }
-  }
+  let targetCriteria: ('A' | 'B' | 'C' | 'D')[] = extractCriteriaLetters(plan.objectives);
 
   // Fallback si non spécifié dans objectives mais présent dans assessments
   if (targetCriteria.length === 0 && Array.isArray(plan.assessments)) {
-    for (const a of plan.assessments) {
-      if (a?.criterion && ['A', 'B', 'C', 'D'].includes(a.criterion.toUpperCase())) {
-        if (!targetCriteria.includes(a.criterion.toUpperCase())) {
-          targetCriteria.push(a.criterion.toUpperCase());
-        }
-      }
-    }
+    targetCriteria = extractCriteriaLetters(plan.assessments.map(a => a?.criterion));
   }
 
-  // Si toujours vide ou insuffisant, appliquer les règles IB
-  if (isDesign) {
-    targetCriteria = ['A', 'B', 'C', 'D'];
-  } else if (targetCriteria.length < 2) {
-    const defaultPairs: Record<string, string[]> = {
-      'Mathématiques': ['A', 'C'],
-      'Sciences': ['B', 'C'],
-      'Acquisition de langues': ['A', 'B'],
-      'Langue et littérature': ['A', 'D'],
-      'Individus et sociétés': ['A', 'C'],
-      'Arts': ['A', 'B'],
-      'Éducation physique et à la santé': ['A', 'D'],
-    };
-    const pair = defaultPairs[subject] || ['A', 'C'];
-    for (const p of pair) {
-      if (!targetCriteria.includes(p) && targetCriteria.length < 2) targetCriteria.push(p);
+  // Si toujours vide, appliquer les règles IB par défaut
+  if (targetCriteria.length === 0) {
+    if (isDesign) {
+      targetCriteria = ['A', 'B', 'C', 'D'];
+    } else {
+      const defaultPairs: Record<string, ('A' | 'B' | 'C' | 'D')[]> = {
+        'Mathématiques': ['A', 'C'],
+        'Sciences': ['B', 'C'],
+        'Acquisition de langues': ['A', 'B'],
+        'Langue et littérature': ['A', 'D'],
+        'Individus et sociétés': ['A', 'C'],
+        'Arts': ['A', 'B'],
+        'Éducation physique et à la santé': ['A', 'D'],
+      };
+      targetCriteria = defaultPairs[subject] || ['A', 'C'];
     }
   }
 
@@ -2516,12 +2500,26 @@ Retourne UNIQUEMENT un objet JSON valide :
   }
 
   // 2. Préparation du plan intermédiaire pour générer les évaluations
+  const criteriaFormatted = targetCriteria.map(c => formatCriterionFullName(subject, c));
   const intermediatePlan: UnitPlan = {
     ...plan,
     statementOfInquiry: updatedData.statementOfInquiry || plan.statementOfInquiry,
     inquiryQuestions: updatedData.inquiryQuestions || plan.inquiryQuestions,
-    objectives: targetCriteria.map(c => `Critère ${c}`),
-    objectivesDetails: updatedData.objectivesDetails || plan.objectivesDetails,
+    objectives: criteriaFormatted,
+    objectivesDetails: (updatedData.objectivesDetails && updatedData.objectivesDetails.length > 0)
+      ? updatedData.objectivesDetails
+      : targetCriteria.map(c => {
+          const existing = (plan.objectivesDetails || []).find(d => normalizeCriterionLetter(d.criterion) === c);
+          const std = getStandardIBCriterion(subject, c);
+          return {
+            criterion: c,
+            aspects: existing?.aspects || std.aspectsFormatted,
+            expectedLevel: existing?.expectedLevel || 'Niveau 5-6 attendu /8',
+            activities: existing?.activities || std.activities,
+            formativeAssessment: existing?.formativeAssessment || std.formativeAssessment,
+            summativeAssessment: existing?.summativeAssessment || std.summativeAssessment,
+          };
+        }),
     learningExperiences: updatedData.learningExperiences || plan.learningExperiences,
     atlSkills: updatedData.atlSkills || plan.atlSkills,
     summativeAssessment: updatedData.summativeAssessment || plan.summativeAssessment,
@@ -2539,10 +2537,15 @@ Retourne UNIQUEMENT un objet JSON valide :
     newAssessments = plan.assessments || [];
   }
 
-  // Mettre à jour plan.objectives avec les noms complets des critères évalués
+  // Mettre à jour plan.objectives en préservant scrupuleusement les objectifs spécifiques existants
+  const existingObjectives = plan.objectives || [];
   const finalObjectives = targetCriteria.map(c => {
-    const foundAssessment = newAssessments.find(a => a.criterion === c);
-    return foundAssessment ? `Critère ${c}: ${foundAssessment.criterionName}` : `Critère ${c}`;
+    const existingObj = existingObjectives.find(o => extractCriteriaLetters([o]).includes(c));
+    if (existingObj && existingObj.trim().length > 0) {
+      return existingObj;
+    }
+    const foundAssessment = newAssessments.find(a => normalizeCriterionLetter(a.criterion) === c);
+    return foundAssessment ? `Critère ${c}: ${foundAssessment.criterionName}` : formatCriterionFullName(subject, c);
   });
 
   const finalPlan: UnitPlan = {
@@ -2570,12 +2573,14 @@ export interface UnitSummaryInput {
 export const regenerateAllUnitsFromSummary = async (
   unitSummaries: UnitSummaryInput[],
   subject: string,
-  gradeLevel: string
+  gradeLevel: string,
+  onProgress?: (msg: string) => void
 ): Promise<UnitPlan[]> => {
   if (!unitSummaries || unitSummaries.length === 0) {
     throw new Error('Aucune unité fournie pour la régénération.');
   }
 
+  onProgress?.('Initialisation de la régénération...');
   const lang = getGenerationLanguage(subject);
   const sysInstruction = getSystemInstruction(subject);
   const subjectConcepts = getIBConceptsForSubject(subject);
@@ -2587,6 +2592,8 @@ export const regenerateAllUnitsFromSummary = async (
   - Chapitres: ${u.chapters || 'Non spécifié'}
   - Critères d'évaluation: ${u.objectives.join(', ') || 'Non spécifié'}`
   ).join('\n\n');
+
+  onProgress?.(`Génération globale de ${unitSummaries.length} unités avec l'IA...`);
 
   const prompt = lang === 'en'
     ? `
@@ -2601,7 +2608,7 @@ RULES:
 - Keep the EXACT title and statement of inquiry as provided (do not change them)
 - Keep the same chapters/content as provided
 - Keep the same assessment criteria (objectives) as provided
-- Generate ALL other fields: keyConcept, relatedConcepts, globalContext, inquiryQuestions, atlSkills, learningExperiences, summativeAssessment, formativeAssessment, differentiation, resources, reflection
+- Generate ALL base fields: keyConcept, relatedConcepts, globalContext, inquiryQuestions, atlSkills, learningExperiences, summativeAssessment, formativeAssessment, differentiation, resources, reflection
 - Generate criterion-based assessments (assessments array) matching the specified criteria
 - Each criterion must have at least 3 strands and at least 1 exercise
 
@@ -2649,20 +2656,198 @@ Retourne un tableau JSON de ${unitSummaries.length} objets UnitPlan.
 
   let plansRaw: any[] = Array.isArray(parsed) ? parsed : (parsed.units || parsed.plans || [parsed]);
 
-  return plansRaw.map((p: any, idx: number) => {
-    // Force-preserve the original title, SOI, chapters and objectives from summaries
+  const basePlans: UnitPlan[] = plansRaw.map((p: any, idx: number) => {
     const original = unitSummaries[idx] || unitSummaries[0];
     const sanitized = sanitizeUnitPlan(p, subject, gradeLevel);
+    const criteriaLetters = extractCriteriaLetters(original.objectives && original.objectives.length > 0 ? original.objectives : sanitized.objectives);
+    const finalCriteria: ('A' | 'B' | 'C' | 'D')[] = criteriaLetters.length > 0 ? criteriaLetters : ['A', 'C'];
     return {
       ...sanitized,
       id: Date.now().toString() + '-' + idx,
       title: original.title || sanitized.title,
       statementOfInquiry: original.statementOfInquiry || sanitized.statementOfInquiry,
       chapters: original.chapters || sanitized.chapters,
-      objectives: original.objectives.length > 0 ? original.objectives : sanitized.objectives,
+      objectives: finalCriteria.map(c => formatCriterionFullName(subject, c)),
     };
   });
+
+  // ── Remplir TOUS les champs détaillés demandés pour chaque unité (sessions, contexte, différenciation, réflexion...) ──
+  const fullyEnrichedPlans: UnitPlan[] = [];
+  for (let i = 0; i < basePlans.length; i++) {
+    const base = basePlans[i];
+    onProgress?.(`Enrichissement complet de l'unité ${i + 1}/${basePlans.length} : "${base.title}" (sessions, différenciation, contexte, réflexion)...`);
+    try {
+      const details = await generateUnitDetailsWithAI(base, (msg) => {
+        onProgress?.(`Unité ${i + 1}/${basePlans.length} — ${msg}`);
+      });
+      fullyEnrichedPlans.push({
+        ...base,
+        ...details,
+        title: base.title,
+        statementOfInquiry: base.statementOfInquiry,
+        chapters: base.chapters,
+        objectives: base.objectives,
+        assessments: (base.assessments && base.assessments.length > 0) ? base.assessments : details.assessments,
+      });
+    } catch (enrichErr) {
+      console.warn(`Erreur lors de l'enrichissement détaillé de l'unité ${i + 1}, utilisation du plan de base:`, enrichErr);
+      fullyEnrichedPlans.push(base);
+    }
+  }
+
+  onProgress?.(`✅ Régénération terminée avec succès (${fullyEnrichedPlans.length} unités complètes) !`);
+  return fullyEnrichedPlans;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// suggestUnitGroupingsFromSyllabus — Propose un regroupement des chapitres
+// en 4 à 6 unités avec des titres clairs et les critères IB recommandés
+// ─────────────────────────────────────────────────────────────────────────────
+export const suggestUnitGroupingsFromSyllabus = async (
+  syllabusText: string,
+  subject: string,
+  gradeLevel: string
+): Promise<UnitGroupingPreference[]> => {
+  const isDesign = isDesignSubject(subject);
+  const prompt = `
+Tu es un coordonnateur pédagogique expert du PEI (Programme d'Éducation Intermédiaire de l'IB).
+Voici le programme / la liste des chapitres pour la matière "${subject}" (${gradeLevel}) :
+
+---
+${syllabusText}
+---
+
+TÂCHE :
+Organise ce programme en 4 à 6 unités d'apprentissage annuelles cohérentes.
+Pour chaque unité :
+1. Propose un "unitTitle" percutant et pédagogique (ex: "Unité 1 : Modélisation et fonctions dans la vie courante").
+2. Regroupe dans "chapters" la liste des chapitres et notions spécifiques du programme qui construisent cette unité.
+3. Définis les "targetCriteria" (tableau de 2 critères parmi ["A", "B", "C", "D"], ou tous les 4 si Design).
+
+Retourne UNIQUEMENT un tableau JSON valide au format :
+[
+  {
+    "unitTitle": "...",
+    "chapters": "Chapitre 1 : ...\\nChapitre 2 : ...",
+    "targetCriteria": ["A", "C"]
+  }
+]
+`;
+
+  const rawText = await callGeminiViaProxy(
+    prompt,
+    "Tu es un coordinateur IB PEI expert en structuration curriculaire.",
+    { responseMimeType: 'application/json', temperature: 0.5 }
+  );
+
+  const cleaned = cleanJsonText(rawText);
+  const parsed = JSON.parse(cleaned);
+  const list: any[] = Array.isArray(parsed) ? parsed : (parsed.units || parsed.groupings || []);
+
+  return list.map((g, idx) => ({
+    id: `group-${Date.now()}-${idx}`,
+    unitTitle: g.unitTitle || `Unité ${idx + 1}`,
+    chapters: g.chapters || '',
+    targetCriteria: Array.isArray(g.targetCriteria) && g.targetCriteria.length > 0
+      ? extractCriteriaLetters(g.targetCriteria)
+      : (isDesign ? ['A', 'B', 'C', 'D'] : ['A', 'C']),
+  }));
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateCourseFromUnitGroupings — Génère toutes les unités complètes
+// en respectant scrupuleusement les titres préférés et le regroupement des chapitres
+// Remplissant TOUS les champs demandés
+// ─────────────────────────────────────────────────────────────────────────────
+export const generateCourseFromUnitGroupings = async (
+  groupings: UnitGroupingPreference[],
+  subject: string,
+  gradeLevel: string,
+  teacherName?: string,
+  resources?: string,
+  onProgress?: (msg: string) => void
+): Promise<UnitPlan[]> => {
+  if (!groupings || groupings.length === 0) {
+    throw new Error("Aucun regroupement d'unités fourni.");
+  }
+
+  const results: UnitPlan[] = [];
+
+  for (let i = 0; i < groupings.length; i++) {
+    const group = groupings[i];
+    const unitNum = i + 1;
+    onProgress?.(`Création de l'unité ${unitNum}/${groupings.length} : "${group.unitTitle}"...`);
+
+    const criteria: ('A' | 'B' | 'C' | 'D')[] = (group.targetCriteria && group.targetCriteria.length > 0)
+      ? group.targetCriteria
+      : (isDesignSubject(subject) ? ['A', 'B', 'C', 'D'] : ['A', 'C']);
+
+    const criteriaFormatted = criteria.map(c => formatCriterionFullName(subject, c));
+
+    // 1. Générer le squelette d'unité complet pour ce titre et ces chapitres
+    const unitPrompt = `
+Tu es un coordonnateur expert du PEI IB.
+Génère une unité d'apprentissage PEI COMPLÈTE et RIGOUREUSE avec le titre imposé et les chapitres regroupés suivants :
+
+- Titre imposé : "${group.unitTitle}"
+- Matière : ${subject}
+- Niveau : ${gradeLevel}
+- Chapitres / notions regroupés dans cette unité :
+${group.chapters}
+- Critères IB ciblés : ${criteria.map(c => `Critère ${c}`).join(', ')}
+
+CONSIGNES :
+1. Respecte SCRUPULEUSEMENT le titre imposé : "${group.unitTitle}".
+2. L'énoncé de recherche doit lier le concept clé, un concept connexe et le contexte mondial au contenu de ces chapitres.
+3. Génère les questions de recherche (factuelles, conceptuelles, invitant au débat).
+4. Génère les compétences ATL adaptées.
+5. Génère des évaluations sommatives et formatives ciblées strictement sur les critères : ${criteria.join(', ')}.
+6. Génère l'évaluation sommative critériée avec barème et exercices pour CHAQUE critère ciblé (${criteria.join(', ')}).
+
+Retourne UNIQUEMENT un objet JSON représentant un UnitPlan complet.
+`;
+
+    const rawText = await callGeminiViaProxy(
+      unitPrompt,
+      getSystemInstruction(subject),
+      { responseMimeType: 'application/json', temperature: 0.6 }
+    );
+
+    const cleaned = cleanJsonText(rawText);
+    const parsed = JSON.parse(cleaned);
+    const basePlan = sanitizeUnitPlan(parsed, subject, gradeLevel);
+
+    basePlan.title = group.unitTitle;
+    basePlan.chapters = group.chapters;
+    basePlan.objectives = criteriaFormatted;
+    basePlan.teacherName = teacherName || basePlan.teacherName;
+    basePlan.resources = resources || basePlan.resources;
+
+    // 2. Remplir TOUS les champs détaillés demandés (sessions, différenciation, contexte élève, etc.)
+    onProgress?.(`Enrichissement détaillé de l'unité ${unitNum}/${groupings.length} (sessions, différenciation, contexte, réflexion)...`);
+    try {
+      const details = await generateUnitDetailsWithAI(basePlan, (detailMsg) => {
+        onProgress?.(`Unité ${unitNum}/${groupings.length} — ${detailMsg}`);
+      });
+      results.push({
+        ...basePlan,
+        ...details,
+        title: group.unitTitle,
+        chapters: group.chapters,
+        objectives: criteriaFormatted,
+        teacherName: teacherName || basePlan.teacherName,
+        resources: resources || basePlan.resources,
+      });
+    } catch (e) {
+      console.warn(`Erreur détails unité ${unitNum}:`, e);
+      results.push(basePlan);
+    }
+  }
+
+  onProgress?.(`✅ ${results.length} unités générées avec succès selon vos titres et regroupements !`);
+  return results;
+};
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // generateSingleUnit — Génère UNE seule unité complète (avec évaluations)
@@ -3792,9 +3977,16 @@ export const generateUnitDetailsWithAI = async (
     : '2026/2027';
 
   // ── Objectifs cibles stricts (uniquement ceux définis pour cette unité) ────
-  const targetObjectives: ('A' | 'B' | 'C' | 'D')[] = (Array.isArray(plan.objectives) && plan.objectives.length > 0)
-    ? (plan.objectives.filter(o => ['A', 'B', 'C', 'D'].includes(o)) as ('A' | 'B' | 'C' | 'D')[])
-    : ['A', 'B', 'C', 'D'];
+  const extractedLetters = extractCriteriaLetters(plan.objectives);
+  const fromAssessments = extractCriteriaLetters((plan.assessments || []).map(a => a?.criterion));
+  const isDesignSubj = isDesignSubject(plan.subject || '');
+  const targetObjectives: ('A' | 'B' | 'C' | 'D')[] = extractedLetters.length > 0
+    ? extractedLetters
+    : fromAssessments.length > 0
+      ? fromAssessments
+      : isDesignSubj
+        ? ['A', 'B', 'C', 'D']
+        : ['A', 'C'];
 
   // ── Lire les dates depuis le calendrier annuel si disponible ──────────────
   let calStartDate = plan.startDate || '30 Août 2026';
@@ -4345,7 +4537,7 @@ Règles : JSON valide uniquement, français soigné, adapté à la matière "${p
     },
 
     // F. Objectifs spécifiques (Strictement limités aux critères choisis avec aspects i, ii, iii...)
-    objectives: targetObjectives,
+    objectives: targetObjectives.map(crit => formatCriterionFullName(plan.subject || '', crit)),
     objectivesDetails: targetObjectives.map(crit => {
       const existing = (Array.isArray(p1.objectivesDetails) ? p1.objectivesDetails : (plan.objectivesDetails || [])).find(
         (o: any) => (o?.criterion || '').toUpperCase() === crit

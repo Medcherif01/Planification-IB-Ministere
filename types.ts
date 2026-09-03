@@ -495,3 +495,10 @@ export interface ServiceActionPlan {
   keyConcept: string;
   createdAt: string;
 }
+
+export interface UnitGroupingPreference {
+  id?: string;
+  unitTitle: string;
+  chapters: string;
+  targetCriteria?: ('A' | 'B' | 'C' | 'D')[];
+}

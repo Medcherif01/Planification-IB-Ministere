@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail } from '../types';
 import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS, SUBJECTS } from '../constants';
 import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan, updateUnitFromConceptsAndObjectives } from '../services/geminiService';
+import { normalizeCriterionLetter, extractCriteriaLetters, getStandardIBCriterion, formatCriterionFullName } from '../services/ibCriteriaService';
 import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock } from 'lucide-react';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 
@@ -362,8 +363,8 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
 
   const isReadOnly = (field: string) => {
     if (!detailUpdateMode || allowUnlock) return false;
-    // En mode mise à jour détails, certains champs sont verrouillés par défaut
-    const locked = ['title', 'subject', 'gradeLevel', 'objectives', 'assessments', 'atlSkills'];
+    // En mode mise à jour détails, seuls le titre, la matière et le niveau restent protégés sauf déverrouillage
+    const locked = ['title', 'subject', 'gradeLevel'];
     return locked.includes(field);
   };
 
@@ -820,7 +821,7 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
           </CollapsibleSection>
 
           {/* ── F. OBJECTIFS SPÉCIFIQUES ── */}
-          <CollapsibleSection title="F. Objectifs spécifiques du groupe de matières" icon={<CheckCircle size={18} className="text-emerald-600" />} defaultOpen={true} badge={detailUpdateMode ? "🔒 Verrouillé" : undefined} badgeColor="bg-amber-100 text-amber-700">
+          <CollapsibleSection title="F. Objectifs spécifiques du groupe de matières" icon={<CheckCircle size={18} className="text-emerald-600" />} defaultOpen={true}>
             {/* Action de mise à jour des évaluations selon les critères modifiés */}
             <div className="p-3.5 mb-4 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div>
@@ -829,8 +830,13 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
                   Mettre à jour les évaluations selon les critères sélectionnés
                 </p>
                 <p className="text-[11px] text-emerald-700 mt-0.5">
-                  Génère des évaluations critériées IB authentiques strictement ciblées sur les critères choisis pour cette unité ({plan.objectives.length > 0 ? plan.objectives.map(c => `Critère ${c}`).join(', ') : 'Sélectionnez au moins 2 critères'}).
+                  Génère des évaluations critériées IB authentiques strictement ciblées sur les critères choisis pour cette unité ({extractCriteriaLetters(plan.objectives).length > 0 ? extractCriteriaLetters(plan.objectives).map(c => `Critère ${c}`).join(', ') : 'Sélectionnez au moins 2 critères'}).
                 </p>
+                {updateStatusMsg && (
+                  <p className="text-xs font-semibold text-emerald-800 mt-1 flex items-center gap-1">
+                    <Loader2 size={12} className="animate-spin" /> {updateStatusMsg}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
@@ -845,24 +851,32 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>Critères d'évaluation (min. 2) {detailUpdateMode && <span className="text-xs text-amber-600 ml-1">🔒</span>}</label>
-                <div className={`space-y-2 p-3 border border-slate-300 rounded-lg bg-slate-50 ${isReadOnly('objectives') ? 'pointer-events-none opacity-75' : ''}`}>
-                  {['A', 'B', 'C', 'D'].map(criterion => {
-                    const names: Record<string, string> = { 'A': 'Connaissances et compréhension', 'B': 'Recherche', 'C': 'Communication', 'D': 'Pensée critique' };
-                    const isSelected = plan.objectives.includes(criterion);
+                <label className={labelClass}>Critères d'évaluation ciblés (min. 2)</label>
+                <div className="space-y-2 p-3 border border-slate-300 rounded-lg bg-slate-50">
+                  {(['A', 'B', 'C', 'D'] as const).map(criterion => {
+                    const std = getStandardIBCriterion(plan.subject || '', criterion);
+                    const currentLetters = extractCriteriaLetters(plan.objectives);
+                    const isSelected = currentLetters.includes(criterion);
                     return (
                       <label key={criterion} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-100 p-2 rounded">
-                        <input type="checkbox" checked={isSelected} onChange={(e) => {
-                          if (isReadOnly('objectives')) return;
-                          const newObj = e.target.checked ? [...plan.objectives, criterion] : plan.objectives.filter(o => o !== criterion);
-                          handleInputChange('objectives', newObj);
-                        }} className="w-4 h-4 text-blue-600 rounded" />
-                        <span className="text-sm"><strong>Critère {criterion}:</strong> {names[criterion]}</span>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const updatedLetters = e.target.checked
+                              ? [...currentLetters, criterion].sort()
+                              : currentLetters.filter(l => l !== criterion);
+                            const newObj = updatedLetters.map(l => formatCriterionFullName(plan.subject || '', l));
+                            handleInputChange('objectives', newObj);
+                          }}
+                          className="w-4 h-4 text-emerald-600 rounded"
+                        />
+                        <span className="text-sm"><strong>Critère {criterion}:</strong> {std.name}</span>
                       </label>
                     );
                   })}
                 </div>
-                {plan.objectives.length < 2 && !detailUpdateMode && (
+                {extractCriteriaLetters(plan.objectives).length < 2 && (
                   <p className="text-xs text-red-600 mt-1">⚠️ Sélectionnez au moins 2 critères</p>
                 )}
               </div>
@@ -872,21 +886,28 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
               </div>
             </div>
             {/* Détails par objectif */}
-            {plan.objectives.length > 0 && (
+            {extractCriteriaLetters(plan.objectives).length > 0 && (
               <div className="mt-4 space-y-3">
                 <p className="text-xs font-bold text-slate-500 uppercase">Détails par objectif (OBJECTIF → ACTIVITÉ → APPRENTISSAGE → ÉVALUATION)</p>
-                {plan.objectives.map(criterion => {
-                  const names: Record<string, string> = { 'A': 'Connaissances et compréhension', 'B': 'Recherche', 'C': 'Communication', 'D': 'Pensée critique' };
-                  const detail = plan.objectivesDetails?.find(d => d.criterion === criterion) || { criterion, aspects: '', expectedLevel: '', activities: '', formativeAssessment: '', summativeAssessment: '' };
+                {extractCriteriaLetters(plan.objectives).map(criterion => {
+                  const std = getStandardIBCriterion(plan.subject || '', criterion);
+                  const detail = plan.objectivesDetails?.find(d => normalizeCriterionLetter(d.criterion) === criterion) || {
+                    criterion,
+                    aspects: std.aspectsFormatted,
+                    expectedLevel: 'Niveau 5-6 attendu /8',
+                    activities: std.activities,
+                    formativeAssessment: std.formativeAssessment,
+                    summativeAssessment: std.summativeAssessment
+                  };
                   return (
                     <div key={criterion} className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                      <p className="text-sm font-bold text-blue-700 mb-2">Critère {criterion} : {names[criterion]}</p>
+                      <p className="text-sm font-bold text-blue-700 mb-2">Critère {criterion} : {std.name}</p>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs text-slate-500 block mb-1">Aspects travaillés</label>
                           <input type="text" value={detail.aspects} onChange={(e) => {
                             const newDetails = [...(plan.objectivesDetails || [])];
-                            const idx = newDetails.findIndex(d => d.criterion === criterion);
+                            const idx = newDetails.findIndex(d => normalizeCriterionLetter(d.criterion) === criterion);
                             if (idx >= 0) newDetails[idx] = { ...newDetails[idx], aspects: e.target.value };
                             else newDetails.push({ ...detail, aspects: e.target.value });
                             handleInputChange('objectivesDetails', newDetails);
@@ -896,7 +917,7 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
                           <label className="text-xs text-slate-500 block mb-1">Niveau attendu</label>
                           <input type="text" value={detail.expectedLevel} onChange={(e) => {
                             const newDetails = [...(plan.objectivesDetails || [])];
-                            const idx = newDetails.findIndex(d => d.criterion === criterion);
+                            const idx = newDetails.findIndex(d => normalizeCriterionLetter(d.criterion) === criterion);
                             if (idx >= 0) newDetails[idx] = { ...newDetails[idx], expectedLevel: e.target.value };
                             else newDetails.push({ ...detail, expectedLevel: e.target.value });
                             handleInputChange('objectivesDetails', newDetails);
@@ -906,7 +927,7 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
                           <label className="text-xs text-slate-500 block mb-1">Activités permettant de développer</label>
                           <textarea value={detail.activities} onChange={(e) => {
                             const newDetails = [...(plan.objectivesDetails || [])];
-                            const idx = newDetails.findIndex(d => d.criterion === criterion);
+                            const idx = newDetails.findIndex(d => normalizeCriterionLetter(d.criterion) === criterion);
                             if (idx >= 0) newDetails[idx] = { ...newDetails[idx], activities: e.target.value };
                             else newDetails.push({ ...detail, activities: e.target.value });
                             handleInputChange('objectivesDetails', newDetails);
@@ -916,7 +937,7 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
                           <label className="text-xs text-slate-500 block mb-1">Évaluation formative associée</label>
                           <textarea value={detail.formativeAssessment} onChange={(e) => {
                             const newDetails = [...(plan.objectivesDetails || [])];
-                            const idx = newDetails.findIndex(d => d.criterion === criterion);
+                            const idx = newDetails.findIndex(d => normalizeCriterionLetter(d.criterion) === criterion);
                             if (idx >= 0) newDetails[idx] = { ...newDetails[idx], formativeAssessment: e.target.value };
                             else newDetails.push({ ...detail, formativeAssessment: e.target.value });
                             handleInputChange('objectivesDetails', newDetails);

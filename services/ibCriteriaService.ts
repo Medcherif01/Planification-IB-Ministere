@@ -623,3 +623,39 @@ export function getStandardIBCriterion(subject: string, criterion: 'A' | 'B' | '
   return group[criterion] || STANDARD_IB_CRITERIA_BY_SUBJECT.langue_litterature[criterion];
 }
 
+/**
+ * Normalise une chaîne ou un objet vers une lettre de critère IB ('A' | 'B' | 'C' | 'D')
+ */
+export function normalizeCriterionLetter(val: any): 'A' | 'B' | 'C' | 'D' | null {
+  if (!val) return null;
+  const s = String(val).trim();
+  const match = s.match(/Crit[èe]re\s*([A-D])|Criterion\s*([A-D])|^([A-D])$/i);
+  if (match) {
+    const letter = (match[1] || match[2] || match[3]).toUpperCase();
+    if (['A', 'B', 'C', 'D'].includes(letter)) return letter as 'A' | 'B' | 'C' | 'D';
+  }
+  return null;
+}
+
+/**
+ * Extrait la liste ordonnée unique des lettres de critères ('A', 'B', 'C', 'D')
+ * depuis un tableau hétérogène (ex: ["Critère A: ...", "C", "Critère B"])
+ */
+export function extractCriteriaLetters(objectives: any[]): ('A' | 'B' | 'C' | 'D')[] {
+  if (!Array.isArray(objectives)) return [];
+  const res: ('A' | 'B' | 'C' | 'D')[] = [];
+  for (const o of objectives) {
+    const letter = normalizeCriterionLetter(o);
+    if (letter && !res.includes(letter)) res.push(letter);
+  }
+  return res.sort();
+}
+
+/**
+ * Formate le nom complet officiel d'un critère (ex: "Critère A: Connaissances et compréhension")
+ */
+export function formatCriterionFullName(subject: string, letter: 'A' | 'B' | 'C' | 'D'): string {
+  const std = getStandardIBCriterion(subject, letter);
+  return `Critère ${letter}: ${std.name}`;
+}
+

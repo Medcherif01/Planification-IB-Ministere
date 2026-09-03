@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UnitPlan, ServiceActionPlan } from '../types';
-import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine, Sparkles } from 'lucide-react';
+import { UnitPlan, ServiceActionPlan, UnitGroupingPreference } from '../types';
+import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine, Sparkles, Wand2, ListPlus } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI, updateUnitFromConceptsAndObjectives } from '../services/geminiService';
+import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI, updateUnitFromConceptsAndObjectives, suggestUnitGroupingsFromSyllabus, generateCourseFromUnitGroupings } from '../services/geminiService';
+import { extractCriteriaLetters, formatCriterionFullName, getStandardIBCriterion } from '../services/ibCriteriaService';
 import type { AppUser } from '../services/authService';
 import ModificationRequestModal from './ModificationRequestModal';
 import { exportUnitPlanToWord, exportAllUnitPlansToZip, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
@@ -40,6 +41,12 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   const [bulkChapters, setBulkChapters] = useState('');
   const [bulkResources, setBulkResources] = useState('');
   const [isBulkGenerating, setIsBulkGenerating] = useState(false);
+  // Onglets et regroupements de chapitres pour la planification
+  const [bulkTab, setBulkTab] = useState<'auto' | 'groupings'>('auto');
+  const [unitGroupings, setUnitGroupings] = useState<UnitGroupingPreference[]>([]);
+  const [isSuggestingGroupings, setIsSuggestingGroupings] = useState(false);
+  const [isGeneratingFromGroupings, setIsGeneratingFromGroupings] = useState(false);
+  const [groupingGenProgress, setGroupingGenProgress] = useState('');
   const [exportingId, setExportingId] = useState<string | null>(null);
   const [isOverviewExporting, setIsOverviewExporting] = useState(false);
   const [overviewCompletionStatus, setOverviewCompletionStatus] = useState<{
@@ -211,6 +218,114 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       alert(`❌ Erreur lors de la génération:\n\n${errorMsg}\n\nConseils:\n- Vérifiez que vous avez bien copié tout le programme\n- Assurez-vous que le texte est clair et structuré\n- Réessayez dans quelques instants`);
     } finally {
       setIsBulkGenerating(false);
+    }
+  };
+
+  // ── Handlers : Regroupement de chapitres & Titres préférés d'unités ─────────
+  const handleSuggestGroupings = async () => {
+    if (!bulkChapters || bulkChapters.trim() === '') {
+      alert("Veuillez d'abord coller le programme ou la liste des chapitres dans le champ prévu.");
+      return;
+    }
+    setIsSuggestingGroupings(true);
+    try {
+      const suggested = await suggestUnitGroupingsFromSyllabus(bulkChapters, bulkSubject, bulkGrade);
+      if (suggested && suggested.length > 0) {
+        setUnitGroupings(suggested);
+        setBulkTab('groupings');
+      } else {
+        alert("L'IA n'a pas pu proposer de regroupements automatiques. Vous pouvez ajouter vos unités manuellement ci-dessous.");
+      }
+    } catch (err: any) {
+      console.error("Erreur lors de la suggestion des regroupements:", err);
+      alert(`Erreur : ${err?.message || err}`);
+    } finally {
+      setIsSuggestingGroupings(false);
+    }
+  };
+
+  const handleAddGrouping = () => {
+    const newIdx = unitGroupings.length + 1;
+    const isDesign = bulkSubject.toLowerCase().includes('design');
+    const defaultCriteria: ('A' | 'B' | 'C' | 'D')[] = isDesign ? ['A', 'B', 'C', 'D'] : ['A', 'C'];
+    setUnitGroupings(prev => [
+      ...prev,
+      {
+        id: `grouping-${Date.now()}-${newIdx}`,
+        unitTitle: `Unité ${newIdx} : `,
+        chapters: '',
+        targetCriteria: defaultCriteria,
+      }
+    ]);
+  };
+
+  const handleRemoveGrouping = (idx: number) => {
+    setUnitGroupings(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleUpdateGrouping = (idx: number, field: keyof UnitGroupingPreference, value: any) => {
+    setUnitGroupings(prev => {
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], [field]: value };
+      return copy;
+    });
+  };
+
+  const handleToggleGroupingCriterion = (idx: number, letter: 'A' | 'B' | 'C' | 'D') => {
+    setUnitGroupings(prev => {
+      const copy = [...prev];
+      const current = copy[idx]?.targetCriteria || ['A', 'C'];
+      const next = current.includes(letter)
+        ? current.filter(l => l !== letter)
+        : [...current, letter].sort();
+      copy[idx] = { ...copy[idx], targetCriteria: next };
+      return copy;
+    });
+  };
+
+  const handleGenerateFromGroupings = async () => {
+    if (unitGroupings.length === 0) {
+      alert("Veuillez définir au moins une unité ou cliquer sur 'Proposer les regroupements avec l'IA'.");
+      return;
+    }
+    const invalid = unitGroupings.find(g => !g.unitTitle || g.unitTitle.trim() === '');
+    if (invalid) {
+      alert("Chaque unité doit obligatoirement avoir un titre.");
+      return;
+    }
+
+    setIsGeneratingFromGroupings(true);
+    setGroupingGenProgress("Initialisation de la génération complète selon vos regroupements...");
+    try {
+      const generatedPlans = await generateCourseFromUnitGroupings(
+        unitGroupings,
+        bulkSubject,
+        bulkGrade,
+        bulkTeacher,
+        bulkResources,
+        (msg) => setGroupingGenProgress(msg)
+      );
+
+      if (generatedPlans && generatedPlans.length > 0) {
+        if (onAddPlans) {
+          onAddPlans(generatedPlans);
+        }
+        setIsBulkModalOpen(false);
+        setBulkChapters('');
+        setBulkTeacher('');
+        setBulkResources('');
+        setUnitGroupings([]);
+        setBulkTab('auto');
+        alert(`✅ ${generatedPlans.length} unité(s) générée(s) avec succès selon vos titres préférés et regroupements de chapitres ! Tous les champs détaillés ont été rigoureusement remplis.`);
+      } else {
+        throw new Error("Aucune unité n'a pu être générée.");
+      }
+    } catch (err: any) {
+      console.error("Erreur génération selon regroupements:", err);
+      alert(`❌ Erreur lors de la génération : ${err?.message || err}`);
+    } finally {
+      setIsGeneratingFromGroupings(false);
+      setGroupingGenProgress('');
     }
   };
 
@@ -659,12 +774,14 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     setUpdatingAssessmentId(plan.id);
     try {
       const newAssessments = await generateAssessmentsForUnit(plan);
-      // Synchroniser également plan.objectives avec les critères évalués
-      const dynamicObjectives = newAssessments.map(a => `Critère ${a.criterion}: ${a.criterionName}`);
+      // Conserver scrupuleusement les objectifs spécifiques existants
+      const preservedObjectives = (plan.objectives && plan.objectives.length > 0)
+        ? plan.objectives
+        : newAssessments.map(a => `Critère ${a.criterion}: ${a.criterionName}`);
       const updatedPlan: UnitPlan = { 
         ...plan, 
         assessments: newAssessments,
-        objectives: dynamicObjectives.length > 0 ? dynamicObjectives : plan.objectives
+        objectives: preservedObjectives
       };
       if (onUpdateUnit) {
         onUpdateUnit(updatedPlan);
@@ -695,7 +812,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       `Mettre à jour les objectifs spécifiques et aspects IB pour les ${toUpdate.length} unité(s) de ${targetSubject} (${targetGrade}) ?\n\n` +
       `• Les critères A, B, C ou D seront rigoureusement réalignés sur le contenu réel de chaque unité.\n` +
       `• Chaque critère contiendra au moins 3 aspects officiels (i, ii, iii...).\n` +
-      `• Les questions d'évaluation seront strictement conformes aux aspects.`
+      `• Les questions d'évaluation seront strictement conformes aux aspects.\n` +
+      `• Les objectifs spécifiques existants seront scrupuleusement conservés.`
     )) return;
 
     setIsBulkUpdatingObjectives(true);
@@ -708,11 +826,14 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
         setBulkUpdateObjectivesProgress(`${i + 1} / ${toUpdate.length} : "${plan.title}" en cours…`);
         try {
           const newAssessments = await generateAssessmentsForUnit(plan);
-          const dynamicObjectives = newAssessments.map(a => `Critère ${a.criterion}: ${a.criterionName}`);
+          // Conserver impérativement les objectifs spécifiques existants
+          const preservedObjectives = (plan.objectives && plan.objectives.length > 0)
+            ? plan.objectives
+            : newAssessments.map(a => `Critère ${a.criterion}: ${a.criterionName}`);
           const updated: UnitPlan = { 
             ...plan, 
             assessments: newAssessments,
-            objectives: dynamicObjectives.length > 0 ? dynamicObjectives : plan.objectives
+            objectives: preservedObjectives
           };
           if (onUpdateUnit) {
             onUpdateUnit(updated);
@@ -1270,11 +1391,17 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
     setIsRegenAllGenerating(true);
     setRegenAllProgress('Génération en cours…');
     try {
-      const newPlans = await regenerateAllUnitsFromSummary(regenSummaries, currentSubject, currentGrade);
-      // Preserve teacher names from original plans
+      const newPlans = await regenerateAllUnitsFromSummary(
+        regenSummaries, 
+        currentSubject, 
+        currentGrade,
+        (msg) => setRegenAllProgress(msg)
+      );
+      // Preserve teacher names and resources from original plans
       const enriched = newPlans.map((p, idx) => ({
         ...p,
         teacherName: plans[idx]?.teacherName || p.teacherName,
+        resources: plans[idx]?.resources || p.resources,
         subject: currentSubject,
         gradeLevel: currentGrade,
       }));
@@ -2507,94 +2634,365 @@ Chapitre 4 : Algèbre et équations
         </section>
       )}
 
-      {/* Bulk Modal */}
+      {/* Bulk Modal avec onglets : Découpage auto OU Titres préférés & Regroupement des chapitres */}
       {isBulkModalOpen && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
-              <div className="bg-violet-600 p-4 flex justify-between items-center text-white">
-                 <h3 className="text-lg font-bold flex items-center gap-2">
-                    <Layers size={20} />
-                    Planification Annuelle : {currentGrade}
-                 </h3>
-                 <button onClick={() => setIsBulkModalOpen(false)} className="hover:bg-violet-700 p-1 rounded">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-700 p-5 flex justify-between items-center text-white shrink-0">
+                 <div>
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                       <Layers size={22} />
+                       Planification Annuelle : {bulkSubject} ({bulkGrade})
+                    </h3>
+                    <p className="text-xs text-violet-200 mt-1">
+                       Générez vos unités complètes avec tous les champs détaillés et évaluations critériées IB
+                    </p>
+                 </div>
+                 <button 
+                    onClick={() => {
+                      if (!isBulkGenerating && !isGeneratingFromGroupings) {
+                        setIsBulkModalOpen(false);
+                      }
+                    }} 
+                    className="hover:bg-white/20 p-2 rounded-lg transition"
+                 >
                     <X size={20} />
                  </button>
               </div>
-              
-              <div className="p-6 space-y-4">
-                 <p className="text-slate-600 text-sm">
-                    Collez le programme complet ci-dessous. L'IA va structurer 4 à 6 unités et générer tous les évaluations.
-                 </p>
-                 
-                 <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-700 mb-1">Matière</label>
-                        <input 
-                            type="text" 
-                            value={bulkSubject}
-                            className="w-full p-2 border border-slate-300 rounded-lg text-sm bg-slate-100 font-medium"
-                            readOnly
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-700 mb-1">Niveau</label>
-                        <input 
-                            type="text" 
-                            value={bulkGrade}
-                            className="w-full p-2 border border-slate-300 rounded-lg text-sm bg-slate-100 font-medium"
-                            readOnly
-                        />
-                    </div>
-                 </div>
 
-                 <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Nom de l'enseignant(e)</label>
-                    <input 
-                        type="text" 
-                        value={bulkTeacher}
-                        onChange={(e) => setBulkTeacher(e.target.value)}
-                        placeholder="ex: M. Dupont"
-                        className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-500 outline-none"
-                    />
-                 </div>
-
-                 <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Liste des chapitres / Sujets</label>
-                    <textarea 
-                        value={bulkChapters}
-                        onChange={(e) => setBulkChapters(e.target.value)}
-                        placeholder="Collez ici le programme complet..."
-                        className="w-full h-40 p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-500 outline-none"
-                    />
-                 </div>
-
-                 <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Ressources</label>
-                    <textarea 
-                        value={bulkResources}
-                        onChange={(e) => setBulkResources(e.target.value)}
-                        placeholder="ex: Manuel page 45-60, Vidéo YouTube, etc."
-                        className="w-full h-24 p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-500 outline-none"
-                    />
-                 </div>
-
-                 <button 
-                    onClick={handleBulkGenerate}
-                    disabled={isBulkGenerating}
-                    className="w-full py-3 bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-bold flex items-center justify-center gap-2 transition disabled:opacity-70"
+              {/* Navigation des Onglets */}
+              <div className="bg-slate-100 border-b border-slate-200 px-6 pt-3 flex gap-2 shrink-0">
+                 <button
+                    type="button"
+                    onClick={() => setBulkTab('auto')}
+                    className={`px-4 py-2.5 rounded-t-lg font-bold text-sm flex items-center gap-2 transition border-b-2 ${
+                      bulkTab === 'auto'
+                        ? 'bg-white text-violet-700 border-violet-600 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 border-transparent'
+                    }`}
                  >
-                    {isBulkGenerating ? (
-                        <>
-                            <Loader2 className="animate-spin" size={20} />
-                            Analyse et structuration en cours (Ceci peut prendre 30s)...
-                        </>
-                    ) : (
-                        <>
-                            <Layers size={20} />
-                            Générer les 4-6 Unités
-                        </>
-                    )}
+                    <Sparkles size={16} />
+                    ⚡ Découpage automatique (Rapide)
                  </button>
+                 <button
+                    type="button"
+                    onClick={() => setBulkTab('groupings')}
+                    className={`px-4 py-2.5 rounded-t-lg font-bold text-sm flex items-center gap-2 transition border-b-2 ${
+                      bulkTab === 'groupings'
+                        ? 'bg-white text-violet-700 border-violet-600 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 border-transparent'
+                    }`}
+                 >
+                    <ListPlus size={16} />
+                    🎯 Titres préférés & Regroupement des chapitres
+                 </button>
+              </div>
+              
+              {/* Contenu défilable */}
+              <div className="p-6 overflow-y-auto space-y-5 flex-1">
+                 {/* Champs communs (Matière, Niveau, Enseignant, Ressources) */}
+                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Matière & Niveau</label>
+                        <input 
+                            type="text" 
+                            value={`${bulkSubject} • ${bulkGrade}`}
+                            className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-slate-100 font-semibold text-slate-700"
+                            readOnly
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Nom de l'enseignant(e)</label>
+                        <input 
+                            type="text" 
+                            value={bulkTeacher}
+                            onChange={(e) => setBulkTeacher(e.target.value)}
+                            placeholder="ex: M. Dupont"
+                            className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-violet-500 outline-none"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Ressources & Manuels</label>
+                        <input 
+                            type="text" 
+                            value={bulkResources}
+                            onChange={(e) => setBulkResources(e.target.value)}
+                            placeholder="ex: Manuel p. 45-60, labo..."
+                            className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-violet-500 outline-none"
+                        />
+                    </div>
+                 </div>
+
+                 {/* ONGLET 1 : DÉCOUPAGE AUTOMATIQUE */}
+                 {bulkTab === 'auto' && (
+                    <div className="space-y-4">
+                       <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 text-xs text-violet-800 flex justify-between items-center">
+                          <span>💡 <strong>Mode automatique :</strong> Collez votre programme complet, l'IA structurera 4 à 6 unités cohérentes.</span>
+                          <button
+                             type="button"
+                             onClick={() => setBulkTab('groupings')}
+                             className="ml-3 underline font-bold hover:text-violet-950 shrink-0"
+                          >
+                             Choisir les titres d'unités →
+                          </button>
+                       </div>
+
+                       <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                             Programme officiel / Liste des chapitres *
+                          </label>
+                          <textarea 
+                              value={bulkChapters}
+                              onChange={(e) => setBulkChapters(e.target.value)}
+                              placeholder="Collez ici l'ensemble des chapitres, thèmes et notions du programme..."
+                              className="w-full h-52 p-3 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-violet-500 outline-none leading-relaxed"
+                          />
+                       </div>
+
+                       <button 
+                          onClick={handleBulkGenerate}
+                          disabled={isBulkGenerating}
+                          className="w-full py-3.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition shadow-md disabled:opacity-60"
+                       >
+                          {isBulkGenerating ? (
+                              <>
+                                  <Loader2 className="animate-spin" size={20} />
+                                  Génération et enrichissement complet en cours (environ 30s)...
+                              </>
+                          ) : (
+                              <>
+                                  <Sparkles size={20} />
+                                  Générer les 4-6 Unités automatiquement
+                              </>
+                          )}
+                       </button>
+                    </div>
+                 )}
+
+                 {/* ONGLET 2 : TITRES PRÉFÉRÉS & REGROUPEMENT DES CHAPITRES */}
+                 {bulkTab === 'groupings' && (
+                    <div className="space-y-5">
+                       {/* Guide & Assistant de proposition */}
+                       <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
+                          <div className="flex items-start gap-3">
+                             <div className="p-2 bg-indigo-600 text-white rounded-lg shrink-0 mt-0.5">
+                                <ListPlus size={18} />
+                             </div>
+                             <div>
+                                <h4 className="text-sm font-bold text-indigo-950">
+                                   Définissez les titres des unités souhaitées et regroupez vos chapitres
+                                </h4>
+                                <p className="text-xs text-indigo-800 mt-1">
+                                   Vous pouvez soit coller votre programme et laisser l'IA vous proposer des regroupements éditables, soit créer manuellement vos unités et y associer les chapitres correspondants.
+                                </p>
+                             </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-indigo-200/60 flex flex-wrap gap-2 items-center justify-between">
+                             <div className="flex-1 min-w-[280px]">
+                                <input 
+                                   type="text"
+                                   value={bulkChapters}
+                                   onChange={(e) => setBulkChapters(e.target.value)}
+                                   placeholder="Ou collez ici le programme pour que l'IA suggère les regroupements..."
+                                   className="w-full p-2 text-xs border border-indigo-200 rounded-lg bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                             </div>
+                             <div className="flex gap-2">
+                                <button
+                                   type="button"
+                                   onClick={handleSuggestGroupings}
+                                   disabled={isSuggestingGroupings || !bulkChapters.trim()}
+                                   className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow-sm disabled:opacity-50"
+                                >
+                                   {isSuggestingGroupings ? (
+                                      <>
+                                         <Loader2 className="animate-spin" size={14} />
+                                         Proposition par l'IA...
+                                      </>
+                                   ) : (
+                                      <>
+                                         <Wand2 size={14} />
+                                         🤖 Proposer les regroupements & titres
+                                      </>
+                                   )}
+                                </button>
+                                <button
+                                   type="button"
+                                   onClick={handleAddGrouping}
+                                   className="px-3 py-2 bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-bold flex items-center gap-1 transition"
+                                >
+                                   <Plus size={14} />
+                                   + Ajouter une unité
+                                </button>
+                             </div>
+                          </div>
+                       </div>
+
+                       {/* Liste des regroupements */}
+                       {unitGroupings.length === 0 ? (
+                          <div className="text-center py-10 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50/50 p-6">
+                             <Layers className="mx-auto text-slate-400 mb-2" size={36} />
+                             <p className="text-sm font-semibold text-slate-700">Aucune unité configurée pour le moment</p>
+                             <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-4">
+                                Collez votre programme dans le champ ci-dessus et cliquez sur <strong>"Proposer les regroupements & titres"</strong>, ou ajoutez vos unités manuellement.
+                             </p>
+                             <div className="flex justify-center gap-3">
+                                <button
+                                   type="button"
+                                   onClick={handleAddGrouping}
+                                   className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow"
+                                >
+                                   <Plus size={14} />
+                                   Créer ma première unité
+                                </button>
+                             </div>
+                          </div>
+                       ) : (
+                          <div className="space-y-4">
+                             <div className="flex justify-between items-center text-xs text-slate-600 font-semibold px-1">
+                                <span>{unitGroupings.length} unité(s) configurée(s)</span>
+                                <button
+                                   type="button"
+                                   onClick={handleAddGrouping}
+                                   className="text-violet-600 hover:text-violet-800 flex items-center gap-1 font-bold"
+                                >
+                                   <Plus size={14} />
+                                   Ajouter une autre unité
+                                </button>
+                             </div>
+
+                             {unitGroupings.map((group, idx) => {
+                                const criteriaList: ('A' | 'B' | 'C' | 'D')[] = ['A', 'B', 'C', 'D'];
+                                const activeCriteria = group.targetCriteria || ['A', 'C'];
+                                return (
+                                   <div 
+                                      key={group.id || idx}
+                                      className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3 relative hover:border-violet-300 transition"
+                                   >
+                                      <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                                         <div className="flex items-center gap-2">
+                                            <span className="w-6 h-6 rounded-full bg-violet-100 text-violet-700 text-xs font-bold flex items-center justify-center">
+                                               {idx + 1}
+                                            </span>
+                                            <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                               Unité {idx + 1}
+                                            </span>
+                                         </div>
+                                         <button
+                                            type="button"
+                                            onClick={() => handleRemoveGrouping(idx)}
+                                            className="text-slate-400 hover:text-red-600 p-1 rounded transition"
+                                            title="Supprimer cette unité"
+                                         >
+                                            <Trash2 size={16} />
+                                         </button>
+                                      </div>
+
+                                      <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                                         {/* Titre préféré */}
+                                         <div className="md:col-span-6 space-y-1">
+                                            <label className="block text-xs font-bold text-slate-700">
+                                               Titre préféré de l'unité *
+                                            </label>
+                                            <input 
+                                               type="text"
+                                               value={group.unitTitle}
+                                               onChange={(e) => handleUpdateGrouping(idx, 'unitTitle', e.target.value)}
+                                               placeholder={`ex: Unité ${idx + 1} : Modélisation des relations linéaires`}
+                                               className="w-full p-2.5 border border-slate-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-violet-500 outline-none"
+                                            />
+                                         </div>
+
+                                         {/* Critères IB ciblés */}
+                                         <div className="md:col-span-6 space-y-1">
+                                            <label className="block text-xs font-bold text-slate-700">
+                                               Critères IB évalués pour cette unité
+                                            </label>
+                                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                               {criteriaList.map((crit) => {
+                                                  const isSelected = activeCriteria.includes(crit);
+                                                  return (
+                                                     <button
+                                                        key={crit}
+                                                        type="button"
+                                                        onClick={() => handleToggleGroupingCriterion(idx, crit)}
+                                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                                                           isSelected 
+                                                              ? 'bg-violet-600 text-white shadow-sm ring-1 ring-violet-500' 
+                                                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                                        }`}
+                                                     >
+                                                        {isSelected ? '✓' : '+'} Critère {crit}
+                                                     </button>
+                                                  );
+                                               })}
+                                            </div>
+                                         </div>
+
+                                         {/* Chapitres regroupés */}
+                                         <div className="md:col-span-12 space-y-1">
+                                            <label className="block text-xs font-bold text-slate-700">
+                                               Chapitres, thèmes et leçons regroupés pour construire cette unité *
+                                            </label>
+                                            <textarea 
+                                               value={group.chapters}
+                                               onChange={(e) => handleUpdateGrouping(idx, 'chapters', e.target.value)}
+                                               placeholder="Listez les chapitres qui forment cette unité (ex: Chapitre 1: Équations et graphiques&#10;Chapitre 2: Systèmes linéaires)..."
+                                               className="w-full h-24 p-2.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-violet-500 outline-none leading-relaxed"
+                                            />
+                                         </div>
+                                      </div>
+                                   </div>
+                                );
+                             })}
+                          </div>
+                       )}
+
+                       {/* Bannière de confirmation du remplissage complet */}
+                       <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-xs text-emerald-800 space-y-1">
+                          <div className="flex items-center gap-1.5 font-bold">
+                             <CheckCircle size={15} className="text-emerald-600" />
+                             Remplissage exhaustif de tous les champs garanti :
+                          </div>
+                          <p className="text-slate-600 pl-5">
+                             Chaque unité générée comprendra l'énoncé de recherche, questions de recherche (factuelles, conceptuelles, débattables), compétences ATL, leçons/séances détaillées, évaluations sommatives et formatives basées sur les aspects officiels des critères choisis, différenciation (soutien & approfondissement) et réflexion.
+                          </p>
+                       </div>
+
+                       {/* Progression pendant la génération */}
+                       {isGeneratingFromGroupings && (
+                          <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-center space-y-2 animate-pulse">
+                             <Loader2 className="animate-spin mx-auto text-violet-600" size={24} />
+                             <p className="text-xs font-bold text-violet-900">{groupingGenProgress || "Génération en cours..."}</p>
+                             <p className="text-[11px] text-violet-600">
+                                Chaque unité est enrichie avec tous ses champs et évaluations critères IB. Merci de patienter quelques instants.
+                             </p>
+                          </div>
+                       )}
+
+                       {/* Bouton de génération selon regroupements */}
+                       <button 
+                          type="button"
+                          onClick={handleGenerateFromGroupings}
+                          disabled={isGeneratingFromGroupings || unitGroupings.length === 0}
+                          className="w-full py-4 bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-700 hover:from-violet-700 hover:to-purple-800 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition shadow-lg disabled:opacity-50 text-sm"
+                       >
+                          {isGeneratingFromGroupings ? (
+                              <>
+                                  <Loader2 className="animate-spin" size={18} />
+                                  Génération des unités complètes en cours...
+                              </>
+                          ) : (
+                              <>
+                                  <Sparkles size={18} />
+                                  Générer le programme complet selon ces {unitGroupings.length} regroupement(s)
+                              </>
+                          )}
+                       </button>
+                    </div>
+                 )}
               </div>
            </div>
         </div>
