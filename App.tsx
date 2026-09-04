@@ -5,6 +5,7 @@ import UnitPlanForm from './components/UnitPlanForm';
 import AuthenticationScreen from './components/AuthenticationScreen';
 import HomeScreen from './components/HomeScreen';
 import ExamsWizard from './components/ExamsWizard';
+import ErrorBoundary from './components/ErrorBoundary';
 import { sanitizeUnitPlan } from './services/geminiService';
 import { loadPlansFromDatabase, savePlansToDatabase, migrateLocalStorageToMongoDB, needsMigration, cleanupInvalidLocalStorageKeys } from './services/databaseService';
 import { mergePlansWithReplacement, deduplicatePlans } from './services/excelBackupService';
@@ -214,7 +215,12 @@ const App: React.FC = () => {
       alert('Action refusée : utilisez le bouton "Demander une modification" pour soumettre une demande à l\'administrateur.');
       return;
     }
-    setEditingPlan(plan);
+    const cleanPlan = sanitizeUnitPlan(
+      plan,
+      plan.subject || session?.subject || '',
+      plan.gradeLevel || session?.grade || ''
+    );
+    setEditingPlan(cleanPlan);
     setView(AppView.EDITOR);
     localStorage.setItem('currentView', AppView.EDITOR);
   };
@@ -320,11 +326,16 @@ const App: React.FC = () => {
         />
       ) : (
         <div className="p-4 md:p-8">
-          <UnitPlanForm
-            initialPlan={editingPlan}
-            onSave={handleSavePlan}
-            onCancel={handleCancel}
-          />
+          <ErrorBoundary
+            fallbackTitle="Erreur lors de l'affichage du formulaire d'unité"
+            onReset={handleCancel}
+          >
+            <UnitPlanForm
+              initialPlan={editingPlan || undefined}
+              onSave={handleSavePlan}
+              onCancel={handleCancel}
+            />
+          </ErrorBoundary>
         </div>
       )}
     </div>

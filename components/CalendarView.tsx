@@ -357,7 +357,6 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                       backgroundColor: isSelected ? color : lighten(color, 0.8),
                       color: isSelected ? '#fff' : color,
                       borderColor: color,
-                      ringColor: isSelected ? color : 'transparent',
                     }}
                     title={subj}
                   >
@@ -411,7 +410,6 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
               </div>
               <button
                 onClick={handleGenerate}
-                disabled={genState === 'loading'}
                 className="flex items-center gap-2 px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-semibold text-sm transition shadow-lg"
               >
                 <Sparkles size={16} />

@@ -576,7 +576,11 @@ export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string)
     
     generatedAssessmentDocument: plan.generatedAssessmentDocument || "",
     assessmentData: sanitizeAssessmentData(plan.assessmentData || plan.donnees_evaluation),
-    assessments: assessments
+    assessments: assessments,
+    objectivesDetails: Array.isArray(plan.objectivesDetails) ? plan.objectivesDetails : [],
+    lessons: Array.isArray(plan.lessons) ? plan.lessons : [],
+    sessions: Array.isArray(plan.sessions) ? plan.sessions : [],
+    formativeDetails: Array.isArray(plan.formativeDetails) ? plan.formativeDetails : [],
   };
 };
 
@@ -1887,12 +1891,26 @@ export const generateCourseFromChapters = async (
       const lang = getGenerationLanguage(subject);
       const isDesign = isDesignSubject(subject);
       
+      // ── Directive explicite de regroupement des chapitres et respect des titres d'unités ──
+      const groupingAndTitlesInstruction = `
+      ❗❗ RÈGLE IMPORTANTE DE REGROUPEMENT DES CHAPITRES ET DES UNITÉS :
+      - Si le programme fourni contient déjà des titres d'unités explicites (ex: "Unité 1 : ...", "Unité 2 : ...", ou titres thématiques majeurs), TU DOIS STRICTEMENT GÉNÉRER LES UNITÉS SOUS CES TITRES EXACTS.
+      - Si le programme est une liste brute de chapitres sans titres d'unités, TU DOIS REGROUPER CES CHAPITRES EN 4 À 6 UNITÉS PÉDAGOGIQUEMENT COHÉRENTES et GÉNÉRER DES TITRES PERTINENTS ET ÉVOCATEURS POUR CHAQUE UNITÉ (ex: "Unité 1 : [Titre représentatif des notions]", "Unité 2 : [Titre représentatif]").
+      - CHAQUE UNITÉ DOIT AVOIR DANS SON CHAMP "chapters" LA LISTE DES CHAPITRES ET LEÇONS CORRESPONDANTS, OBLIGATOIREMENT FORMATÉE SOUS FORME DE TIRETS :
+        Chap 1
+        -leçon 1
+        -leçon 2
+        Chap 2
+        Chap 3
+      `;
+
       // ── Task instruction ajoutée au system prompt ────────────────────────
       let taskInstruction = '';
       
       if (isDesign) {
         taskInstruction = `
         TÂCHE : Divise le programme de Design fourni en MINIMUM 4 et MAXIMUM 6 unités logiques (idéalement 4 unités pour couvrir l'année entière).
+        ${groupingAndTitlesInstruction}
         Retourne une LISTE JSON (Array) d'objets UnitPlan.
         ❗ CHAQUE unité Design DOIT avoir les 4 critères A, B, C, D dans "assessments" (DOSSIER DE CONCEPTION).
         ❗ MINIMUM 4 unités, MAXIMUM 6 unités.
@@ -1900,18 +1918,21 @@ export const generateCourseFromChapters = async (
       } else if (lang === 'en') {
         taskInstruction = `
         TASK: Divide the provided curriculum into MINIMUM 4 and MAXIMUM 6 logical units (aim for 4-5 units covering the full year).
+        ${groupingAndTitlesInstruction}
         Return a JSON LIST (Array) of UnitPlan objects.
         ❗ MINIMUM 4 units, MAXIMUM 6 units.
         `;
       } else if (lang === 'arts') {
         taskInstruction = `
         TÂCHE : Divise le programme fourni en MINIMUM 4 et MAXIMUM 6 unités logiques (idéalement 4-5 unités pour l'année).
+        ${groupingAndTitlesInstruction}
         Retourne une LISTE JSON (Array) d'objets UnitPlan EN FRANÇAIS UNIQUEMENT.
         ❗ MINIMUM 4 unités, MAXIMUM 6 unités.
         `;
       } else {
         taskInstruction = `
         TÂCHE : Divise le programme fourni en MINIMUM 4 et MAXIMUM 6 unités logiques (idéalement 4-5 unités pour l'année complète).
+        ${groupingAndTitlesInstruction}
         Retourne une LISTE JSON (Array) d'objets UnitPlan.
         ❗ MINIMUM 4 unités, MAXIMUM 6 unités — jamais moins de 4.
         `;
@@ -2506,20 +2527,20 @@ Retourne UNIQUEMENT un objet JSON valide :
     statementOfInquiry: updatedData.statementOfInquiry || plan.statementOfInquiry,
     inquiryQuestions: updatedData.inquiryQuestions || plan.inquiryQuestions,
     objectives: criteriaFormatted,
-    objectivesDetails: (updatedData.objectivesDetails && updatedData.objectivesDetails.length > 0)
-      ? updatedData.objectivesDetails
-      : targetCriteria.map(c => {
-          const existing = (plan.objectivesDetails || []).find(d => normalizeCriterionLetter(d.criterion) === c);
-          const std = getStandardIBCriterion(subject, c);
-          return {
-            criterion: c,
-            aspects: existing?.aspects || std.aspectsFormatted,
-            expectedLevel: existing?.expectedLevel || 'Niveau 5-6 attendu /8',
-            activities: existing?.activities || std.activities,
-            formativeAssessment: existing?.formativeAssessment || std.formativeAssessment,
-            summativeAssessment: existing?.summativeAssessment || std.summativeAssessment,
-          };
-        }),
+    objectivesDetails: targetCriteria.map(c => {
+      const existing = (plan.objectivesDetails || []).find(d => normalizeCriterionLetter(d.criterion) === c);
+      const fromAI = (updatedData.objectivesDetails || []).find((d: any) => normalizeCriterionLetter(d.criterion) === c);
+      const std = getStandardIBCriterion(subject, c);
+      return {
+        criterion: c,
+        // Priorité absolue aux aspects et objectifs corrigés/saisis par l'enseignant
+        aspects: (existing?.aspects && String(existing.aspects).trim()) ? String(existing.aspects).trim() : (fromAI?.aspects || std.aspectsFormatted),
+        expectedLevel: (existing?.expectedLevel && String(existing.expectedLevel).trim()) ? String(existing.expectedLevel).trim() : (fromAI?.expectedLevel || 'Niveau 5-6 attendu /8'),
+        activities: (existing?.activities && String(existing.activities).trim()) ? String(existing.activities).trim() : (fromAI?.activities || std.activities),
+        formativeAssessment: (existing?.formativeAssessment && String(existing.formativeAssessment).trim()) ? String(existing.formativeAssessment).trim() : (fromAI?.formativeAssessment || std.formativeAssessment),
+        summativeAssessment: (existing?.summativeAssessment && String(existing.summativeAssessment).trim()) ? String(existing.summativeAssessment).trim() : (fromAI?.summativeAssessment || std.summativeAssessment),
+      };
+    }),
     learningExperiences: updatedData.learningExperiences || plan.learningExperiences,
     atlSkills: updatedData.atlSkills || plan.atlSkills,
     summativeAssessment: updatedData.summativeAssessment || plan.summativeAssessment,

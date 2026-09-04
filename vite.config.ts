@@ -23,7 +23,6 @@ export default defineConfig(({ mode }) => {
           output: {
             manualChunks: {
               'react-vendor': ['react', 'react-dom'],
-              'gemini': ['@google/genai'],
               'word-export': ['docxtemplater', 'pizzip', 'jszip', 'file-saver'],
             }
           }

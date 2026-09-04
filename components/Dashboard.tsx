@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { UnitPlan, ServiceActionPlan, UnitGroupingPreference } from '../types';
 import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine, Sparkles, Wand2, ListPlus } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI, updateUnitFromConceptsAndObjectives, suggestUnitGroupingsFromSyllabus, generateCourseFromUnitGroupings } from '../services/geminiService';
+import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI, updateUnitFromConceptsAndObjectives, suggestUnitGroupingsFromSyllabus, generateCourseFromUnitGroupings, sanitizeUnitPlan } from '../services/geminiService';
 import { extractCriteriaLetters, formatCriterionFullName, getStandardIBCriterion } from '../services/ibCriteriaService';
 import type { AppUser } from '../services/authService';
 import ModificationRequestModal from './ModificationRequestModal';
@@ -1076,6 +1076,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       const genHC_text = g.horizontalCoherenceText || (g.horizontalCoherence?.otherSubjectLinks);
       const mergedHC = (existHC || genHC_text || g.horizontalCoherence) ? {
         otherSubjectLinks:  pick(existHC?.otherSubjectLinks,  g.horizontalCoherence?.otherSubjectLinks || genHC_text) ?? '',
+        commonConcepts:     pick(existHC?.commonConcepts,     g.horizontalCoherence?.commonConcepts) ?? '',
+        commonATL:          pick(existHC?.commonATL,          g.horizontalCoherence?.commonATL) ?? '',
+        commonProjects:     pick(existHC?.commonProjects,     g.horizontalCoherence?.commonProjects) ?? '',
         transversalSkills:  pick(existHC?.transversalSkills,  g.horizontalCoherence?.transversalSkills) ?? '',
       } : undefined;
 
@@ -1097,10 +1100,13 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
       const genCD   = g.contentDetails;
       const mergedCD = (existCD || genCD) ? {
         knowledges:          pick(existCD?.knowledges,          genCD?.knowledges)          ?? '',
-        vocabulary:          pick(existCD?.vocabulary || (existCD as any)?.notions, genCD?.vocabulary || (genCD as any)?.notions) ?? '',
+        notions:             pick(existCD?.notions,             genCD?.notions)             ?? '',
+        vocabulary:          pick(existCD?.vocabulary,          genCD?.vocabulary)          ?? '',
         methods:             pick(existCD?.methods,             genCD?.methods)             ?? '',
+        techniques:          pick(existCD?.techniques,          genCD?.techniques)          ?? '',
         disciplinarySkills:  pick(existCD?.disciplinarySkills,  genCD?.disciplinarySkills)  ?? '',
         mandatoryContent:    pick(existCD?.mandatoryContent,    genCD?.mandatoryContent)    ?? '',
+        selectedContent:     pick(existCD?.selectedContent,     genCD?.selectedContent)     ?? '',
         nationalLinks:       pick(existCD?.nationalLinks,       genCD?.nationalLinks)       ?? '',
       } : undefined;
 
@@ -1331,7 +1337,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   };
 
   const handleOpenEditUnit = (plan: UnitPlan) => {
-    setEditingUnitPlan(plan);
+    const clean = sanitizeUnitPlan(plan, plan.subject || currentSubject, plan.gradeLevel || currentGrade);
+    setEditingUnitPlan(clean);
     setIsAddEditUnitModalOpen(true);
   };
 
@@ -1830,7 +1837,7 @@ Chapitre 4 : Algèbre et équations
              {/* ── Bouton Mise à jour Objectifs & Aspects IB (toutes les unités) ── */}
              {filteredPlans.length > 0 && (
                <button
-                 onClick={handleBulkUpdateObjectives}
+                 onClick={() => handleBulkUpdateObjectives()}
                  disabled={isBulkUpdatingObjectives}
                  className="flex items-center gap-2 bg-sky-500/80 hover:bg-sky-500 text-white border border-sky-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                  title="Mettre à jour les objectifs spécifiques (A, B, C, D) et les aspects (i, ii, iii...) pour toutes les unités selon leur contenu"

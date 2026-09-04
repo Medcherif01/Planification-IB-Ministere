@@ -129,10 +129,20 @@ const AuthenticationScreen: React.FC<AuthenticationScreenProps> = ({ onAuthentic
             </button>
           </form>
 
-          <div className="mt-5 text-center">
+          <div className="mt-5 text-center space-y-2">
             <p className="text-xs text-slate-400">
               🔒 Session sécurisée · Contactez l'administrateur pour accéder à votre compte
             </p>
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-center gap-2">
+              <span className="text-xs text-slate-500">Compte démo :</span>
+              <button
+                type="button"
+                onClick={() => { setUsername('Mohamed'); setPassword('Alkawthar86'); }}
+                className="text-xs text-blue-600 hover:text-blue-800 font-medium underline underline-offset-2"
+              >
+                Remplir identifiants Admin (Mohamed)
+              </button>
+            </div>
           </div>
         </div>
       </div>

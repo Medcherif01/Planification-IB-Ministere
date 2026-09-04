@@ -53,7 +53,7 @@ async function startServer() {
   // Vite middleware for dev or static files for prod
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true, host: '0.0.0.0', port: 3000 },
+      server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -65,9 +65,17 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
+
+  const handleShutdown = () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+  process.on('SIGTERM', handleShutdown);
+  process.on('SIGINT', handleShutdown);
 }
 
 startServer().catch((err) => {

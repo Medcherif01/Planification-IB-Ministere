@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail } from '../types';
 import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS, SUBJECTS } from '../constants';
-import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan, updateUnitFromConceptsAndObjectives } from '../services/geminiService';
+import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan, updateUnitFromConceptsAndObjectives, sanitizeUnitPlan } from '../services/geminiService';
 import { normalizeCriterionLetter, extractCriteriaLetters, getStandardIBCriterion, formatCriterionFullName } from '../services/ibCriteriaService';
 import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock } from 'lucide-react';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
+import ErrorBoundary from './ErrorBoundary';
 
 interface UnitPlanFormProps {
   initialPlan?: UnitPlan;
@@ -60,40 +61,9 @@ const ibSections = [
   { key: 'reflection_after', label: 'Réflexion après' },
 ];
 
-const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCancel, detailUpdateMode = false }) => {
-  const [plan, setPlan] = useState<UnitPlan>(initialPlan || {
-    id: Date.now().toString(),
-    teacherName: '',
-    title: '',
-    subject: '',
-    gradeLevel: '',
-    duration: '',
-    schoolYear: '',
-    numberOfPeriods: '',
-    numberOfHours: '',
-    startDate: '',
-    endDate: '',
-    prerequisites: '',
-    keyConcept: '',
-    relatedConcepts: [],
-    globalContext: '',
-    statementOfInquiry: '',
-    inquiryQuestions: { factual: [], conceptual: [], debatable: [] },
-    objectives: [],
-    atlSkills: [],
-    content: '',
-    lessons: [],
-    learningExperiences: '',
-    summativeAssessment: '',
-    formativeAssessment: '',
-    differentiation: '',
-    resources: '',
-    reflection: { prior: '', during: '', after: '' },
-    generatedAssessmentDocument: '',
-    assessmentData: undefined,
-    assessments: [],
-    sessions: [],
-    formativeDetails: [],
+const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCancel, detailUpdateMode = false }) => {
+  const [plan, setPlan] = useState<UnitPlan>(() => {
+    return sanitizeUnitPlan(initialPlan || { id: Date.now().toString() }, initialPlan?.subject || '', initialPlan?.gradeLevel || '');
   });
 
   const [allowUnlock, setAllowUnlock] = useState(false);
@@ -101,7 +71,7 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
   // Synchroniser le plan lorsque initialPlan change (notamment après génération IA)
   useEffect(() => {
     if (initialPlan) {
-      setPlan(initialPlan);
+      setPlan(sanitizeUnitPlan(initialPlan, initialPlan.subject || '', initialPlan.gradeLevel || ''));
     }
   }, [initialPlan]);
 
@@ -1429,4 +1399,16 @@ const UnitPlanForm: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave, onCanc
   );
 };
 
+const UnitPlanForm: React.FC<UnitPlanFormProps> = (props) => {
+  return (
+    <ErrorBoundary
+      fallbackTitle="Erreur lors de l'affichage du plan d'unité"
+      onReset={props.onCancel}
+    >
+      <UnitPlanFormContent {...props} />
+    </ErrorBoundary>
+  );
+};
+
 export default UnitPlanForm;
+

@@ -8,6 +8,12 @@ import {
   updateUnitFromConceptsAndObjectives,
 } from '../services/geminiService';
 import {
+  extractCriteriaLetters,
+  getStandardIBCriterion,
+  normalizeCriterionLetter,
+  formatCriterionFullName,
+} from '../services/ibCriteriaService';
+import {
   X,
   Wand2,
   Save,
@@ -21,8 +27,11 @@ import {
   CheckCircle,
   PenLine,
   Sparkles,
+  Target,
+  BookOpen,
 } from 'lucide-react';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
+import ErrorBoundary from './ErrorBoundary';
 
 // ─── IB Criteria by subject (simplified) ─────────────────────────────────────
 const IB_CRITERIA_OPTIONS = [
@@ -46,7 +55,7 @@ type ModalMode = 'auto' | 'manual';
 const emptyPlan = (subject: string, gradeLevel: string): UnitPlan =>
   sanitizeUnitPlan({ id: Date.now().toString() }, subject, gradeLevel);
 
-const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
+const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
   isOpen,
   onClose,
   onSave,
@@ -83,6 +92,16 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
   const [differentiation, setDifferentiation] = useState('');
   const [resources, setResources] = useState('');
 
+  // Objectives details (aspects, expected levels, activities)
+  const [objectivesDetails, setObjectivesDetails] = useState<{
+    criterion: string;
+    aspects: string;
+    expectedLevel: string;
+    activities: string;
+    formativeAssessment: string;
+    summativeAssessment?: string;
+  }[]>([]);
+
   // Inquiry questions
   const [factualQs, setFactualQs] = useState<string[]>(['', '']);
   const [conceptualQs, setConceptualQs] = useState<string[]>(['', '']);
@@ -98,6 +117,7 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
   // ── Section accordion ─────────────────────────────────────────────────────
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     concepts: true,
+    objectives: true,
     inquiry: false,
     pedagogy: false,
     assessment: false,
@@ -106,7 +126,7 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
   const toggleSection = (key: string) =>
     setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
 
-  // ── Initialiser depuis existingPlan ───────────────────────────────────────
+  // ── Initialiser depuis existingPlan avec assainissement complet ───────────
   useEffect(() => {
     if (!isOpen) return;
     setError('');
@@ -114,28 +134,78 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
     setGeneratedPlan(null);
 
     if (existingPlan) {
+      const sanitized = sanitizeUnitPlan(existingPlan, subject, gradeLevel);
       setMode('manual');
-      setTitle(existingPlan.title || '');
-      setStatementOfInquiry(existingPlan.statementOfInquiry || '');
-      setChapters(existingPlan.chapters || existingPlan.content || '');
-      setDuration(existingPlan.duration || '10 heures');
-      setTeacherName(existingPlan.teacherName || '');
-      setKeyConcept(existingPlan.keyConcept || '');
-      setKeyConceptInput(existingPlan.keyConcept || '');
-      setRelatedConcepts(existingPlan.relatedConcepts || []);
-      setRelatedConceptInput((existingPlan.relatedConcepts || []).join(', '));
-      setGlobalContext(existingPlan.globalContext || '');
-      setContent(existingPlan.content || '');
-      setAtlSkills((existingPlan.atlSkills || []).join('\n'));
-      setSummativeAssessment(existingPlan.summativeAssessment || '');
-      setFormativeAssessment(existingPlan.formativeAssessment || '');
-      setDifferentiation(existingPlan.differentiation || '');
-      setResources(existingPlan.resources || '');
-      const criLetters = (existingPlan.assessments || []).map(a => a.criterion);
-      setSelectedCriteria(criLetters.length > 0 ? criLetters : (existingPlan.objectives || []).map(o => o.charAt(o.length - 1)).filter(c => ['A','B','C','D'].includes(c)));
-      setFactualQs(existingPlan.inquiryQuestions?.factual?.length ? existingPlan.inquiryQuestions.factual : ['', '']);
-      setConceptualQs(existingPlan.inquiryQuestions?.conceptual?.length ? existingPlan.inquiryQuestions.conceptual : ['', '']);
-      setDebatableQs(existingPlan.inquiryQuestions?.debatable?.length ? existingPlan.inquiryQuestions.debatable : ['', '']);
+      setTitle(sanitized.title || '');
+      setStatementOfInquiry(sanitized.statementOfInquiry || '');
+      setChapters(sanitized.chapters || sanitized.content || '');
+      setDuration(sanitized.duration || '10 heures');
+      setTeacherName(sanitized.teacherName || '');
+      setKeyConcept(sanitized.keyConcept || '');
+      setKeyConceptInput(sanitized.keyConcept || '');
+
+      const relArr = Array.isArray(sanitized.relatedConcepts)
+        ? sanitized.relatedConcepts
+        : typeof sanitized.relatedConcepts === 'string'
+          ? (sanitized.relatedConcepts as string).split(/[,;]/).map(s => s.trim()).filter(Boolean)
+          : [];
+      setRelatedConcepts(relArr);
+      setRelatedConceptInput(relArr.join(', '));
+
+      setGlobalContext(sanitized.globalContext || '');
+      setContent(sanitized.content || '');
+
+      const atlStr = Array.isArray(sanitized.atlSkills)
+        ? sanitized.atlSkills.join('\n')
+        : typeof sanitized.atlSkills === 'string'
+          ? sanitized.atlSkills
+          : '';
+      setAtlSkills(atlStr);
+
+      setSummativeAssessment(sanitized.summativeAssessment || '');
+      setFormativeAssessment(sanitized.formativeAssessment || '');
+      setDifferentiation(sanitized.differentiation || '');
+      setResources(sanitized.resources || '');
+
+      // Safe criterion extraction
+      const rawCriteria = (sanitized.assessments || [])
+        .map(a => a?.criterion)
+        .concat(sanitized.objectives || []);
+      const criLetters = extractCriteriaLetters(rawCriteria);
+      const activeCriteria = criLetters.length > 0 ? criLetters : ['A', 'B'];
+      setSelectedCriteria(activeCriteria);
+
+      // Safe question array conversion
+      const toQuestionArray = (val: any): string[] => {
+        if (Array.isArray(val)) return val.map(String).filter(Boolean);
+        if (typeof val === 'string' && val.trim()) {
+          return val.split(/\r?\n/).map(s => s.trim().replace(/^[-*•\d.]+\s*/, '')).filter(Boolean);
+        }
+        return [];
+      };
+
+      const fQs = toQuestionArray(sanitized.inquiryQuestions?.factual);
+      const cQs = toQuestionArray(sanitized.inquiryQuestions?.conceptual);
+      const dQs = toQuestionArray(sanitized.inquiryQuestions?.debatable);
+      setFactualQs(fQs.length ? fQs : ['', '']);
+      setConceptualQs(cQs.length ? cQs : ['', '']);
+      setDebatableQs(dQs.length ? dQs : ['', '']);
+
+      // Safe objectivesDetails initialization
+      const existingDetails = Array.isArray(sanitized.objectivesDetails) ? sanitized.objectivesDetails : [];
+      const initializedDetails = activeCriteria.map(c => {
+        const existing = existingDetails.find(d => normalizeCriterionLetter(d.criterion) === c);
+        const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D');
+        return {
+          criterion: c,
+          aspects: (existing?.aspects && String(existing.aspects).trim()) ? String(existing.aspects).trim() : std.aspectsFormatted,
+          expectedLevel: (existing?.expectedLevel && String(existing.expectedLevel).trim()) ? String(existing.expectedLevel).trim() : 'Niveau 5-6 attendu /8',
+          activities: (existing?.activities && String(existing.activities).trim()) ? String(existing.activities).trim() : std.activities,
+          formativeAssessment: (existing?.formativeAssessment && String(existing.formativeAssessment).trim()) ? String(existing.formativeAssessment).trim() : std.formativeAssessment,
+          summativeAssessment: (existing?.summativeAssessment && String(existing.summativeAssessment).trim()) ? String(existing.summativeAssessment).trim() : '',
+        };
+      });
+      setObjectivesDetails(initializedDetails);
     } else {
       setMode('auto');
       setTitle('');
@@ -154,20 +224,78 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
       setFormativeAssessment('');
       setDifferentiation('');
       setResources('');
-      setSelectedCriteria([]);
+      setSelectedCriteria(['A', 'B']);
       setFactualQs(['', '']);
       setConceptualQs(['', '']);
       setDebatableQs(['', '']);
+      setObjectivesDetails([
+        {
+          criterion: 'A',
+          aspects: getStandardIBCriterion(subject, 'A').aspectsFormatted,
+          expectedLevel: 'Niveau 5-6 attendu /8',
+          activities: getStandardIBCriterion(subject, 'A').activities,
+          formativeAssessment: getStandardIBCriterion(subject, 'A').formativeAssessment,
+          summativeAssessment: '',
+        },
+        {
+          criterion: 'B',
+          aspects: getStandardIBCriterion(subject, 'B').aspectsFormatted,
+          expectedLevel: 'Niveau 5-6 attendu /8',
+          activities: getStandardIBCriterion(subject, 'B').activities,
+          formativeAssessment: getStandardIBCriterion(subject, 'B').formativeAssessment,
+          summativeAssessment: '',
+        },
+      ]);
     }
-  }, [isOpen, existingPlan]);
+  }, [isOpen, existingPlan, subject, gradeLevel]);
 
   if (!isOpen) return null;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const toggleCriterion = (letter: string) => {
-    setSelectedCriteria(prev =>
-      prev.includes(letter) ? prev.filter(c => c !== letter) : [...prev, letter]
-    );
+    setSelectedCriteria(prev => {
+      const next = prev.includes(letter) ? prev.filter(c => c !== letter) : [...prev, letter];
+      // Sync objectivesDetails with selected criteria
+      setObjectivesDetails(currentDetails => {
+        return next.map(c => {
+          const existing = currentDetails.find(d => normalizeCriterionLetter(d.criterion) === c);
+          if (existing) return existing;
+          const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D');
+          return {
+            criterion: c,
+            aspects: std.aspectsFormatted,
+            expectedLevel: 'Niveau 5-6 attendu /8',
+            activities: std.activities,
+            formativeAssessment: std.formativeAssessment,
+            summativeAssessment: '',
+          };
+        });
+      });
+      return next;
+    });
+  };
+
+  const updateObjectiveDetail = (criterion: string, field: 'aspects' | 'expectedLevel' | 'activities' | 'formativeAssessment', value: string) => {
+    setObjectivesDetails(prev => {
+      const idx = prev.findIndex(d => normalizeCriterionLetter(d.criterion) === criterion);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], [field]: value };
+        return next;
+      }
+      const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(criterion) ? criterion : 'A') as 'A' | 'B' | 'C' | 'D');
+      return [
+        ...prev,
+        {
+          criterion,
+          aspects: std.aspectsFormatted,
+          expectedLevel: 'Niveau 5-6 attendu /8',
+          activities: std.activities,
+          formativeAssessment: std.formativeAssessment,
+          [field]: value,
+        },
+      ];
+    });
   };
 
   const toggleRelatedConcept = (concept: string) => {
@@ -179,7 +307,6 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
   const addTypedConcept = () => {
     const val = relatedConceptInput.trim();
     if (!val) return;
-    // Support entering multiple concepts separated by comma
     const items = val.split(',').map(s => s.trim()).filter(Boolean);
     setRelatedConcepts(prev => {
       const merged = [...prev];
@@ -222,9 +349,23 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
       ? { ...existingPlan }
       : sanitizeUnitPlan({ id: Date.now().toString() }, subject, gradeLevel);
 
+    // Make sure objectivesDetails is strictly populated for all selected criteria
+    const finalizedObjectivesDetails = selectedCriteria.map(c => {
+      const existing = objectivesDetails.find(d => normalizeCriterionLetter(d.criterion) === c);
+      const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D');
+      return {
+        criterion: c,
+        aspects: (existing?.aspects && String(existing.aspects).trim()) ? String(existing.aspects).trim() : std.aspectsFormatted,
+        expectedLevel: (existing?.expectedLevel && String(existing.expectedLevel).trim()) ? String(existing.expectedLevel).trim() : 'Niveau 5-6 attendu /8',
+        activities: (existing?.activities && String(existing.activities).trim()) ? String(existing.activities).trim() : std.activities,
+        formativeAssessment: (existing?.formativeAssessment && String(existing.formativeAssessment).trim()) ? String(existing.formativeAssessment).trim() : std.formativeAssessment,
+        summativeAssessment: (existing?.summativeAssessment && String(existing.summativeAssessment).trim()) ? String(existing.summativeAssessment).trim() : '',
+      };
+    });
+
     return {
       ...base,
-      title,
+      title: title.trim() || base.title || "Nouvelle Unité",
       statementOfInquiry,
       chapters,
       content: content || chapters,
@@ -234,15 +375,16 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
       relatedConcepts: effectiveRelated,
       globalContext,
       atlSkills: atlSkills.split('\n').map(s => s.trim()).filter(Boolean),
-      objectives: selectedCriteria.map(c => `Critère ${c}`),
+      objectives: selectedCriteria.map(c => formatCriterionFullName(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D')),
+      objectivesDetails: finalizedObjectivesDetails,
       summativeAssessment,
       formativeAssessment,
       differentiation,
       resources,
       inquiryQuestions: {
-        factual: factualQs.filter(Boolean),
-        conceptual: conceptualQs.filter(Boolean),
-        debatable: debatableQs.filter(Boolean),
+        factual: Array.isArray(factualQs) ? factualQs.filter(Boolean) : [],
+        conceptual: Array.isArray(conceptualQs) ? conceptualQs.filter(Boolean) : [],
+        debatable: Array.isArray(debatableQs) ? debatableQs.filter(Boolean) : [],
       },
       subject,
       gradeLevel,
@@ -253,7 +395,8 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
   const handleAutoGenerate = async () => {
     if (!title.trim()) { setError("Veuillez saisir le titre de l'unité."); return; }
     if (!statementOfInquiry.trim()) { setError("Veuillez saisir l'énoncé de recherche."); return; }
-    if (!chapters.trim()) { setError("Veuillez saisir les chapitres."); return; }
+    if (!chapters.trim()) { setError("Veuillez saisir les chapitres / le contenu."); return; }
+    if (selectedCriteria.length < 2) { setError("Veuillez sélectionner au moins 2 critères IB."); return; }
 
     setError('');
     setSuccessMsg('');
@@ -270,6 +413,9 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
       plan.teacherName = teacherName || plan.teacherName;
       plan.duration = duration || plan.duration;
       setGeneratedPlan(plan);
+      if (plan.objectivesDetails && plan.objectivesDetails.length > 0) {
+        setObjectivesDetails(plan.objectivesDetails);
+      }
       setSuccessMsg(`✅ Unité "${plan.title}" générée avec ${plan.assessments?.length || 0} évaluation(s).`);
     } catch (e: any) {
       setError(`❌ Erreur: ${e?.message || e}`);
@@ -286,11 +432,9 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
     try {
       const planForRegen = buildManualPlan();
       const assessments = await generateAssessmentsForUnit(planForRegen);
-      // If we have a generatedPlan already, update it; otherwise update existingPlan state
       if (generatedPlan) {
         setGeneratedPlan(prev => prev ? { ...prev, assessments } : null);
       } else {
-        // store result so we can merge when saving
         setGeneratedPlan({ ...planForRegen, assessments });
       }
       setSuccessMsg(`✅ ${assessments.length} évaluation(s) critériée(s) régénérée(s) avec succès.`);
@@ -312,6 +456,9 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
       const planToUpdate = mode === 'auto' && generatedPlan ? generatedPlan : buildManualPlan();
       const updated = await updateUnitFromConceptsAndObjectives(planToUpdate);
       setGeneratedPlan(updated);
+      if (updated.objectivesDetails && updated.objectivesDetails.length > 0) {
+        setObjectivesDetails(updated.objectivesDetails);
+      }
       if (mode === 'manual') {
         if (updated.statementOfInquiry) setStatementOfInquiry(updated.statementOfInquiry);
         if (updated.inquiryQuestions) {
@@ -324,7 +471,7 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
         if (updated.globalContext) setGlobalContext(updated.globalContext);
         if (updated.summativeAssessment) setSummativeAssessment(updated.summativeAssessment);
       }
-      setSuccessMsg(`✅ Unité mise à jour selon les concepts et critères : ${updated.assessments?.length || 0} évaluation(s) critériée(s) générée(s).`);
+      setSuccessMsg(`✅ Unité mise à jour selon les concepts et critères : ${updated.assessments?.length || 0} évaluation(s) critériée(s) générée(s). Vos modifications d'objectifs et aspects ont été préservées pour l'export Word.`);
     } catch (e: any) {
       setError(`❌ Erreur: ${e?.message || e}`);
     } finally {
@@ -343,9 +490,11 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
       onSave(generatedPlan);
     } else {
       const manual = buildManualPlan();
-      // Merge assessments from generatedPlan if available
       if (generatedPlan?.assessments?.length) {
         manual.assessments = generatedPlan.assessments;
+      }
+      if (generatedPlan?.objectivesDetails?.length && (!manual.objectivesDetails || manual.objectivesDetails.length === 0)) {
+        manual.objectivesDetails = generatedPlan.objectivesDetails;
       }
       if (!manual.title.trim()) { setError("Le titre est obligatoire."); return; }
       onSave(manual);
@@ -440,150 +589,137 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
                 value={statementOfInquiry}
                 onChange={e => setStatementOfInquiry(e.target.value)}
                 rows={2}
-                placeholder="Ex: La façon dont les systèmes naturels réagissent aux transformations révèle l'impact humain sur la durabilité..."
+                placeholder="Ex: La gestion durable des ressources en eau dépend des interactions entre les activités humaines et les équilibres écologiques."
                 className="w-full p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none resize-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Chapitres / Contenu *</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Chapitres / Contenu du programme *</label>
               <textarea
                 value={chapters}
                 onChange={e => setChapters(e.target.value)}
                 rows={3}
-                placeholder={"- Chapitre 1 : ...\n- Chapitre 2 : ...\n- Chapitre 3 : ..."}
-                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none resize-none"
+                placeholder={"Chapitre 1 : Le cycle naturel de l'eau\n- Les états de la matière\n- Les précipitations\nChapitre 2 : La pollution et le traitement"}
+                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none resize-none font-mono text-xs"
               />
-              {chapters.trim() && (
-                <div className="mt-2">
-                  <p className="text-[11px] font-bold text-slate-500 mb-1 flex items-center gap-1">
-                    <Sparkles size={12} className="text-blue-500" /> Aperçu des chapitres et leçons (tirets et couleurs) :
-                  </p>
-                  <ChaptersLessonsViewer chapters={chapters} variant="preview" showTitle={false} />
-                </div>
-              )}
             </div>
 
-            {/* Critères d'évaluation */}
+            {/* Visualisation structurée des chapitres et leçons */}
+            {chapters.trim() && (
+              <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+                <p className="text-xs font-bold text-slate-600 mb-2 flex items-center gap-1.5">
+                  <BookOpen size={14} className="text-blue-600" />
+                  Aperçu de la structure des chapitres & leçons
+                </p>
+                <ChaptersLessonsViewer rawText={chapters} unitTitle={title} compact={true} />
+              </div>
+            )}
+
+            {/* Critères IB */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-2">
-                Critères d'évaluation IB
-                <span className="ml-1 text-slate-400 font-normal">(sélectionnez 2 minimum)</span>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Critères IB évalués dans cette unité * <span className="text-slate-400 font-normal">(min. 2 recommandés)</span>
               </label>
-              <div className="flex flex-wrap gap-2">
-                {IB_CRITERIA_OPTIONS.map(crit => (
-                  <button
-                    key={crit.letter}
-                    type="button"
-                    onClick={() => toggleCriterion(crit.letter)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
-                      selectedCriteria.includes(crit.letter)
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-white text-slate-600 border-slate-300 hover:border-indigo-400'
-                    }`}
-                  >
-                    {crit.label}
-                  </button>
-                ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {IB_CRITERIA_OPTIONS.map(({ letter, label }) => {
+                  const isSelected = selectedCriteria.includes(letter);
+                  return (
+                    <button
+                      key={letter}
+                      type="button"
+                      onClick={() => toggleCriterion(letter)}
+                      className={`p-2.5 rounded-xl border text-left text-xs font-medium transition flex items-center gap-2.5 ${
+                        isSelected
+                          ? 'bg-blue-50 border-blue-500 text-blue-800 ring-1 ring-blue-500'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                      }`}
+                    >
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                        {letter}
+                      </span>
+                      <span className="truncate">{label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
+            {/* Durée & Enseignant */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Durée</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Durée estimée</label>
                 <input
                   value={duration}
                   onChange={e => setDuration(e.target.value)}
-                  placeholder="Ex: 10 heures"
-                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none"
+                  placeholder="Ex: 12 heures (6 semaines)"
+                  className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-400 outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Enseignant(e)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Enseignant(s)</label>
                 <input
                   value={teacherName}
                   onChange={e => setTeacherName(e.target.value)}
-                  placeholder="Ex: M. Dupont"
-                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none"
+                  placeholder="Nom de l'enseignant"
+                  className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-400 outline-none"
                 />
               </div>
             </div>
           </div>
 
-          {/* ════ MODE AUTO ════ */}
-          {mode === 'auto' && !isEdit && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-              <p className="text-sm text-blue-700 mb-3">
-                <Sparkles size={14} className="inline mr-1" />
-                L'IA va générer automatiquement tous les champs de l'unité (concepts, contexte, questions de recherche, activités, évaluations critériées) en se basant sur le titre, l'énoncé et les chapitres.
-              </p>
+          {/* ════ MODE AUTOMATIQUE : BOUTON GÉNÉRER ════ */}
+          {mode === 'auto' && (
+            <div className="pt-2">
               <button
+                type="button"
                 onClick={handleAutoGenerate}
                 disabled={isGenerating}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition disabled:opacity-60 shadow"
+                className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition shadow-md disabled:opacity-60"
               >
                 {isGenerating ? (
-                  <><Loader2 className="animate-spin" size={20} />Génération en cours (30-60s)…</>
+                  <><Loader2 className="animate-spin" size={18} />Génération de l'unité par l'IA…</>
                 ) : (
-                  <><Wand2 size={20} />Générer l'unité complète avec évaluations</>
+                  <><Wand2 size={18} />Générer l'unité complète avec évaluations</>
                 )}
               </button>
 
               {generatedPlan && (
-                <div className="mt-4 bg-white rounded-xl border border-blue-200 p-4 space-y-2">
-                  <p className="text-sm font-bold text-slate-700">Résultat de la génération :</p>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    {[
-                      ['Concept clé', generatedPlan.keyConcept],
-                      ['Concepts connexes', (generatedPlan.relatedConcepts || []).join(', ')],
-                      ['Contexte mondial', generatedPlan.globalContext],
-                      ['Évaluations', `${generatedPlan.assessments?.length || 0} critère(s)`],
-                    ].map(([label, value]) => (
-                      <div key={label} className="bg-slate-50 rounded-lg p-2 border border-slate-100">
-                        <p className="text-slate-500 font-medium">{label}</p>
-                        <p className="text-slate-800 font-semibold truncate">{value}</p>
-                      </div>
-                    ))}
-                  </div>
-                  {generatedPlan.assessments && generatedPlan.assessments.length > 0 && (
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {generatedPlan.assessments.map(a => (
-                        <span key={a.criterion} className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">
-                          Critère {a.criterion}: {a.criterionName}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl space-y-2 text-xs">
+                  <p className="font-bold text-blue-900 text-sm">✅ Aperçu de l'unité générée :</p>
+                  <p><span className="font-semibold">Concept clé :</span> {generatedPlan.keyConcept}</p>
+                  <p><span className="font-semibold">Concepts connexes :</span> {(generatedPlan.relatedConcepts || []).join(', ')}</p>
+                  <p><span className="font-semibold">Contexte mondial :</span> {generatedPlan.globalContext}</p>
+                  <p><span className="font-semibold">Évaluations :</span> {generatedPlan.assessments?.length || 0} critère(s) généré(s)</p>
                 </div>
               )}
             </div>
           )}
 
-          {/* ════ MODE MANUEL ════ */}
-          {(mode === 'manual' || isEdit) && (
-            <div className="space-y-3">
+          {/* ════ MODE MANUEL : ACCORDIONS DÉTAILLÉS ════ */}
+          {mode === 'manual' && (
+            <div className="space-y-3 pt-2">
 
-              {/* Section: Concepts IB */}
-              <SectionHeader title="Concepts IB" sectionKey="concepts" icon="🔑" />
+              {/* Section: Concepts & Contexte */}
+              <SectionHeader title="Concepts & Contexte mondial" sectionKey="concepts" icon="💡" />
               {openSections.concepts && (
-                <div className="space-y-4 pl-2">
-
-                  {/* Concept Clé */}
+                <div className="space-y-3 pl-2">
+                  {/* Concept clé */}
                   <div>
-                    <div className="flex items-center gap-3 mb-2">
+                    <div className="flex items-center justify-between mb-1">
                       <label className="text-xs font-bold text-slate-700">Concept clé</label>
-                      <div className="flex bg-slate-100 rounded-lg p-0.5 text-xs">
+                      <div className="flex text-xs bg-slate-100 rounded-lg p-0.5">
                         <button
                           type="button"
                           onClick={() => setKeyConceptMode('select')}
-                          className={`px-2 py-1 rounded transition ${keyConceptMode === 'select' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
+                          className={`px-2 py-0.5 rounded transition ${keyConceptMode === 'select' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
                         >
                           Choisir
                         </button>
                         <button
                           type="button"
                           onClick={() => setKeyConceptMode('type')}
-                          className={`px-2 py-1 rounded transition ${keyConceptMode === 'type' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
+                          className={`px-2 py-0.5 rounded transition ${keyConceptMode === 'type' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
                         >
                           Saisir
                         </button>
@@ -596,7 +732,7 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
                             key={c}
                             type="button"
                             onClick={() => setKeyConcept(c)}
-                            className={`px-3 py-1 rounded-full text-xs font-medium border transition ${keyConcept === c ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-300 hover:border-slate-500'}`}
+                            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${keyConcept === c ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400'}`}
                           >
                             {c}
                           </button>
@@ -606,28 +742,28 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
                       <input
                         value={keyConceptInput}
                         onChange={e => setKeyConceptInput(e.target.value)}
-                        placeholder="Saisir le concept clé..."
+                        placeholder="Saisir un concept clé..."
                         className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none"
                       />
                     )}
                   </div>
 
-                  {/* Concepts Connexes */}
+                  {/* Concepts connexes */}
                   <div>
-                    <div className="flex items-center gap-3 mb-2">
-                      <label className="text-xs font-bold text-slate-700">Concepts connexes (max 3-5)</label>
-                      <div className="flex bg-slate-100 rounded-lg p-0.5 text-xs">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-700">Concepts connexes (1 à 3)</label>
+                      <div className="flex text-xs bg-slate-100 rounded-lg p-0.5">
                         <button
                           type="button"
                           onClick={() => setRelatedConceptMode('select')}
-                          className={`px-2 py-1 rounded transition ${relatedConceptMode === 'select' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
+                          className={`px-2 py-0.5 rounded transition ${relatedConceptMode === 'select' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
                         >
-                          Choisir (multi)
+                          Choisir
                         </button>
                         <button
                           type="button"
                           onClick={() => setRelatedConceptMode('type')}
-                          className={`px-2 py-1 rounded transition ${relatedConceptMode === 'type' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
+                          className={`px-2 py-0.5 rounded transition ${relatedConceptMode === 'type' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
                         >
                           Saisir
                         </button>
@@ -688,27 +824,108 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
                             ))}
                           </div>
                         )}
-                        <p className="text-xs text-slate-400">Appuyez sur Entrée ou cliquez + pour ajouter. Séparez par virgule pour plusieurs à la fois.</p>
                       </div>
                     )}
                   </div>
 
                   {/* Contexte mondial */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2">Contexte mondial</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">Contexte mondial</label>
                     <div className="flex flex-wrap gap-1.5">
                       {GLOBAL_CONTEXTS.map(ctx => (
                         <button
                           key={ctx}
                           type="button"
                           onClick={() => setGlobalContext(ctx)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${globalContext === ctx ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400'}`}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition ${globalContext === ctx ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400'}`}
                         >
                           {ctx}
                         </button>
                       ))}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Section: Objectifs spécifiques & Aspects par critère */}
+              <SectionHeader title="Objectifs spécifiques & Aspects par critère (IB)" sectionKey="objectives" icon="🎯" />
+              {openSections.objectives && (
+                <div className="space-y-4 pl-2">
+                  <p className="text-xs text-slate-500">
+                    Modifiez ici les objectifs spécifiques, les aspects travaillés (i, ii, iii...), le niveau attendu et les activités pour chaque critère. Ces modifications seront intégralement conservées lors de la mise à jour et reportées dans le document Word généré.
+                  </p>
+                  {selectedCriteria.length === 0 ? (
+                    <p className="text-xs text-amber-600 italic">Veuillez sélectionner au moins un critère IB ci-dessus.</p>
+                  ) : (
+                    selectedCriteria.map(criterion => {
+                      const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(criterion) ? criterion : 'A') as 'A' | 'B' | 'C' | 'D');
+                      const detail = objectivesDetails.find(d => normalizeCriterionLetter(d.criterion) === criterion) || {
+                        criterion,
+                        aspects: std.aspectsFormatted,
+                        expectedLevel: 'Niveau 5-6 attendu /8',
+                        activities: std.activities,
+                        formativeAssessment: std.formativeAssessment,
+                      };
+                      return (
+                        <div key={criterion} className="border border-blue-200 bg-blue-50/50 rounded-xl p-3.5 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-blue-900 flex items-center gap-1.5">
+                              <Target size={14} className="text-blue-600" />
+                              Critère {criterion} : {std.name}
+                            </span>
+                            <span className="text-[10px] bg-blue-100 text-blue-800 font-semibold px-2 py-0.5 rounded">
+                              PEI IB
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-600 block mb-1">Aspects travaillés</label>
+                              <input
+                                type="text"
+                                value={detail.aspects}
+                                onChange={e => updateObjectiveDetail(criterion, 'aspects', e.target.value)}
+                                placeholder="ex: i, ii, iii"
+                                className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-400 outline-none bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-600 block mb-1">Niveau attendu</label>
+                              <input
+                                type="text"
+                                value={detail.expectedLevel}
+                                onChange={e => updateObjectiveDetail(criterion, 'expectedLevel', e.target.value)}
+                                placeholder="ex: Niveau 5-6 attendu /8"
+                                className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-400 outline-none bg-white"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-600 block mb-1">Activités permettant de développer l'objectif</label>
+                            <textarea
+                              value={detail.activities}
+                              onChange={e => updateObjectiveDetail(criterion, 'activities', e.target.value)}
+                              rows={2}
+                              placeholder="Activités d'apprentissage spécifiques à ce critère..."
+                              className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-400 outline-none resize-none bg-white"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-600 block mb-1">Évaluation formative associée</label>
+                            <textarea
+                              value={detail.formativeAssessment}
+                              onChange={e => updateObjectiveDetail(criterion, 'formativeAssessment', e.target.value)}
+                              rows={2}
+                              placeholder="Tâche ou observation formative associée..."
+                              className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-400 outline-none resize-none bg-white"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               )}
 
@@ -720,11 +937,11 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
                     { label: 'Questions factuelles', arr: factualQs, setter: setFactualQs, color: 'blue' },
                     { label: 'Questions conceptuelles', arr: conceptualQs, setter: setConceptualQs, color: 'purple' },
                     { label: 'Questions invitant au débat', arr: debatableQs, setter: setDebatableQs, color: 'amber' },
-                  ] as { label: string; arr: string[]; setter: React.Dispatch<React.SetStateAction<string[]>>; color: string }[]).map(({ label, arr, setter, color }) => (
+                  ] as { label: string; arr: string[]; setter: React.Dispatch<React.SetStateAction<string[]>>; color: string }[]).map(({ label, arr, setter }) => (
                     <div key={label}>
                       <label className="text-xs font-bold text-slate-600 mb-1 block">{label}</label>
                       <div className="space-y-1.5">
-                        {arr.map((q, idx) => (
+                        {Array.isArray(arr) && arr.map((q, idx) => (
                           <div key={idx} className="flex gap-2">
                             <input
                               value={q}
@@ -783,7 +1000,7 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
                   Mise à jour de l'unité selon les concepts & objectifs modifiés
                 </p>
                 <p className="text-xs text-indigo-700 mb-3">
-                  Réaligne automatiquement l'énoncé de recherche, les questions de recherche et génère des évaluations critériées IB rigoureusement adaptées aux critères et concepts de cette unité.
+                  Réaligne l'énoncé de recherche, les questions de recherche et génère des évaluations critériées IB authentiques en préservant scrupuleusement vos corrections d'aspects et d'objectifs pour l'exportation Word.
                 </p>
                 <button
                   onClick={handleUpdateFromConceptsAndObjectives}
@@ -868,6 +1085,18 @@ const AddEditUnitModal: React.FC<AddEditUnitModalProps> = ({
         </div>
       </div>
     </div>
+  );
+};
+
+const AddEditUnitModal: React.FC<AddEditUnitModalProps> = (props) => {
+  if (!props.isOpen) return null;
+  return (
+    <ErrorBoundary
+      fallbackTitle="Erreur lors de l'ouverture du formulaire d'unité"
+      onReset={props.onClose}
+    >
+      <AddEditUnitModalContent {...props} />
+    </ErrorBoundary>
   );
 };
 

@@ -20,7 +20,7 @@ import {
 import { UnitPlan, AssessmentData, ServiceActionPlan } from "../types";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
 import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit, AnnualCalendar, SCHOOL_WEEKS_2026_2027, SUBJECT_COLORS, CalendarEntry } from "./geminiService";
-import { getStandardIBCriterion } from "./ibCriteriaService";
+import { getStandardIBCriterion, extractCriteriaLetters, formatCriterionFullName } from "./ibCriteriaService";
 
 // Cache en mémoire des modèles Word téléchargés pour un export ultra-rapide
 const templateCache: Record<string, ArrayBuffer> = {};
@@ -454,12 +454,17 @@ const applyIBConformityCorrections = (plan: UnitPlan): UnitPlan => {
   p.inquiryQuestions.conceptual = p.inquiryQuestions.conceptual.map(ensureQuestion);
   p.inquiryQuestions.debatable  = p.inquiryQuestions.debatable.map(ensureQuestion);
 
-  // ── 6. Objectifs IB : normaliser le format (A, B, C, D seulement) ──
-  if (Array.isArray(p.objectives)) {
-    p.objectives = p.objectives
-      .map(o => String(o).trim().toUpperCase().charAt(0))
-      .filter(o => ['A', 'B', 'C', 'D'].includes(o))
-      .filter((o, i, arr) => arr.indexOf(o) === i); // dédoublonner
+  // ── 6. Objectifs IB : normaliser sans tronquer ──
+  if (Array.isArray(p.objectives) && p.objectives.length > 0) {
+    const letters = extractCriteriaLetters(p.objectives);
+    if (letters.length > 0 && p.objectives.every(o => ['A', 'B', 'C', 'D'].includes(String(o).trim().toUpperCase()))) {
+      p.objectives = letters.map(l => formatCriterionFullName(p.subject || '', l));
+    }
+  } else if (!p.objectives || (Array.isArray(p.objectives) && p.objectives.length === 0)) {
+    if (Array.isArray(p.assessments) && p.assessments.length > 0) {
+      const critLetters = extractCriteriaLetters(p.assessments.map(a => a?.criterion));
+      p.objectives = critLetters.map(l => formatCriterionFullName(p.subject || '', l));
+    }
   }
 
   // ── 7. ATL : s'assurer que les compétences ATL sont listées ──
@@ -488,10 +493,16 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
   const endDate   = calDates.endDate   || plan.endDate   || '';
 
   const rawObjectives = Array.isArray(plan.objectives) ? plan.objectives : [];
-  const objectives = rawObjectives
-    .map(o => String(o).trim().toUpperCase().charAt(0))
-    .filter(o => ['A', 'B', 'C', 'D'].includes(o))
-    .filter((o, i, arr) => arr.indexOf(o) === i);
+  let objectives = extractCriteriaLetters(rawObjectives);
+  if (objectives.length === 0 && Array.isArray(plan.assessments)) {
+    objectives = extractCriteriaLetters(plan.assessments.map(a => a?.criterion));
+  }
+  if (objectives.length === 0 && Array.isArray(plan.objectivesDetails)) {
+    objectives = extractCriteriaLetters(plan.objectivesDetails.map(d => d?.criterion));
+  }
+  if (objectives.length === 0) {
+    objectives = ['A', 'B', 'C', 'D'];
+  }
 
   const atl = Array.isArray(plan.atlSkills) ? plan.atlSkills : (plan.atlSkills ? [plan.atlSkills as string] : []);
   const related = Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts : [];
@@ -504,11 +515,13 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     const d = plan.objectivesDetails?.find(x => (x.criterion || '').toUpperCase() === cr);
     const std = getStandardIBCriterion(plan.subject || '', cr as 'A' | 'B' | 'C' | 'D');
     const rawAspects = d?.aspects ? String(d.aspects).trim() : '';
-    const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
-      ? rawAspects
-      : std.aspectsFormatted;
+    // Conserver en priorité absolue les aspects saisis ou modifiés par l'enseignant !
+    const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
     const level = d?.expectedLevel ? ` (niveau attendu : ${d.expectedLevel})` : '';
-    return `Critère ${cr} [${std.name}] : ${aspects}${level}`;
+    const activities = d?.activities ? `\nActivités : ${d.activities}` : '';
+    const formEval = d?.formativeAssessment ? `\nÉval. formative : ${d.formativeAssessment}` : '';
+    const summEval = d?.summativeAssessment ? `\nÉval. sommative : ${d.summativeAssessment}` : '';
+    return `Critère ${cr} [${std.name}] : ${aspects}${level}${activities}${formEval}${summEval}`;
   }).join('\n\n') || c(plan.content?.slice(0, 200));
 
   const contenuTxt = [
@@ -552,7 +565,7 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
 
   const evalFormTxt = [
     c(plan.formativeAssessment),
-    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => d.formativeAssessment ? `Critère ${d.criterion} : ${c(d.formativeAssessment)}` : '').filter(Boolean).join('\n') || '',
+    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => d.formativeAssessment ? `Critère ${d.criterion} : ${c(d.formativeAssessment)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
   const evalSommTxt = [
@@ -561,7 +574,7 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     plan.summativeDetails?.consigne          ? 'Consigne : ' + c(plan.summativeDetails.consigne) : '',
     plan.summativeDetails?.productionAttendue ? 'Production attendue : ' + c(plan.summativeDetails.productionAttendue) : '',
     plan.summativeDetails?.duree             ? 'Durée : ' + c(plan.summativeDetails.duree) : '',
-    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => d.summativeAssessment ? `Critère ${d.criterion} : ${c(d.summativeAssessment)}` : '').filter(Boolean).join('\n') || '',
+    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => d.summativeAssessment ? `Critère ${d.criterion} : ${c(d.summativeAssessment)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
   const difftxt = [
@@ -835,31 +848,25 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     differentiation_contenu:  c(plan.differentiationDetails?.contentDifferentiation),
     differentiation_processus: c(plan.differentiationDetails?.processDifferentiation),
     differentiation_produit:  c(plan.differentiationDetails?.productDifferentiation),
-    details_objectifs:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => {
+    details_objectifs:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => {
       const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
       const std = getStandardIBCriterion(plan.subject || '', cr);
       const rawAspects = d.aspects ? String(d.aspects).trim() : '';
-      const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
-        ? rawAspects
-        : std.aspectsFormatted;
+      const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
       return `Critère ${d.criterion} [${std.name}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
     }).join('\n\n') || '',
-    objectifs_details:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => {
+    objectifs_details:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => {
       const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
       const std = getStandardIBCriterion(plan.subject || '', cr);
       const rawAspects = d.aspects ? String(d.aspects).trim() : '';
-      const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
-        ? rawAspects
-        : std.aspectsFormatted;
+      const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
       return `Critère ${d.criterion} [${std.name}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
     }).join('\n\n') || '',
-    objectifs_liste:          (plan.objectivesDetails || []).filter(d => objectives.includes((d.criterion || '').toUpperCase())).map(d => {
+    objectifs_liste:          (plan.objectivesDetails || []).filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => {
       const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
       const std = getStandardIBCriterion(plan.subject || '', cr);
       const rawAspects = d.aspects ? String(d.aspects).trim() : '';
-      const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
-        ? rawAspects
-        : std.aspectsFormatted;
+      const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
       return {
         critere: d.criterion,
         titre: std.name,

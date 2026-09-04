@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { UnitPlan, UnitSession } from '../types';
-import { BookOpen, Layers, Bookmark, Sparkles, ChevronDown, ChevronUp, FileText, CheckCircle2 } from 'lucide-react';
+import { BookOpen, Copy, Check, List, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react';
 
 export interface ChapterItem {
   id: string;
@@ -20,22 +20,20 @@ export interface LessonItem {
   objective?: string;
 }
 
-// Thèmes de couleurs vives et harmonieuses pour chaque chapitre et ses leçons
+// Thèmes de couleurs harmonieuses pour chaque chapitre et ses leçons
 const COLOR_THEMES = [
   {
-    name: 'indigo',
-    border: 'border-indigo-300',
-    bg: 'bg-indigo-50/70',
-    headerBg: 'bg-indigo-100/90 text-indigo-900',
-    badge: 'bg-indigo-600 text-white',
-    dash: 'text-indigo-600 font-black',
-    bulletBg: 'bg-indigo-500',
-    lessonDash: 'text-indigo-500',
-    lessonBg: 'bg-white hover:bg-indigo-50/50',
-    lessonBorder: 'border-indigo-100',
-    lessonText: 'text-indigo-950',
-    lessonBadge: 'bg-indigo-100 text-indigo-800 border-indigo-200',
-    subDash: 'text-indigo-400',
+    name: 'blue',
+    border: 'border-blue-300',
+    bg: 'bg-blue-50/70',
+    headerBg: 'bg-blue-100/90 text-blue-900',
+    badge: 'bg-blue-600 text-white',
+    dash: 'text-blue-600 font-black',
+    lessonDash: 'text-blue-500 font-bold',
+    lessonBg: 'bg-white hover:bg-blue-50/60',
+    lessonBorder: 'border-blue-100',
+    lessonText: 'text-slate-800',
+    lessonBadge: 'bg-blue-100 text-blue-800 border-blue-200',
   },
   {
     name: 'emerald',
@@ -44,13 +42,11 @@ const COLOR_THEMES = [
     headerBg: 'bg-emerald-100/90 text-emerald-900',
     badge: 'bg-emerald-600 text-white',
     dash: 'text-emerald-600 font-black',
-    bulletBg: 'bg-emerald-500',
-    lessonDash: 'text-emerald-500',
-    lessonBg: 'bg-white hover:bg-emerald-50/50',
+    lessonDash: 'text-emerald-500 font-bold',
+    lessonBg: 'bg-white hover:bg-emerald-50/60',
     lessonBorder: 'border-emerald-100',
-    lessonText: 'text-emerald-950',
+    lessonText: 'text-slate-800',
     lessonBadge: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-    subDash: 'text-emerald-400',
   },
   {
     name: 'amber',
@@ -59,13 +55,11 @@ const COLOR_THEMES = [
     headerBg: 'bg-amber-100/90 text-amber-900',
     badge: 'bg-amber-600 text-white',
     dash: 'text-amber-600 font-black',
-    bulletBg: 'bg-amber-500',
-    lessonDash: 'text-amber-500',
-    lessonBg: 'bg-white hover:bg-amber-50/50',
+    lessonDash: 'text-amber-500 font-bold',
+    lessonBg: 'bg-white hover:bg-amber-50/60',
     lessonBorder: 'border-amber-100',
-    lessonText: 'text-amber-950',
+    lessonText: 'text-slate-800',
     lessonBadge: 'bg-amber-100 text-amber-800 border-amber-200',
-    subDash: 'text-amber-400',
   },
   {
     name: 'purple',
@@ -74,13 +68,11 @@ const COLOR_THEMES = [
     headerBg: 'bg-purple-100/90 text-purple-900',
     badge: 'bg-purple-600 text-white',
     dash: 'text-purple-600 font-black',
-    bulletBg: 'bg-purple-500',
-    lessonDash: 'text-purple-500',
-    lessonBg: 'bg-white hover:bg-purple-50/50',
+    lessonDash: 'text-purple-500 font-bold',
+    lessonBg: 'bg-white hover:bg-purple-50/60',
     lessonBorder: 'border-purple-100',
-    lessonText: 'text-purple-950',
+    lessonText: 'text-slate-800',
     lessonBadge: 'bg-purple-100 text-purple-800 border-purple-200',
-    subDash: 'text-purple-400',
   },
   {
     name: 'cyan',
@@ -89,13 +81,11 @@ const COLOR_THEMES = [
     headerBg: 'bg-cyan-100/90 text-cyan-900',
     badge: 'bg-cyan-600 text-white',
     dash: 'text-cyan-600 font-black',
-    bulletBg: 'bg-cyan-500',
-    lessonDash: 'text-cyan-500',
-    lessonBg: 'bg-white hover:bg-cyan-50/50',
+    lessonDash: 'text-cyan-500 font-bold',
+    lessonBg: 'bg-white hover:bg-cyan-50/60',
     lessonBorder: 'border-cyan-100',
-    lessonText: 'text-cyan-950',
+    lessonText: 'text-slate-800',
     lessonBadge: 'bg-cyan-100 text-cyan-800 border-cyan-200',
-    subDash: 'text-cyan-400',
   },
   {
     name: 'rose',
@@ -104,33 +94,40 @@ const COLOR_THEMES = [
     headerBg: 'bg-rose-100/90 text-rose-900',
     badge: 'bg-rose-600 text-white',
     dash: 'text-rose-600 font-black',
-    bulletBg: 'bg-rose-500',
-    lessonDash: 'text-rose-500',
-    lessonBg: 'bg-white hover:bg-rose-50/50',
+    lessonDash: 'text-rose-500 font-bold',
+    lessonBg: 'bg-white hover:bg-rose-50/60',
     lessonBorder: 'border-rose-100',
-    lessonText: 'text-rose-950',
+    lessonText: 'text-slate-800',
     lessonBadge: 'bg-rose-100 text-rose-800 border-rose-200',
-    subDash: 'text-rose-400',
-  },
-  {
-    name: 'blue',
-    border: 'border-blue-300',
-    bg: 'bg-blue-50/70',
-    headerBg: 'bg-blue-100/90 text-blue-900',
-    badge: 'bg-blue-600 text-white',
-    dash: 'text-blue-600 font-black',
-    bulletBg: 'bg-blue-500',
-    lessonDash: 'text-blue-500',
-    lessonBg: 'bg-white hover:bg-blue-50/50',
-    lessonBorder: 'border-blue-100',
-    lessonText: 'text-blue-950',
-    lessonBadge: 'bg-blue-100 text-blue-800 border-blue-200',
-    subDash: 'text-blue-400',
   },
 ];
 
 /**
+ * Normalisation et découpage des lignes, en traitant les retours à la ligne
+ * et les séparateurs type point-virgule ou double saut.
+ */
+function prepareLines(text: string): string[] {
+  if (!text) return [];
+
+  // Si le texte est sur une seule ligne avec des points-virgules séparant des chapitres
+  let normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (normalized.includes(';') && (/(?:chapitre|chap\b|thème|partie|module)/i.test(normalized))) {
+    normalized = normalized.split(';').join('\n');
+  }
+
+  return normalized
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+}
+
+/**
  * Analyse intelligente du texte des chapitres et des leçons pour construire une hiérarchie structurée.
+ * Reconnaît explicitement :
+ * Chap 1 / Chapitre 1 / Ch. 1 / Thème 1 / Partie 1
+ * - leçon 1 / -leçon 1 / - Leçon 1 : Titre / - Séance 1 ...
+ * Chap 2
+ * Chap 3
  */
 export function parseChaptersAndLessons(
   chaptersText?: string,
@@ -141,35 +138,44 @@ export function parseChaptersAndLessons(
   const result: ChapterItem[] = [];
   const textToParse = (chaptersText || '').trim();
 
-  // Regex patterns pour détecter les chapitres et les leçons
-  const chapterRegex = /^(?:[-*•–—]?\s*)?(?:chapitre|chapter|ch\.|partie|thème|theme|module|section|unité|unite|grand\s+[ivx\d]+|[ivx]+\.|\d+\.)\s*([\d\w\.\-_]*)\s*[:\-\–\—\.]?\s*(.*)$/i;
-  const lessonRegex = /^(?:[-*•–—]?\s*)?(?:leçon|lecon|lesson|lec\.|séance|seance|session|sous-chapitre|sous\s+chapitre|activité|activite|partie\s+[\w\d]+|\d+\.\d+|[a-z]\))\s*([\d\w\.\-_]*)\s*[:\-\–\—\.]?\s*(.*)$/i;
-  const genericDashRegex = /^[-*•–—]\s*(.*)$/;
+  // Regex pour détecter les chapitres (avec ou sans ponctuation, tiret ou point)
+  // Ex: "Chap 1", "Chapitre 1 : Les nombres", "Ch 2", "Thème 1", "Partie 3"
+  const chapterExplicitRegex = /^(?:[-*•–—]?\s*)?(?:chapitre|chap|chapter|ch\b|thème|theme|module|partie|section|unité|unite|grand\s+[ivx\d]+)\s*([\d\w\.\-_]*)\s*[:\-\–\—\.]?\s*(.*)$/i;
+
+  // Regex pour les leçons explicites
+  // Ex: "-leçon 1", "- leçon 1 : ...", "Leçon 1", "Séance 2 : ...", "Lesson 3"
+  const lessonExplicitRegex = /^(?:[-*•–—]?\s*)?(?:leçon|lecon|lesson|lec\b|séance|seance|session|sous-chapitre|sous\s+chapitre|activité|activite)\s*([\d\w\.\-_]*)\s*[:\-\–\—\.]?\s*(.*)$/i;
+
+  // Regex pour toute ligne commençant par un tiret ou une puce
+  const dashBulletRegex = /^[-*•–—]\s*(.*)$/;
 
   if (textToParse) {
-    const rawLines = textToParse.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const rawLines = prepareLines(textToParse);
     let currentChapter: ChapterItem | null = null;
     let colorCounter = 0;
 
     for (let i = 0; i < rawLines.length; i++) {
       const line = rawLines[i];
-      const isIndented = line.startsWith('  ') || line.startsWith('\t') || line.startsWith(' -') || line.startsWith(' *');
+      const isDash = dashBulletRegex.test(line);
       const cleanLine = line.replace(/^[-*•–—]\s*/, '').trim();
 
-      // Vérifier si c'est une leçon explicite
-      const lessonMatch = line.match(lessonRegex);
-      // Vérifier si c'est un chapitre explicite
-      const chapterMatch = line.match(chapterRegex);
+      const chapterMatch = line.match(chapterExplicitRegex);
+      const lessonMatch = line.match(lessonExplicitRegex);
 
-      if (chapterMatch && !isIndented && !line.toLowerCase().includes('leçon') && !line.toLowerCase().includes('séance') && !line.toLowerCase().includes('session')) {
-        // C'est un nouveau chapitre
+      const isExplicitLesson = !!lessonMatch || (isDash && /(?:leçon|lecon|lesson|séance|seance|activité)/i.test(line));
+      const isExplicitChapter = !!chapterMatch && !isExplicitLesson;
+
+      if (isExplicitChapter) {
+        // Nouveau chapitre
         const chapNum = chapterMatch[1] ? chapterMatch[1].trim() : `${result.length + 1}`;
-        let chapTitle = chapterMatch[2] ? chapterMatch[2].trim() : cleanLine;
-        if (!chapTitle && cleanLine) chapTitle = cleanLine;
+        let chapTitle = chapterMatch[2] ? chapterMatch[2].trim() : '';
+        if (!chapTitle) {
+          chapTitle = `Chapitre ${chapNum}`;
+        }
 
         currentChapter = {
           id: `chap_${result.length}_${Date.now()}`,
-          title: chapTitle || `Chapitre ${chapNum}`,
+          title: chapTitle,
           number: chapNum,
           raw: line,
           lessons: [],
@@ -177,23 +183,17 @@ export function parseChaptersAndLessons(
         };
         colorCounter++;
         result.push(currentChapter);
-      } else if (lessonMatch || (isIndented && currentChapter)) {
-        // C'est une leçon
+      } else if (isExplicitLesson) {
+        // Ligne de leçon explicite
         const lesNum = lessonMatch?.[1] ? lessonMatch[1].trim() : (currentChapter ? `${currentChapter.lessons.length + 1}` : `${i + 1}`);
-        const lesTitle = lessonMatch?.[2] ? lessonMatch[2].trim() : cleanLine;
+        let lesTitle = lessonMatch?.[2] ? lessonMatch[2].trim() : cleanLine;
+        if (!lesTitle) lesTitle = cleanLine;
 
-        const newLesson: LessonItem = {
-          id: `les_${i}_${Date.now()}`,
-          title: lesTitle || cleanLine,
-          number: lesNum,
-          raw: line,
-        };
-
+        // Si aucun chapitre n'a encore été créé, en initialiser un premier
         if (!currentChapter) {
-          // Créer un chapitre par défaut si la première ligne est une leçon
           currentChapter = {
             id: `chap_${result.length}_${Date.now()}`,
-            title: 'Chapitre 1 : Programme et notions clés',
+            title: 'Chapitre 1',
             number: '1',
             raw: 'Chapitre 1',
             lessons: [],
@@ -202,73 +202,86 @@ export function parseChaptersAndLessons(
           colorCounter++;
           result.push(currentChapter);
         }
-        currentChapter.lessons.push(newLesson);
-      } else {
-        // Ligne générique avec ou sans tiret
-        const dashMatch = line.match(genericDashRegex);
-        const contentTextClean = dashMatch ? dashMatch[1].trim() : cleanLine;
 
-        if (contentTextClean) {
-          // Si nous n'avons aucun chapitre, ou si la ligne commence par un tiret simple
-          if (!currentChapter) {
-            currentChapter = {
-              id: `chap_${result.length}_${Date.now()}`,
-              title: contentTextClean,
-              number: `${result.length + 1}`,
-              raw: line,
-              lessons: [],
-              colorIndex: colorCounter % COLOR_THEMES.length,
-            };
-            colorCounter++;
-            result.push(currentChapter);
-          } else if (currentChapter.lessons.length === 0 && !dashMatch && result.length === 1 && i === 0) {
-            currentChapter.title = contentTextClean;
-          } else {
-            // Ajouter en tant que sous-leçon/notion au chapitre en cours
-            currentChapter.lessons.push({
-              id: `les_${i}_${Date.now()}`,
-              title: contentTextClean,
-              number: `${currentChapter.lessons.length + 1}`,
-              raw: line,
-            });
-          }
-        }
-      }
-    }
-  }
-
-  // Si on a des leçons dans `lessonsList` qui ne sont pas encore intégrées
-  if (Array.isArray(lessonsList) && lessonsList.length > 0) {
-    if (result.length === 0) {
-      const defaultChap: ChapterItem = {
-        id: `chap_lessons_${Date.now()}`,
-        title: 'Chapitre 1 : Programme et leçons',
-        number: '1',
-        raw: 'Programme',
-        lessons: [],
-        colorIndex: 0,
-      };
-      lessonsList.forEach((les, idx) => {
-        if (typeof les === 'string' && les.trim()) {
-          defaultChap.lessons.push({
-            id: `les_arr_${idx}`,
-            title: les.trim().replace(/^[-*•–—]\s*/, ''),
-            number: `${idx + 1}`,
-            raw: les,
+        currentChapter.lessons.push({
+          id: `les_${currentChapter.lessons.length}_${Date.now()}`,
+          title: lesTitle,
+          number: lesNum,
+          raw: line,
+        });
+      } else if (isDash) {
+        // Ligne commençant par un tiret sans le mot "leçon"
+        // Si nous avons un chapitre en cours, c'est une leçon / notion sous ce chapitre
+        if (!currentChapter) {
+          currentChapter = {
+            id: `chap_${result.length}_${Date.now()}`,
+            title: cleanLine,
+            number: `${result.length + 1}`,
+            raw: line,
+            lessons: [],
+            colorIndex: colorCounter % COLOR_THEMES.length,
+          };
+          colorCounter++;
+          result.push(currentChapter);
+        } else {
+          currentChapter.lessons.push({
+            id: `les_${currentChapter.lessons.length}_${Date.now()}`,
+            title: cleanLine,
+            number: `${currentChapter.lessons.length + 1}`,
+            raw: line,
           });
         }
-      });
-      if (defaultChap.lessons.length > 0) {
-        result.push(defaultChap);
+      } else {
+        // Ligne sans tiret et non explicite : ex "Chap 2" ou titre de chapitre autonome
+        // Créer un nouveau chapitre avec cette ligne comme titre
+        const numMatch = line.match(/^(\d+)[\.\-\)]\s*(.*)$/);
+        const chapNum = numMatch ? numMatch[1] : `${result.length + 1}`;
+        const chapTitle = numMatch ? (numMatch[2] || line) : line;
+
+        currentChapter = {
+          id: `chap_${result.length}_${Date.now()}`,
+          title: chapTitle,
+          number: chapNum,
+          raw: line,
+          lessons: [],
+          colorIndex: colorCounter % COLOR_THEMES.length,
+        };
+        colorCounter++;
+        result.push(currentChapter);
       }
     }
   }
 
-  // Si on a des séances `sessionsList`
+  // Fallback si `lessonsList` est fourni directement
+  if (Array.isArray(lessonsList) && lessonsList.length > 0 && result.length === 0) {
+    const defaultChap: ChapterItem = {
+      id: `chap_lessons_${Date.now()}`,
+      title: 'Chapitre 1 : Programme',
+      number: '1',
+      raw: 'Programme',
+      lessons: [],
+      colorIndex: 0,
+    };
+    lessonsList.forEach((les, idx) => {
+      if (typeof les === 'string' && les.trim()) {
+        defaultChap.lessons.push({
+          id: `les_arr_${idx}`,
+          title: les.trim().replace(/^[-*•–—]\s*/, ''),
+          number: `${idx + 1}`,
+          raw: les,
+        });
+      }
+    });
+    if (defaultChap.lessons.length > 0) {
+      result.push(defaultChap);
+    }
+  }
+
+  // Fallback si `sessionsList`
   if (Array.isArray(sessionsList) && sessionsList.length > 0 && result.length === 0) {
     const sessionChap: ChapterItem = {
       id: `chap_sessions_${Date.now()}`,
-      title: 'Chapitre 1 : Planification des séances d\'apprentissage',
+      title: 'Chapitre 1 : Planification des séances',
       number: '1',
       raw: 'Séances',
       lessons: [],
@@ -290,29 +303,59 @@ export function parseChaptersAndLessons(
     }
   }
 
-  // Fallback si toujours vide mais que `contentText` existe
+  // Fallback si `contentText`
   if (result.length === 0 && contentText && contentText.trim()) {
-    const lines = contentText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const fallbackChap: ChapterItem = {
+    const lines = prepareLines(contentText);
+    let chap = {
       id: `chap_content_${Date.now()}`,
-      title: 'Chapitre 1 : Contenu et progression d\'apprentissage',
+      title: 'Chapitre 1 : Notions & Progression',
       number: '1',
       raw: 'Contenu',
-      lessons: [],
+      lessons: [] as LessonItem[],
       colorIndex: 0,
     };
     lines.forEach((l, idx) => {
-      fallbackChap.lessons.push({
+      chap.lessons.push({
         id: `content_line_${idx}`,
         title: l.replace(/^[-*•–—]\s*/, ''),
         number: `${idx + 1}`,
         raw: l,
       });
     });
-    result.push(fallbackChap);
+    result.push(chap);
   }
 
   return result;
+}
+
+/**
+ * Génère le texte brut sous la forme exacte demandée par l'utilisateur :
+ * Chap 1
+ * -leçon 1
+ * -leçon 2
+ * Chap 2
+ * Chap 3
+ */
+export function formatAsBulletedText(chapters: ChapterItem[]): string {
+  if (!chapters || chapters.length === 0) return '';
+  const lines: string[] = [];
+
+  chapters.forEach((chap, cIdx) => {
+    const chapHeader = chap.title.toLowerCase().startsWith('chap')
+      ? chap.title
+      : `Chap ${chap.number || cIdx + 1} : ${chap.title}`;
+    lines.push(chapHeader);
+
+    chap.lessons.forEach((les, lIdx) => {
+      const cleanTitle = les.title.replace(/^[-*•–—]\s*/, '');
+      const lessonLabel = cleanTitle.toLowerCase().startsWith('leçon') || cleanTitle.toLowerCase().startsWith('séance')
+        ? cleanTitle
+        : `leçon ${les.number || lIdx + 1} : ${cleanTitle}`;
+      lines.push(`  -${lessonLabel}`);
+    });
+  });
+
+  return lines.join('\n');
 }
 
 interface ChaptersLessonsViewerProps {
@@ -321,6 +364,9 @@ interface ChaptersLessonsViewerProps {
   lessons?: string[];
   sessions?: UnitSession[];
   content?: string;
+  rawText?: string;
+  unitTitle?: string;
+  compact?: boolean;
   variant?: 'card' | 'full' | 'compact' | 'preview';
   initialExpanded?: boolean;
   className?: string;
@@ -328,7 +374,13 @@ interface ChaptersLessonsViewerProps {
 }
 
 /**
- * Composant d'affichage élégant des chapitres et leçons sous forme de tirets et en couleurs.
+ * Composant d'affichage des chapitres et leçons sous forme de tirets structurés.
+ * Répond fidèlement au besoin :
+ * Chap 1
+ * -leçon 1
+ * -leçon 2
+ * Chap 2
+ * Chap 3
  */
 export const ChaptersLessonsViewer: React.FC<ChaptersLessonsViewerProps> = ({
   plan,
@@ -336,169 +388,169 @@ export const ChaptersLessonsViewer: React.FC<ChaptersLessonsViewerProps> = ({
   lessons,
   sessions,
   content,
+  rawText,
+  unitTitle,
+  compact = false,
   variant = 'card',
-  initialExpanded = false,
+  initialExpanded = true,
   className = '',
   showTitle = true,
 }) => {
-  const [isExpanded, setIsExpanded] = useState<boolean>(initialExpanded || variant === 'full' || variant === 'preview');
+  const effectiveContent = content || rawText;
+  const effectiveVariant = compact ? 'compact' : variant;
+  const [viewMode, setViewMode] = useState<'cards' | 'raw_dashes'>('cards');
+  const [copied, setCopied] = useState(false);
+  const [isExpanded, setIsExpanded] = useState<boolean>(initialExpanded || effectiveVariant === 'full' || effectiveVariant === 'preview');
 
   // Détermination des données sources
   const chaptersText = chapters !== undefined ? chapters : plan?.chapters;
   const lessonsList = lessons !== undefined ? lessons : plan?.lessons;
   const sessionsList = sessions !== undefined ? sessions : plan?.sessions;
-  const contentText = content !== undefined ? content : plan?.content;
+  const contentText = effectiveContent !== undefined ? effectiveContent : plan?.content;
 
   const parsedChapters = useMemo(() => {
     return parseChaptersAndLessons(chaptersText, lessonsList, sessionsList, contentText);
   }, [chaptersText, lessonsList, sessionsList, contentText]);
 
-  // Décompte global
+  const rawDashesText = useMemo(() => {
+    return formatAsBulletedText(parsedChapters);
+  }, [parsedChapters]);
+
   const totalChapters = parsedChapters.length;
   const totalLessons = parsedChapters.reduce((acc, c) => acc + c.lessons.length, 0);
+
+  const handleCopyDashes = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(rawDashesText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   if (totalChapters === 0 && totalLessons === 0) {
     if (variant === 'full' || variant === 'preview') {
       return (
-        <div className={`p-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 text-center text-xs text-slate-400 italic ${className}`}>
-          Aucun chapitre ou leçon spécifié pour le moment.
+        <div className={`p-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 text-center text-xs text-slate-400 italic ${className}`}>
+          Aucun chapitre ou leçon spécifié.
         </div>
       );
     }
     return null;
   }
 
-  // Nombre maximum d'éléments visibles par défaut en mode 'card' (pour garder une mise en page aérée)
-  const maxVisibleChaptersInCard = 2;
-  const shouldShowToggle = variant === 'card' && (totalChapters > maxVisibleChaptersInCard || totalLessons > 3);
-  const displayedChapters = (variant === 'card' && !isExpanded) 
-    ? parsedChapters.slice(0, maxVisibleChaptersInCard) 
-    : parsedChapters;
-
   return (
-    <div className={`rounded-xl border border-slate-200/90 bg-gradient-to-br from-slate-50/80 via-white to-blue-50/30 overflow-hidden shadow-xs ${className}`}>
-      {/* ── Entête du bloc Chapitres & Leçons ── */}
+    <div className={`rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs ${className}`}>
+      {/* ── Entête du bloc ── */}
       {showTitle && (
-        <div className="px-3.5 py-2.5 bg-gradient-to-r from-slate-100/90 to-blue-50/80 border-b border-slate-200/70 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="p-1 rounded-md bg-blue-600 text-white shadow-xs">
-              <BookOpen size={13} />
+        <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="p-1 rounded bg-blue-600 text-white shrink-0">
+              <BookOpen size={12} />
             </span>
-            <span className="text-xs font-bold text-slate-800 tracking-tight">
-              Chapitres & Leçons inclus
+            <span className="text-xs font-bold text-slate-800 truncate">
+              Chapitres & Leçons ({totalChapters} chap. • {totalLessons} leçons)
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {totalChapters > 0 && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
-                <span className="text-indigo-600 font-extrabold">—</span>
-                {totalChapters} {totalChapters > 1 ? 'chapitres' : 'chapitre'}
-              </span>
-            )}
-            {totalLessons > 0 && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                <span className="text-emerald-600 font-extrabold">–</span>
-                {totalLessons} {totalLessons > 1 ? 'leçons' : 'leçon'}
-              </span>
-            )}
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Bascule vue Cartes / Vue Tirets bruts */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setViewMode(m => m === 'cards' ? 'raw_dashes' : 'cards');
+              }}
+              className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 transition ${
+                viewMode === 'raw_dashes'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+              }`}
+              title="Basculer entre vue graphique et format tirets"
+            >
+              {viewMode === 'raw_dashes' ? <LayoutGrid size={11} /> : <List size={11} />}
+              {viewMode === 'raw_dashes' ? 'Vue graphique' : 'Format tirets'}
+            </button>
+
+            {/* Bouton Copier */}
+            <button
+              type="button"
+              onClick={handleCopyDashes}
+              className="p-1 rounded text-slate-500 hover:text-blue-600 hover:bg-slate-100 transition"
+              title="Copier le format texte avec tirets"
+            >
+              {copied ? <Check size={12} className="text-green-600" /> : <Copy size={12} />}
+            </button>
           </div>
         </div>
       )}
 
-      {/* ── Liste des chapitres et leçons avec tirets colorés ── */}
-      <div className="p-3 space-y-2.5 text-xs">
-        {displayedChapters.map((chap, chapIdx) => {
-          const theme = COLOR_THEMES[chap.colorIndex % COLOR_THEMES.length];
-          const hasLessons = chap.lessons.length > 0;
+      {/* ── VUE 1 : FORMAT TEXTE PUR AVEC TIRETS ── */}
+      {viewMode === 'raw_dashes' ? (
+        <div className="p-3 bg-slate-900 text-emerald-400 font-mono text-xs leading-relaxed overflow-x-auto select-all rounded-b-xl max-h-60 overflow-y-auto">
+          <pre className="whitespace-pre-wrap">{rawDashesText}</pre>
+        </div>
+      ) : (
+        /* ── VUE 2 : VUE HIÉRARCHIQUE STRUCTURÉE (TIRETS & COULEURS) ── */
+        <div className="p-2.5 space-y-2 text-xs">
+          {parsedChapters.map((chap, chapIdx) => {
+            const theme = COLOR_THEMES[chap.colorIndex % COLOR_THEMES.length];
+            const hasLessons = chap.lessons.length > 0;
+            const chapDisplay = chap.title.toLowerCase().startsWith('chap')
+              ? chap.title
+              : `Chap ${chap.number || chapIdx + 1} : ${chap.title}`;
 
-          return (
-            <div
-              key={chap.id || chapIdx}
-              className={`rounded-lg border ${theme.border} ${theme.bg} p-2.5 transition-all duration-200 hover:shadow-xs`}
-            >
-              {/* ── Ligne Chapitre avec tiret coloré en gras ── */}
-              <div className="flex items-start gap-2">
-                {/* Tiret coloré stylisé pour le chapitre */}
-                <span className={`text-base leading-none select-none font-black ${theme.dash} mt-0.5`} title="Chapitre inclus">
-                  —
-                </span>
-
-                <div className="flex-grow">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider ${theme.badge}`}>
-                      Chapitre {chap.number || chapIdx + 1}
+            return (
+              <div
+                key={chap.id || chapIdx}
+                className={`rounded-lg border ${theme.border} ${theme.bg} p-2 transition-all`}
+              >
+                {/* ── Chapitre avec badge et tiret gras ── */}
+                <div className="flex items-baseline gap-2">
+                  <span className={`text-sm font-black ${theme.dash} select-none shrink-0`}>
+                    —
+                  </span>
+                  <div className="flex items-baseline gap-1.5 flex-wrap min-w-0">
+                    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase ${theme.badge}`}>
+                      Chap {chap.number || chapIdx + 1}
                     </span>
-                    <span className="font-bold text-slate-900 leading-tight">
+                    <span className="font-bold text-slate-900 leading-snug">
                       {chap.title}
                     </span>
                   </div>
+                </div>
 
-                  {/* ── Liste des Leçons associées avec tirets sous-jacents en couleurs ── */}
-                  {hasLessons && (
-                    <div className="mt-2 pl-2 sm:pl-3 border-l-2 border-dashed border-slate-200/90 space-y-1.5">
-                      {chap.lessons.map((lesson, lesIdx) => (
+                {/* ── Leçons sous forme de tirets ── */}
+                {hasLessons ? (
+                  <div className="mt-1.5 pl-4 space-y-1">
+                    {chap.lessons.map((lesson, lesIdx) => {
+                      const cleanTitle = lesson.title.replace(/^[-*•–—]\s*/, '');
+                      return (
                         <div
                           key={lesson.id || lesIdx}
-                          className={`flex items-start gap-2 py-1 px-2 rounded-md ${theme.lessonBg} border ${theme.lessonBorder} transition-colors`}
+                          className={`flex items-baseline gap-2 py-0.5 px-2 rounded ${theme.lessonBg} border ${theme.lessonBorder}`}
                         >
-                          {/* Tiret coloré stylisé pour la leçon */}
-                          <span className={`text-sm leading-none select-none font-bold ${theme.lessonDash} mt-0.5`} title="Leçon incluse">
-                            –
+                          <span className={`text-xs font-black select-none shrink-0 ${theme.lessonDash}`}>
+                            -
                           </span>
-
-                          <div className="flex-grow flex items-baseline gap-1.5 flex-wrap">
-                            <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${theme.lessonBadge}`}>
-                              Leçon {lesson.number || lesIdx + 1}
+                          <span className="text-slate-800 font-medium leading-snug">
+                            {cleanTitle}
+                          </span>
+                          {lesson.duration && (
+                            <span className="text-[10px] text-slate-400 italic ml-auto shrink-0">
+                              ({lesson.duration})
                             </span>
-                            <span className={`font-medium ${theme.lessonText} leading-snug`}>
-                              {lesson.title}
-                            </span>
-                            {lesson.duration && (
-                              <span className="text-[10px] text-slate-500 italic ml-auto">
-                                ({lesson.duration})
-                              </span>
-                            )}
-                          </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-1 pl-5 text-[11px] text-slate-400 italic">
+                    (Chapitre sans sous-leçons détaillées)
+                  </div>
+                )}
               </div>
-            </div>
-          );
-        })}
-
-        {/* ── Indicateur s'il y a d'autres chapitres masqués en mode carte ── */}
-        {!isExpanded && variant === 'card' && totalChapters > maxVisibleChaptersInCard && (
-          <div className="text-[11px] text-slate-500 italic text-center py-1 bg-slate-50 rounded-md border border-slate-100">
-            + {totalChapters - maxVisibleChaptersInCard} autre{totalChapters - maxVisibleChaptersInCard > 1 ? 's' : ''} chapitre{totalChapters - maxVisibleChaptersInCard > 1 ? 's' : ''}...
-          </div>
-        )}
-      </div>
-
-      {/* ── Bouton Dérouler / Replier pour mode carte ── */}
-      {shouldShowToggle && (
-        <div className="px-3 py-1.5 bg-slate-50/80 border-t border-slate-100 flex justify-center">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsExpanded(!isExpanded);
-            }}
-            className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition"
-          >
-            {isExpanded ? (
-              <>
-                <ChevronUp size={12} /> Réduire les chapitres
-              </>
-            ) : (
-              <>
-                <ChevronDown size={12} /> Voir tous les chapitres et leçons ({totalChapters} ch. • {totalLessons} leçons)
-              </>
-            )}
-          </button>
+            );
+          })}
         </div>
       )}
     </div>
