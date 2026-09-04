@@ -139,11 +139,13 @@ export interface UnitPlan {
   objectives: string[]; // e.g., A, B, C, D
   objectivesDetails?: {            // Détails pour chaque objectif
     criterion: string;
+    criterionName?: string;
+    title?: string;
     aspects: string;
     expectedLevel: string;
     activities: string;
     formativeAssessment: string;
-    summativeAssessment: string;
+    summativeAssessment?: string;
   }[];
   atlSkills: string[];
   atlDetails?: ATLDetail[];        // Détails ATL

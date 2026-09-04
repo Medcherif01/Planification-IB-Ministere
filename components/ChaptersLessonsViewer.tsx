@@ -109,9 +109,36 @@ const COLOR_THEMES = [
 function prepareLines(text: string): string[] {
   if (!text) return [];
 
-  // Si le texte est sur une seule ligne avec des points-virgules séparant des chapitres
-  let normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  if (normalized.includes(';') && (/(?:chapitre|chap\b|thème|partie|module)/i.test(normalized))) {
+  let normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+
+  // 1. Détecter si des chapitres sont mentionnés inline entre parenthèses ou inline
+  // Ex: "... la performance optimale (Chapitre 1) et de l'entretien de la santé (Chapitre 5) ..."
+  const inlineChapMatches = [...normalized.matchAll(/(?:([^\n.;()]+?)\s*\((?:Chapitre|Chap|Ch\b)\s*(\d+)\s*\)|(?:Chapitre|Chap|Ch\b)\s*(\d+)\s*[:\-\–\—\.]?\s*([^\n.;()]+))/gi)];
+  if (inlineChapMatches.length >= 2) {
+    const extracted: string[] = [];
+    for (const m of inlineChapMatches) {
+      if (m[2]) {
+        const chapNum = m[2];
+        const rawTitle = m[1].replace(/^(?:les élèves exploreront|exploration de|étude de|et de|et|de|sur)\s+/i, '').trim();
+        extracted.push(`Chapitre ${chapNum} : ${rawTitle || 'Notions clés'}`);
+      } else if (m[3]) {
+        const chapNum = m[3];
+        const rawTitle = m[4].trim();
+        extracted.push(`Chapitre ${chapNum} : ${rawTitle || 'Notions clés'}`);
+      }
+    }
+    if (extracted.length >= 2) {
+      return extracted;
+    }
+  }
+
+  // 2. Si des chapitres ou leçons sont collés sur une même ligne
+  // Ex: "Chapitre 1 : ... Chapitre 2 : ..."
+  normalized = normalized.replace(/([^\n])\s+(?=(?:Chapitre|Chap\b|Thème|Partie|Section)\s*\d+)/gi, '$1\n');
+  normalized = normalized.replace(/([^\n])\s+(?=(?:[-*•–—]\s*)?(?:Leçon|Lecon|Séance|Seance)\s*\d+)/gi, '$1\n');
+  normalized = normalized.replace(/([^\n])\s+[-*•–—]\s+/g, '$1\n- ');
+
+  if (normalized.includes(';') && (/(?:chapitre|chap\b|thème|partie|module|leçon|seance)/i.test(normalized))) {
     normalized = normalized.split(';').join('\n');
   }
 
@@ -233,7 +260,6 @@ export function parseChaptersAndLessons(
         }
       } else {
         // Ligne sans tiret et non explicite : ex "Chap 2" ou titre de chapitre autonome
-        // Créer un nouveau chapitre avec cette ligne comme titre
         const numMatch = line.match(/^(\d+)[\.\-\)]\s*(.*)$/);
         const chapNum = numMatch ? numMatch[1] : `${result.length + 1}`;
         const chapTitle = numMatch ? (numMatch[2] || line) : line;
@@ -252,19 +278,63 @@ export function parseChaptersAndLessons(
     }
   }
 
-  // Fallback si `lessonsList` est fourni directement
-  if (Array.isArray(lessonsList) && lessonsList.length > 0 && result.length === 0) {
-    const defaultChap: ChapterItem = {
+  // ── ENRICHISSEMENT INTELLIGENT DES LEÇONS SI ABSENTES OU INCOMPLÈTES ──
+  const totalExtractedLessons = result.reduce((acc, c) => acc + c.lessons.length, 0);
+
+  // 1. Si des séances (sessionsList) existent et qu'il n'y a pas ou trop peu de leçons extraites
+  if (Array.isArray(sessionsList) && sessionsList.length > 0 && totalExtractedLessons === 0) {
+    if (result.length <= 1) {
+      const targetChap = result[0] || {
+        id: `chap_sessions_${Date.now()}`,
+        title: 'Chapitre 1 : Planification des séances',
+        number: '1',
+        raw: 'Séances',
+        lessons: [],
+        colorIndex: 0,
+      };
+      if (result.length === 0) result.push(targetChap);
+      sessionsList.forEach(s => {
+        const title = s.objectifApprentissage || s.contenu || `Séance ${s.numero}`;
+        targetChap.lessons.push({
+          id: `sess_${s.numero}_${Date.now()}`,
+          title: title.startsWith('Séance') || title.startsWith('Leçon') ? title : `Séance ${s.numero} : ${title}`,
+          number: `${s.numero}`,
+          duration: s.duree,
+          objective: s.objectifApprentissage,
+          raw: title,
+        });
+      });
+    } else {
+      // Distribuer les séances entre les différents chapitres
+      const perChap = Math.ceil(sessionsList.length / result.length);
+      sessionsList.forEach((s, idx) => {
+        const chapIdx = Math.min(Math.floor(idx / perChap), result.length - 1);
+        const title = s.objectifApprentissage || s.contenu || `Séance ${s.numero}`;
+        result[chapIdx].lessons.push({
+          id: `sess_${s.numero}_${Date.now()}`,
+          title: title.startsWith('Séance') || title.startsWith('Leçon') ? title : `Séance ${s.numero} : ${title}`,
+          number: `${s.numero}`,
+          duration: s.duree,
+          objective: s.objectifApprentissage,
+          raw: title,
+        });
+      });
+    }
+  }
+  // 2. Si lessonsList existe et totalExtractedLessons === 0
+  else if (Array.isArray(lessonsList) && lessonsList.length > 0 && totalExtractedLessons === 0) {
+    const targetChap = result[0] || {
       id: `chap_lessons_${Date.now()}`,
-      title: 'Chapitre 1 : Programme',
+      title: 'Chapitre 1 : Notions & Progression',
       number: '1',
       raw: 'Programme',
       lessons: [],
       colorIndex: 0,
     };
+    if (result.length === 0) result.push(targetChap);
     lessonsList.forEach((les, idx) => {
       if (typeof les === 'string' && les.trim()) {
-        defaultChap.lessons.push({
+        targetChap.lessons.push({
           id: `les_arr_${idx}`,
           title: les.trim().replace(/^[-*•–—]\s*/, ''),
           number: `${idx + 1}`,
@@ -272,46 +342,16 @@ export function parseChaptersAndLessons(
         });
       }
     });
-    if (defaultChap.lessons.length > 0) {
-      result.push(defaultChap);
-    }
   }
-
-  // Fallback si `sessionsList`
-  if (Array.isArray(sessionsList) && sessionsList.length > 0 && result.length === 0) {
-    const sessionChap: ChapterItem = {
-      id: `chap_sessions_${Date.now()}`,
-      title: 'Chapitre 1 : Planification des séances',
-      number: '1',
-      raw: 'Séances',
-      lessons: [],
-      colorIndex: 0,
-    };
-    sessionsList.forEach((s) => {
-      const title = s.objectifApprentissage || s.contenu || `Séance ${s.numero}`;
-      sessionChap.lessons.push({
-        id: `sess_${s.numero}`,
-        title: `Séance ${s.numero} : ${title}`,
-        number: `${s.numero}`,
-        duration: s.duree,
-        objective: s.objectifApprentissage,
-        raw: title,
-      });
-    });
-    if (sessionChap.lessons.length > 0) {
-      result.push(sessionChap);
-    }
-  }
-
-  // Fallback si `contentText`
-  if (result.length === 0 && contentText && contentText.trim()) {
+  // 3. Si aucun chapitre ni leçon, tenter contentText
+  else if (result.length === 0 && contentText && contentText.trim()) {
     const lines = prepareLines(contentText);
-    let chap = {
+    const chap: ChapterItem = {
       id: `chap_content_${Date.now()}`,
       title: 'Chapitre 1 : Notions & Progression',
       number: '1',
       raw: 'Contenu',
-      lessons: [] as LessonItem[],
+      lessons: [],
       colorIndex: 0,
     };
     lines.forEach((l, idx) => {
@@ -323,6 +363,40 @@ export function parseChaptersAndLessons(
       });
     });
     result.push(chap);
+  }
+  // 4. Si nous avons un seul chapitre et AUCUNE leçon, et que le texte brut est un paragraphe narratif
+  else if (result.length === 1 && result[0].lessons.length === 0 && textToParse) {
+    // Découper le paragraphe en phrases significatives pour constituer des leçons d'apprentissage
+    const sentences = textToParse
+      .split(/(?<=[.!?])\s+/)
+      .map(s => s.trim().replace(/^[-*•–—]\s*/, ''))
+      .filter(s => s.length > 12);
+    if (sentences.length >= 2) {
+      sentences.forEach((sent, idx) => {
+        result[0].lessons.push({
+          id: `les_sent_${idx}`,
+          title: sent,
+          number: `${idx + 1}`,
+          raw: sent,
+        });
+      });
+    } else {
+      // Découper sur virgules ou conjonctions majeures
+      const clauses = textToParse
+        .split(/(?:,|\bet\b|\bpour\b)\s+/)
+        .map(c => c.trim())
+        .filter(c => c.length > 15);
+      if (clauses.length >= 2) {
+        clauses.forEach((cl, idx) => {
+          result[0].lessons.push({
+            id: `les_cl_${idx}`,
+            title: cl.charAt(0).toUpperCase() + cl.slice(1),
+            number: `${idx + 1}`,
+            raw: cl,
+          });
+        });
+      }
+    }
   }
 
   return result;

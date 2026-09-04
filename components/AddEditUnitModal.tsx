@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { UnitPlan } from '../types';
 import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS } from '../constants';
 import {
@@ -6,6 +6,7 @@ import {
   generateAssessmentsForUnit,
   sanitizeUnitPlan,
   updateUnitFromConceptsAndObjectives,
+  structureChaptersWithAI,
 } from '../services/geminiService';
 import {
   extractCriteriaLetters,
@@ -32,14 +33,6 @@ import {
 } from 'lucide-react';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 import ErrorBoundary from './ErrorBoundary';
-
-// ─── IB Criteria by subject (simplified) ─────────────────────────────────────
-const IB_CRITERIA_OPTIONS = [
-  { letter: 'A', label: 'Critère A – Connaissances et compréhension' },
-  { letter: 'B', label: 'Critère B – Développement des compétences / Investigation' },
-  { letter: 'C', label: 'Critère C – Communication' },
-  { letter: 'D', label: 'Critère D – Réflexion / Application' },
-];
 
 interface AddEditUnitModalProps {
   isOpen: boolean;
@@ -95,6 +88,8 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
   // Objectives details (aspects, expected levels, activities)
   const [objectivesDetails, setObjectivesDetails] = useState<{
     criterion: string;
+    criterionName?: string;
+    title?: string;
     aspects: string;
     expectedLevel: string;
     activities: string;
@@ -107,12 +102,59 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
   const [conceptualQs, setConceptualQs] = useState<string[]>(['', '']);
   const [debatableQs, setDebatableQs] = useState<string[]>(['', '']);
 
-  // ── États de génération ───────────────────────────────────────────────────
+  // ── États de génération & structuration ────────────────────────────────────
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isStructuringChapters, setIsStructuringChapters] = useState(false);
   const [isRegeneratingAssessments, setIsRegeneratingAssessments] = useState(false);
   const [generatedPlan, setGeneratedPlan] = useState<UnitPlan | null>(null);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // ── Options dynamiques de critères avec nom officiel ou personnalisé ───────
+  const dynamicCriteriaOptions = useMemo(() => {
+    return (['A', 'B', 'C', 'D'] as const).map(letter => {
+      const std = getStandardIBCriterion(subject, letter);
+      const detail = objectivesDetails.find(d => normalizeCriterionLetter(d.criterion) === letter);
+      const existingAss = (existingPlan?.assessments || []).find(a => normalizeCriterionLetter(a.criterion) === letter);
+      const currentName = detail?.criterionName?.trim() || existingAss?.criterionName?.trim() || std.name;
+      return {
+        letter,
+        name: currentName,
+        label: `Critère ${letter} – ${currentName}`,
+      };
+    });
+  }, [subject, objectivesDetails, existingPlan]);
+
+  const handleStructureChaptersWithAI = async () => {
+    setIsStructuringChapters(true);
+    setError('');
+    try {
+      const rawToStructure = chapters.trim() || `${title || 'Unité'}. ${statementOfInquiry || ''}`;
+      const structured = await structureChaptersWithAI(rawToStructure, subject, gradeLevel, title);
+      if (structured) {
+        setChapters(structured);
+        setSuccessMsg('Structure des chapitres et leçons générée avec succès !');
+        setTimeout(() => setSuccessMsg(''), 4000);
+      }
+    } catch (err) {
+      console.error('Erreur restructuration chapitres:', err);
+      setError('Impossible de restructurer les chapitres avec l\'IA.');
+    } finally {
+      setIsStructuringChapters(false);
+    }
+  };
+
+  const handleInsertChapterTemplate = () => {
+    setChapters(
+`Chapitre 1 : [Titre du premier chapitre]
+- Leçon 1 : [Première notion / séance]
+- Leçon 2 : [Deuxième notion / séance]
+- Leçon 3 : [Troisième notion / séance]
+Chapitre 2 : [Titre du deuxième chapitre]
+- Leçon 1 : [Notion / séance]
+- Leçon 2 : [Notion / séance]`
+    );
+  };
 
   // ── Section accordion ─────────────────────────────────────────────────────
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
@@ -196,8 +238,26 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
       const initializedDetails = activeCriteria.map(c => {
         const existing = existingDetails.find(d => normalizeCriterionLetter(d.criterion) === c);
         const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D');
+        const existingAss = (sanitized.assessments || []).find(a => normalizeCriterionLetter(a.criterion) === c);
+        const existingObjStr = (sanitized.objectives || []).find(o => normalizeCriterionLetter(o) === c);
+
+        let effName = existing?.criterionName?.trim();
+        if (!effName && existingAss?.criterionName?.trim()) {
+          effName = existingAss.criterionName.trim();
+        }
+        if (!effName && existingObjStr) {
+          const match = existingObjStr.match(/^(?:critère\s*[A-D]\s*[:\-\–\—]?\s*)(.*)$/i);
+          if (match && match[1]?.trim()) {
+            effName = match[1].trim();
+          }
+        }
+        if (!effName) {
+          effName = std.name;
+        }
+
         return {
           criterion: c,
+          criterionName: effName,
           aspects: (existing?.aspects && String(existing.aspects).trim()) ? String(existing.aspects).trim() : std.aspectsFormatted,
           expectedLevel: (existing?.expectedLevel && String(existing.expectedLevel).trim()) ? String(existing.expectedLevel).trim() : 'Niveau 5-6 attendu /8',
           activities: (existing?.activities && String(existing.activities).trim()) ? String(existing.activities).trim() : std.activities,
@@ -228,21 +288,25 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
       setFactualQs(['', '']);
       setConceptualQs(['', '']);
       setDebatableQs(['', '']);
+      const stdA = getStandardIBCriterion(subject, 'A');
+      const stdB = getStandardIBCriterion(subject, 'B');
       setObjectivesDetails([
         {
           criterion: 'A',
-          aspects: getStandardIBCriterion(subject, 'A').aspectsFormatted,
+          criterionName: stdA.name,
+          aspects: stdA.aspectsFormatted,
           expectedLevel: 'Niveau 5-6 attendu /8',
-          activities: getStandardIBCriterion(subject, 'A').activities,
-          formativeAssessment: getStandardIBCriterion(subject, 'A').formativeAssessment,
+          activities: stdA.activities,
+          formativeAssessment: stdA.formativeAssessment,
           summativeAssessment: '',
         },
         {
           criterion: 'B',
-          aspects: getStandardIBCriterion(subject, 'B').aspectsFormatted,
+          criterionName: stdB.name,
+          aspects: stdB.aspectsFormatted,
           expectedLevel: 'Niveau 5-6 attendu /8',
-          activities: getStandardIBCriterion(subject, 'B').activities,
-          formativeAssessment: getStandardIBCriterion(subject, 'B').formativeAssessment,
+          activities: stdB.activities,
+          formativeAssessment: stdB.formativeAssessment,
           summativeAssessment: '',
         },
       ]);
@@ -263,6 +327,7 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
           const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D');
           return {
             criterion: c,
+            criterionName: std.name,
             aspects: std.aspectsFormatted,
             expectedLevel: 'Niveau 5-6 attendu /8',
             activities: std.activities,
@@ -275,7 +340,11 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
     });
   };
 
-  const updateObjectiveDetail = (criterion: string, field: 'aspects' | 'expectedLevel' | 'activities' | 'formativeAssessment', value: string) => {
+  const updateObjectiveDetail = (
+    criterion: string,
+    field: 'aspects' | 'expectedLevel' | 'activities' | 'formativeAssessment' | 'criterionName',
+    value: string
+  ) => {
     setObjectivesDetails(prev => {
       const idx = prev.findIndex(d => normalizeCriterionLetter(d.criterion) === criterion);
       if (idx >= 0) {
@@ -288,10 +357,12 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
         ...prev,
         {
           criterion,
+          criterionName: field === 'criterionName' ? value : std.name,
           aspects: std.aspectsFormatted,
           expectedLevel: 'Niveau 5-6 attendu /8',
           activities: std.activities,
           formativeAssessment: std.formativeAssessment,
+          summativeAssessment: '',
           [field]: value,
         },
       ];
@@ -353,14 +424,27 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
     const finalizedObjectivesDetails = selectedCriteria.map(c => {
       const existing = objectivesDetails.find(d => normalizeCriterionLetter(d.criterion) === c);
       const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D');
+      const effCriterionName = existing?.criterionName?.trim() || std.name;
       return {
         criterion: c,
+        criterionName: effCriterionName,
         aspects: (existing?.aspects && String(existing.aspects).trim()) ? String(existing.aspects).trim() : std.aspectsFormatted,
         expectedLevel: (existing?.expectedLevel && String(existing.expectedLevel).trim()) ? String(existing.expectedLevel).trim() : 'Niveau 5-6 attendu /8',
         activities: (existing?.activities && String(existing.activities).trim()) ? String(existing.activities).trim() : std.activities,
         formativeAssessment: (existing?.formativeAssessment && String(existing.formativeAssessment).trim()) ? String(existing.formativeAssessment).trim() : std.formativeAssessment,
         summativeAssessment: (existing?.summativeAssessment && String(existing.summativeAssessment).trim()) ? String(existing.summativeAssessment).trim() : '',
       };
+    });
+
+    const updatedAssessments = (base.assessments || []).map(a => {
+      const matching = finalizedObjectivesDetails.find(d => normalizeCriterionLetter(d.criterion) === normalizeCriterionLetter(a.criterion));
+      if (matching) {
+        return {
+          ...a,
+          criterionName: matching.criterionName,
+        };
+      }
+      return a;
     });
 
     return {
@@ -375,8 +459,14 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
       relatedConcepts: effectiveRelated,
       globalContext,
       atlSkills: atlSkills.split('\n').map(s => s.trim()).filter(Boolean),
-      objectives: selectedCriteria.map(c => formatCriterionFullName(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D')),
+      objectives: selectedCriteria.map(c => {
+        const matching = finalizedObjectivesDetails.find(d => d.criterion === c);
+        const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(c) ? c : 'A') as 'A' | 'B' | 'C' | 'D');
+        const customName = matching?.criterionName?.trim() || std.name;
+        return `Critère ${c} – ${customName}`;
+      }),
       objectivesDetails: finalizedObjectivesDetails,
+      assessments: updatedAssessments.length > 0 ? updatedAssessments : base.assessments,
       summativeAssessment,
       formativeAssessment,
       differentiation,
@@ -595,24 +685,54 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Chapitres / Contenu du programme *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-700">Chapitres / Contenu du programme *</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleInsertChapterTemplate}
+                    className="text-[11px] font-medium text-slate-600 hover:text-blue-600 hover:underline flex items-center gap-1 transition"
+                    title="Insérer un modèle structuré à 2 chapitres et leçons"
+                  >
+                    <Plus size={12} />
+                    Modèle type
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleStructureChaptersWithAI}
+                    disabled={isStructuringChapters}
+                    className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                    title="Transformer ou développer automatiquement en chapitres et leçons claires"
+                  >
+                    {isStructuringChapters ? <Loader2 size={12} className="animate-spin text-blue-600" /> : <Sparkles size={12} className="text-blue-600" />}
+                    {isStructuringChapters ? 'Structuration...' : 'Structurer avec l\'IA'}
+                  </button>
+                </div>
+              </div>
               <textarea
                 value={chapters}
                 onChange={e => setChapters(e.target.value)}
-                rows={3}
-                placeholder={"Chapitre 1 : Le cycle naturel de l'eau\n- Les états de la matière\n- Les précipitations\nChapitre 2 : La pollution et le traitement"}
-                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none resize-none font-mono text-xs"
+                rows={4}
+                placeholder={"Chapitre 1 : Le cycle naturel de l'eau\n- Leçon 1 : Les états de la matière\n- Leçon 2 : Les précipitations\nChapitre 2 : La gestion durable des ressources\n- Leçon 1 : La pollution et traitement\n- Leçon 2 : Solutions et préservation"}
+                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none resize-none font-mono text-xs leading-relaxed"
               />
             </div>
 
             {/* Visualisation structurée des chapitres et leçons */}
-            {chapters.trim() && (
+            {(chapters.trim() || (existingPlan?.sessions && existingPlan.sessions.length > 0)) && (
               <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
                 <p className="text-xs font-bold text-slate-600 mb-2 flex items-center gap-1.5">
                   <BookOpen size={14} className="text-blue-600" />
                   Aperçu de la structure des chapitres & leçons
                 </p>
-                <ChaptersLessonsViewer rawText={chapters} unitTitle={title} compact={true} />
+                <ChaptersLessonsViewer
+                  plan={existingPlan}
+                  chapters={chapters}
+                  sessions={existingPlan?.sessions}
+                  lessons={existingPlan?.lessons}
+                  unitTitle={title}
+                  compact={true}
+                />
               </div>
             )}
 
@@ -622,7 +742,7 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
                 Critères IB évalués dans cette unité * <span className="text-slate-400 font-normal">(min. 2 recommandés)</span>
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {IB_CRITERIA_OPTIONS.map(({ letter, label }) => {
+                {dynamicCriteriaOptions.map(({ letter, label }) => {
                   const isSelected = selectedCriteria.includes(letter);
                   return (
                     <button
@@ -861,21 +981,51 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
                       const std = getStandardIBCriterion(subject, (['A', 'B', 'C', 'D'].includes(criterion) ? criterion : 'A') as 'A' | 'B' | 'C' | 'D');
                       const detail = objectivesDetails.find(d => normalizeCriterionLetter(d.criterion) === criterion) || {
                         criterion,
+                        criterionName: std.name,
                         aspects: std.aspectsFormatted,
                         expectedLevel: 'Niveau 5-6 attendu /8',
                         activities: std.activities,
                         formativeAssessment: std.formativeAssessment,
                       };
+                      const currentTitle = detail.criterionName?.trim() || std.name;
+
                       return (
                         <div key={criterion} className="border border-blue-200 bg-blue-50/50 rounded-xl p-3.5 space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="font-bold text-xs text-blue-900 flex items-center gap-1.5">
                               <Target size={14} className="text-blue-600" />
-                              Critère {criterion} : {std.name}
+                              Critère {criterion} : {currentTitle}
                             </span>
                             <span className="text-[10px] bg-blue-100 text-blue-800 font-semibold px-2 py-0.5 rounded">
                               PEI IB
                             </span>
+                          </div>
+
+                          {/* Champ éditable du titre de l'objectif spécifique */}
+                          <div className="bg-white p-2.5 rounded-lg border border-blue-200 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] font-bold text-blue-900 flex items-center gap-1">
+                                <PenLine size={12} className="text-blue-600" />
+                                Titre de l'objectif spécifique (Nom officiel ou personnalisé)
+                              </label>
+                              {detail.criterionName && detail.criterionName !== std.name && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateObjectiveDetail(criterion, 'criterionName', std.name)}
+                                  className="text-[10px] text-blue-600 hover:text-blue-800 underline font-medium"
+                                  title="Rétablir l'intitulé standard officiel pour cette matière"
+                                >
+                                  Rétablir officiel ({std.name})
+                                </button>
+                              )}
+                            </div>
+                            <input
+                              type="text"
+                              value={detail.criterionName ?? std.name}
+                              onChange={e => updateObjectiveDetail(criterion, 'criterionName', e.target.value)}
+                              placeholder={std.name}
+                              className="w-full p-2 border border-blue-300 rounded-lg text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-blue-400 outline-none bg-blue-50/20"
+                            />
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">

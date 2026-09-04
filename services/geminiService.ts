@@ -5012,3 +5012,66 @@ function generateCalendarFallback(
   }
   return entries;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// structureChaptersWithAI — Développe et structure du texte brut en chapitres & leçons
+// ─────────────────────────────────────────────────────────────────────────────
+export const structureChaptersWithAI = async (
+  rawContent: string,
+  subject: string,
+  gradeLevel: string,
+  unitTitle?: string
+): Promise<string> => {
+  try {
+    const prompt = `
+Tu es un expert pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB pour la matière "${subject}" (Niveau: ${gradeLevel}).
+Tâche : Organise et structure le contenu suivant en plusieurs chapitres distincts, avec pour chaque chapitre 2 à 4 leçons spécifiques.
+
+Titre de l'unité : "${unitTitle || "Unité d'apprentissage"}"
+Texte ou notions brutes :
+"""
+${rawContent}
+"""
+
+FORMAT OBLIGATOIRE DE SORTIE (TEXTE BRUT UNIQUEMENT, aucun markdown de bloc de code, aucun commentaire) :
+Chapitre 1 : [Titre représentatif du chapitre 1]
+- Leçon 1 : [Titre précis de la leçon 1]
+- Leçon 2 : [Titre précis de la leçon 2]
+- Leçon 3 : [Titre précis de la leçon 3]
+Chapitre 2 : [Titre représentatif du chapitre 2]
+- Leçon 1 : [Titre précis de la leçon 1]
+- Leçon 2 : [Titre précis de la leçon 2]
+- Leçon 3 : [Titre précis de la leçon 3]
+
+Règles :
+1. Crée au minimum 2 chapitres (idéalement 2 à 3 chapitres par unité).
+2. Chaque chapitre DOIT contenir au minimum 2 leçons au format "- Leçon X : ...".
+3. Sois précis, concret et adapté au niveau scolaire.
+`;
+
+    const raw = await callGeminiViaProxy(prompt, undefined, { temperature: 0.3, maxOutputTokens: 1500 });
+    const cleaned = raw.replace(/```(?:markdown|text)?/gi, '').replace(/```/g, '').trim();
+    return cleaned;
+  } catch (e) {
+    console.error('Erreur structureChaptersWithAI:', e);
+    // Fallback heuristique local sans crash
+    const lines = (rawContent || '').split(/\n|[.;]/).map(s => s.trim()).filter(Boolean);
+    if (lines.length >= 4) {
+      const half = Math.ceil(lines.length / 2);
+      return [
+        `Chapitre 1 : Notions fondamentales`,
+        ...lines.slice(0, half).map((l, i) => `- Leçon ${i + 1} : ${l}`),
+        `Chapitre 2 : Approfondissement et applications`,
+        ...lines.slice(half).map((l, i) => `- Leçon ${i + 1} : ${l}`)
+      ].join('\n');
+    }
+    return [
+      `Chapitre 1 : Introduction et fondements`,
+      `- Leçon 1 : Découverte des notions`,
+      `- Leçon 2 : Analyse et méthodologie`,
+      `Chapitre 2 : Application et évaluation`,
+      `- Leçon 1 : Travaux pratiques et réalisation`,
+      `- Leçon 2 : Synthèse et consolidation`
+    ].join('\n');
+  }
+};

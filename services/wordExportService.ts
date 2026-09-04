@@ -514,6 +514,7 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
   const objectifsTxt = objectives.map(cr => {
     const d = plan.objectivesDetails?.find(x => (x.criterion || '').toUpperCase() === cr);
     const std = getStandardIBCriterion(plan.subject || '', cr as 'A' | 'B' | 'C' | 'D');
+    const critTitle = d?.criterionName?.trim() || d?.title?.trim() || std.name;
     const rawAspects = d?.aspects ? String(d.aspects).trim() : '';
     // Conserver en priorité absolue les aspects saisis ou modifiés par l'enseignant !
     const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
@@ -521,7 +522,7 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     const activities = d?.activities ? `\nActivités : ${d.activities}` : '';
     const formEval = d?.formativeAssessment ? `\nÉval. formative : ${d.formativeAssessment}` : '';
     const summEval = d?.summativeAssessment ? `\nÉval. sommative : ${d.summativeAssessment}` : '';
-    return `Critère ${cr} [${std.name}] : ${aspects}${level}${activities}${formEval}${summEval}`;
+    return `Critère ${cr} [${critTitle}] : ${aspects}${level}${activities}${formEval}${summEval}`;
   }).join('\n\n') || c(plan.content?.slice(0, 200));
 
   const contenuTxt = [
@@ -851,25 +852,28 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     details_objectifs:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => {
       const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
       const std = getStandardIBCriterion(plan.subject || '', cr);
+      const critTitle = d.criterionName?.trim() || d.title?.trim() || std.name;
       const rawAspects = d.aspects ? String(d.aspects).trim() : '';
       const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
-      return `Critère ${d.criterion} [${std.name}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
+      return `Critère ${d.criterion} [${critTitle}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
     }).join('\n\n') || '',
     objectifs_details:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => {
       const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
       const std = getStandardIBCriterion(plan.subject || '', cr);
+      const critTitle = d.criterionName?.trim() || d.title?.trim() || std.name;
       const rawAspects = d.aspects ? String(d.aspects).trim() : '';
       const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
-      return `Critère ${d.criterion} [${std.name}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
+      return `Critère ${d.criterion} [${critTitle}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
     }).join('\n\n') || '',
     objectifs_liste:          (plan.objectivesDetails || []).filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => {
       const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
       const std = getStandardIBCriterion(plan.subject || '', cr);
+      const critTitle = d.criterionName?.trim() || d.title?.trim() || std.name;
       const rawAspects = d.aspects ? String(d.aspects).trim() : '';
       const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
       return {
         critere: d.criterion,
-        titre: std.name,
+        titre: critTitle,
         aspects,
         niveau_attendu: d.expectedLevel || 'Niveau 5-6 /8',
         activites: d.activities || std.activities,

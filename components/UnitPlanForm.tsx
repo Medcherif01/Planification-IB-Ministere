@@ -863,15 +863,62 @@ const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave,
                   const std = getStandardIBCriterion(plan.subject || '', criterion);
                   const detail = plan.objectivesDetails?.find(d => normalizeCriterionLetter(d.criterion) === criterion) || {
                     criterion,
+                    criterionName: std.name,
                     aspects: std.aspectsFormatted,
                     expectedLevel: 'Niveau 5-6 attendu /8',
                     activities: std.activities,
                     formativeAssessment: std.formativeAssessment,
                     summativeAssessment: std.summativeAssessment
                   };
+                  const currentTitle = detail.criterionName?.trim() || detail.title?.trim() || std.name;
+
                   return (
-                    <div key={criterion} className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                      <p className="text-sm font-bold text-blue-700 mb-2">Critère {criterion} : {std.name}</p>
+                    <div key={criterion} className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold text-blue-700">Critère {criterion} : {currentTitle}</p>
+                        {detail.criterionName && detail.criterionName !== std.name && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newDetails = [...(plan.objectivesDetails || [])];
+                              const idx = newDetails.findIndex(d => normalizeCriterionLetter(d.criterion) === criterion);
+                              if (idx >= 0) newDetails[idx] = { ...newDetails[idx], criterionName: std.name };
+                              else newDetails.push({ ...detail, criterionName: std.name });
+                              handleInputChange('objectivesDetails', newDetails);
+                            }}
+                            className="text-[10px] text-blue-600 hover:underline"
+                          >
+                            Rétablir l'officiel ({std.name})
+                          </button>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-semibold text-slate-600 block mb-1">Titre de l'objectif spécifique (Critère {criterion})</label>
+                        <input
+                          type="text"
+                          value={detail.criterionName ?? std.name}
+                          onChange={(e) => {
+                            const newTitle = e.target.value;
+                            const newDetails = [...(plan.objectivesDetails || [])];
+                            const idx = newDetails.findIndex(d => normalizeCriterionLetter(d.criterion) === criterion);
+                            if (idx >= 0) newDetails[idx] = { ...newDetails[idx], criterionName: newTitle };
+                            else newDetails.push({ ...detail, criterionName: newTitle });
+                            handleInputChange('objectivesDetails', newDetails);
+
+                            const newObjectives = (plan.objectives || []).map(o => {
+                              if (normalizeCriterionLetter(o) === criterion) {
+                                return `Critère ${criterion} – ${newTitle}`;
+                              }
+                              return o;
+                            });
+                            handleInputChange('objectives', newObjectives);
+                          }}
+                          className={`${inputClass} text-xs font-medium`}
+                          placeholder={std.name}
+                        />
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs text-slate-500 block mb-1">Aspects travaillés</label>

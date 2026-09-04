@@ -11,6 +11,7 @@ import {
   RUBRIC_LEVELS,
   loadCriteria,
   saveCriteria,
+  getStandardIBCriterion,
 } from '../services/ibCriteriaService';
 
 // ─── IB criterion letters available ─────────────────────────────────────────
@@ -24,22 +25,10 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   D: { bg: 'bg-rose-50',   border: 'border-rose-300',   text: 'text-rose-800',   badge: 'bg-rose-600' },
 };
 
-// ─── Default criterion names per subject ────────────────────────────────────
-const DEFAULT_CRITERION_NAMES: Record<string, string[]> = {
-  'Mathématiques': ['Connaissances et compréhension', 'Investigation de modèles', 'Communication en mathématiques', "Application dans des contextes réels"],
-  'Sciences': ['Connaissances et compréhension', 'Recherche et conception', 'Traitement et évaluation', 'Réflexion sur les répercussions de la science'],
-  'Individus et sociétés': ['Connaissances et compréhension', 'Recherche', 'Communication', 'Réflexion critique'],
-  'Design': ['Rechercher et définir', 'Idéer et concevoir', 'Créer la solution', 'Évaluer'],
-  'Arts': ['Connaissances et compréhension', 'Développement des compétences', 'Penser de façon créative', 'Répondre'],
-  'Éducation physique et à la santé': ['Connaissances et compréhension', 'Développement des compétences', 'Réflexion et performance', 'Pensée en mouvement'],
-};
-
 function getDefaultCriterionName(subject: string, letter: 'A' | 'B' | 'C' | 'D'): string {
-  const idx = CRITERION_LETTERS.indexOf(letter);
-  const names = DEFAULT_CRITERION_NAMES[subject];
-  if (names && idx < names.length) return names[idx];
-  const fallback = ['Connaissances et compréhension', 'Développement des compétences', 'Communication', 'Réflexion et évaluation'];
-  return fallback[idx] || `Critère ${letter}`;
+  const std = getStandardIBCriterion(subject, letter);
+  if (std && std.name) return std.name;
+  return `Critère ${letter}`;
 }
 
 function buildEmptyCriterion(letter: 'A' | 'B' | 'C' | 'D', subject: string): IbCriterion {

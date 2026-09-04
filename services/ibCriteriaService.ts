@@ -100,8 +100,7 @@ export function deleteCriteriaFromLocalStorage(subject: string, grade: string): 
 // API — MongoDB via /api/ib-criteria
 // ─────────────────────────────────────────────────────────────────────────────
 
-const API_BASE_URL =
-  process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:3000/api';
+const API_BASE_URL = '/api';
 
 export async function loadCriteriaFromDatabase(
   subject: string,
@@ -605,12 +604,34 @@ export const STANDARD_IB_CRITERIA_BY_SUBJECT: Record<string, Record<'A'|'B'|'C'|
  */
 export function getSubjectCategory(subjectName?: string): string {
   const s = (subjectName || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  // 1. Éducation physique et à la santé (avant sciences car contient souvent "physique" ou "sante")
+  if (s.includes('sport') || s.includes('eps') || s.includes('sante') || s.includes('phe') || 
+      (s.includes('physiq') && (s.includes('educ') || s.includes('sante') || s.includes('corpo')))) {
+    return 'education_physique';
+  }
+  // 2. Design / Technologie / Informatique / STEM
+  if (s.includes('design') || s.includes('techno') || s.includes('inform') || s.includes('conception') || s.includes('stem')) {
+    return 'design';
+  }
+  // 3. Mathématiques
   if (s.includes('math')) return 'mathematiques';
-  if (s.includes('scien') || s.includes('physiq') || s.includes('chimie') || s.includes('biolog')) return 'sciences';
-  if (s.includes('hist') || s.includes('geo') || s.includes('individ') || s.includes('societ') || s.includes('humain') || s.includes('econom')) return 'individus_societes';
-  if (s.includes('art') || s.includes('musiq') || s.includes('theatr') || s.includes('visuel')) return 'arts';
-  if (s.includes('design') || s.includes('techno') || s.includes('inform')) return 'design';
-  if (s.includes('sport') || s.includes('physiq') || s.includes('eps') || s.includes('sante') || s.includes('phe')) return 'education_physique';
+  // 4. Sciences (SVT, physique-chimie, biologie, etc. - exclut éducation physique)
+  if (s.includes('scien') || s.includes('physiq') || s.includes('chimie') || s.includes('biolog') || s.includes('svt') || s.includes('laborat')) {
+    return 'sciences';
+  }
+  // 5. Arts (visuels, musique, théâtre, danse)
+  if (s.includes('art') || s.includes('musiq') || s.includes('theatr') || s.includes('visuel') || s.includes('danse')) {
+    return 'arts';
+  }
+  // 6. Individus et sociétés (Histoire, Géo, Éco, Philo)
+  if (s.includes('hist') || s.includes('geo') || s.includes('individ') || s.includes('societ') || s.includes('humain') || s.includes('econom') || s.includes('citoyen')) {
+    return 'individus_societes';
+  }
+  // 7. Acquisition de langues (Anglais, Espagnol, Langue seconde / B)
+  if (s.includes('anglais') || s.includes('espagnol') || s.includes('allemand') || s.includes('acquisition') || s.includes('langue seconde') || s.includes('fle') || s.includes('langue b')) {
+    return 'acquisition_langues';
+  }
+  // 8. Langue et littérature (Français, Langue A, Littérature)
   return 'langue_litterature';
 }
 
