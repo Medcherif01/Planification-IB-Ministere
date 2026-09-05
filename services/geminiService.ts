@@ -1,5 +1,5 @@
 import { UnitPlan, AssessmentData, UnitGroupingPreference } from "../types";
-import { getCriteriaSync, buildCriteriaSummaryForPrompt, getStandardIBCriterion, normalizeCriterionLetter, extractCriteriaLetters, formatCriterionFullName } from './ibCriteriaService';
+import { getCriteriaSync, buildCriteriaSummaryForPrompt, getStandardIBCriterion, normalizeCriterionLetter, extractCriteriaLetters, formatCriterionFullName, createFallbackAssessmentForCriterion, syncAssessmentsWithTargetCriteria } from './ibCriteriaService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Proxy API helper — tous les appels Gemini passent par /api/generate (Vercel
@@ -543,6 +543,8 @@ export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string)
     chapters: plan.chapters || plan.chapitres || "",
     
     keyConcept: plan.keyConcept || plan.concept_cle || "",
+    keyConcepts: Array.isArray(plan.keyConcepts) ? plan.keyConcepts : 
+                 (plan.keyConcept ? String(plan.keyConcept).split(/[,;/]\s*/).map((s: string) => s.trim()).filter(Boolean) : []),
     relatedConcepts: Array.isArray(plan.relatedConcepts) ? plan.relatedConcepts : 
                      Array.isArray(plan.concepts_connexes) ? plan.concepts_connexes : 
                      typeof plan.relatedConcepts === 'string' ? plan.relatedConcepts.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean) : [],
@@ -576,7 +578,28 @@ export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string)
     
     generatedAssessmentDocument: plan.generatedAssessmentDocument || "",
     assessmentData: sanitizeAssessmentData(plan.assessmentData || plan.donnees_evaluation),
-    assessments: assessments,
+    assessments: (() => {
+      const targetCrit = extractCriteriaLetters(Array.isArray(plan.objectives) ? plan.objectives : []);
+      if (targetCrit.length > 0) {
+        const customNames: Record<string, string> = {};
+        if (Array.isArray(plan.objectivesDetails)) {
+          for (const d of plan.objectivesDetails) {
+            const l = normalizeCriterionLetter(d?.criterion);
+            if (l && d?.criterionName) customNames[l] = d.criterionName;
+          }
+        }
+        return syncAssessmentsWithTargetCriteria(
+          assessments,
+          targetCrit,
+          subject || plan.subject || '',
+          gradeLevel || plan.gradeLevel || '',
+          customNames,
+          plan.title,
+          plan.chapters || plan.content
+        );
+      }
+      return assessments;
+    })(),
     objectivesDetails: Array.isArray(plan.objectivesDetails) ? plan.objectivesDetails : [],
     lessons: Array.isArray(plan.lessons) ? plan.lessons : [],
     sessions: Array.isArray(plan.sessions) ? plan.sessions : [],
@@ -2309,6 +2332,16 @@ Retourne UNIQUEMENT un tableau JSON d'objets évaluation (pas d'objet englobant,
 ]
 `;
 
+  const customNames: Record<string, string> = {};
+  if (Array.isArray(plan.objectivesDetails)) {
+    for (const d of plan.objectivesDetails) {
+      const l = normalizeCriterionLetter(d?.criterion);
+      if (l && (d.criterionName || (d as any).title)) {
+        customNames[l] = String(d.criterionName || (d as any).title).trim();
+      }
+    }
+  }
+
   try {
     const rawText = await callGeminiViaProxy(
       prompt,
@@ -2324,9 +2357,31 @@ Retourne UNIQUEMENT un tableau JSON d'objets évaluation (pas d'objet englobant,
       .map(sanitizeAssessmentData)
       .filter((a): a is AssessmentData => !!a);
 
-    return enforceAssessmentsRules(assessments, subject, false, gradeLevel);
+    const enforced = enforceAssessmentsRules(assessments, subject, false, gradeLevel);
+    const targetCriteria = specifiedCriteria.length > 0 ? specifiedCriteria : enforced.map(a => a.criterion);
+    return syncAssessmentsWithTargetCriteria(
+      enforced,
+      targetCriteria,
+      subject,
+      gradeLevel,
+      customNames,
+      plan.title,
+      plan.chapters || plan.content
+    );
   } catch (err: any) {
-    throw new Error(`Erreur génération évaluations: ${err?.message || err}`);
+    console.warn(`[Génération Évaluations] API indisponible ou erreur (${err?.message || err}). Utilisation de la génération locale structurée IB.`);
+    const targetCriteria = specifiedCriteria.length > 0 
+      ? specifiedCriteria 
+      : (isDesign ? ['A', 'B', 'C', 'D'] : ['A', 'B']);
+    return syncAssessmentsWithTargetCriteria(
+      plan.assessments || [],
+      targetCriteria,
+      subject,
+      gradeLevel,
+      customNames,
+      plan.title,
+      plan.chapters || plan.content
+    );
   }
 };
 

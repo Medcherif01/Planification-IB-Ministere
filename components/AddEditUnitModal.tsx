@@ -13,6 +13,7 @@ import {
   getStandardIBCriterion,
   normalizeCriterionLetter,
   formatCriterionFullName,
+  syncAssessmentsWithTargetCriteria,
 } from '../services/ibCriteriaService';
 import {
   X,
@@ -70,6 +71,7 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
 
   // ── Champs mode manuel ────────────────────────────────────────────────────
   const [keyConcept, setKeyConcept] = useState('');
+  const [selectedKeyConcepts, setSelectedKeyConcepts] = useState<string[]>([]);
   const [keyConceptMode, setKeyConceptMode] = useState<'select' | 'type'>('select');
   const [keyConceptInput, setKeyConceptInput] = useState('');
 
@@ -183,8 +185,15 @@ Chapitre 2 : [Titre du deuxième chapitre]
       setChapters(sanitized.chapters || sanitized.content || '');
       setDuration(sanitized.duration || '10 heures');
       setTeacherName(sanitized.teacherName || '');
-      setKeyConcept(sanitized.keyConcept || '');
-      setKeyConceptInput(sanitized.keyConcept || '');
+      let initKeyConcepts: string[] = [];
+      if (Array.isArray(sanitized.keyConcepts) && sanitized.keyConcepts.length > 0) {
+        initKeyConcepts = sanitized.keyConcepts.map(String).map(s => s.trim()).filter(Boolean);
+      } else if (sanitized.keyConcept) {
+        initKeyConcepts = String(sanitized.keyConcept).split(/[,;/]\s*/).map(s => s.trim()).filter(Boolean);
+      }
+      setSelectedKeyConcepts(initKeyConcepts);
+      setKeyConcept(initKeyConcepts.join(', '));
+      setKeyConceptInput(initKeyConcepts.join(', '));
 
       const relArr = Array.isArray(sanitized.relatedConcepts)
         ? sanitized.relatedConcepts
@@ -274,6 +283,7 @@ Chapitre 2 : [Titre du deuxième chapitre]
       setDuration('10 heures');
       setTeacherName('');
       setKeyConcept('');
+      setSelectedKeyConcepts([]);
       setKeyConceptInput('');
       setRelatedConcepts([]);
       setRelatedConceptInput('');
@@ -316,6 +326,16 @@ Chapitre 2 : [Titre du deuxième chapitre]
   if (!isOpen) return null;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+  const toggleKeyConcept = (conceptName: string) => {
+    setSelectedKeyConcepts(prev => {
+      const exists = prev.includes(conceptName);
+      const next = exists ? prev.filter(c => c !== conceptName) : [...prev, conceptName];
+      setKeyConcept(next.join(', '));
+      setKeyConceptInput(next.join(', '));
+      return next;
+    });
+  };
+
   const toggleCriterion = (letter: string) => {
     setSelectedCriteria(prev => {
       const next = prev.includes(letter) ? prev.filter(c => c !== letter) : [...prev, letter];
@@ -410,7 +430,10 @@ Chapitre 2 : [Titre du deuxième chapitre]
 
   // ── Build plan from manual fields ─────────────────────────────────────────
   const buildManualPlan = (): UnitPlan => {
-    const effectiveKeyConcept = keyConceptMode === 'type' ? keyConceptInput.trim() : keyConcept;
+    const effectiveKeyConceptsList = keyConceptMode === 'type'
+      ? keyConceptInput.split(/[,;/]\s*/).map(s => s.trim()).filter(Boolean)
+      : (selectedKeyConcepts.length > 0 ? selectedKeyConcepts : (keyConcept ? [keyConcept] : []));
+    const effectiveKeyConcept = effectiveKeyConceptsList.join(', ');
     const effectiveRelated =
       relatedConceptMode === 'type'
         ? relatedConceptInput.split(',').map(s => s.trim()).filter(Boolean)
@@ -436,16 +459,23 @@ Chapitre 2 : [Titre du deuxième chapitre]
       };
     });
 
-    const updatedAssessments = (base.assessments || []).map(a => {
-      const matching = finalizedObjectivesDetails.find(d => normalizeCriterionLetter(d.criterion) === normalizeCriterionLetter(a.criterion));
-      if (matching) {
-        return {
-          ...a,
-          criterionName: matching.criterionName,
-        };
-      }
-      return a;
-    });
+    // Extract custom criterion names for assessment alignment
+    const customNamesMap: Record<string, string> = {};
+    for (const d of finalizedObjectivesDetails) {
+      const letter = normalizeCriterionLetter(d.criterion);
+      if (letter && d.criterionName) customNamesMap[letter] = d.criterionName;
+    }
+
+    // Synchronize assessments strictly with target criteria (A, B, C, D)
+    const synchronizedAssessments = syncAssessmentsWithTargetCriteria(
+      base.assessments || [],
+      selectedCriteria,
+      subject,
+      gradeLevel,
+      customNamesMap,
+      title.trim() || base.title,
+      chapters || content
+    );
 
     return {
       ...base,
@@ -456,6 +486,7 @@ Chapitre 2 : [Titre du deuxième chapitre]
       duration,
       teacherName,
       keyConcept: effectiveKeyConcept,
+      keyConcepts: effectiveKeyConceptsList,
       relatedConcepts: effectiveRelated,
       globalContext,
       atlSkills: atlSkills.split('\n').map(s => s.trim()).filter(Boolean),
@@ -466,7 +497,7 @@ Chapitre 2 : [Titre du deuxième chapitre]
         return `Critère ${c} – ${customName}`;
       }),
       objectivesDetails: finalizedObjectivesDetails,
-      assessments: updatedAssessments.length > 0 ? updatedAssessments : base.assessments,
+      assessments: synchronizedAssessments,
       summativeAssessment,
       formativeAssessment,
       differentiation,
@@ -827,7 +858,12 @@ Chapitre 2 : [Titre du deuxième chapitre]
                   {/* Concept clé */}
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-bold text-slate-700">Concept clé</label>
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <span>Concept(s) clé(s)</span>
+                        <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-semibold">
+                          (un ou plusieurs au choix)
+                        </span>
+                      </label>
                       <div className="flex text-xs bg-slate-100 rounded-lg p-0.5">
                         <button
                           type="button"
@@ -846,23 +882,49 @@ Chapitre 2 : [Titre du deuxième chapitre]
                       </div>
                     </div>
                     {keyConceptMode === 'select' ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {KEY_CONCEPTS.map(c => (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => setKeyConcept(c)}
-                            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${keyConcept === c ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400'}`}
-                          >
-                            {c}
-                          </button>
-                        ))}
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          {KEY_CONCEPTS.map(c => {
+                            const isSelected = selectedKeyConcepts.includes(c);
+                            return (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => toggleKeyConcept(c)}
+                                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition flex items-center gap-1 ${
+                                  isSelected 
+                                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs' 
+                                    : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:bg-slate-50'
+                                }`}
+                              >
+                                <span>{c}</span>
+                                {isSelected && <span className="text-[10px] font-bold">✓</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {selectedKeyConcepts.length > 0 && (
+                          <div className="flex items-center gap-1.5 flex-wrap bg-blue-50/70 p-2 rounded-lg border border-blue-100 text-xs">
+                            <span className="font-semibold text-blue-900 text-[11px]">Sélectionné(s) :</span>
+                            {selectedKeyConcepts.map(c => (
+                              <span key={c} className="inline-flex items-center gap-1 bg-white border border-blue-200 text-blue-800 px-2 py-0.5 rounded-md font-medium text-xs shadow-2xs">
+                                {c}
+                                <button type="button" onClick={() => toggleKeyConcept(c)} className="text-slate-400 hover:text-red-600 ml-0.5 font-bold">×</button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <input
                         value={keyConceptInput}
-                        onChange={e => setKeyConceptInput(e.target.value)}
-                        placeholder="Saisir un concept clé..."
+                        onChange={e => {
+                          setKeyConceptInput(e.target.value);
+                          const list = e.target.value.split(/[,;/]\s*/).map(s => s.trim()).filter(Boolean);
+                          setSelectedKeyConcepts(list);
+                          setKeyConcept(e.target.value);
+                        }}
+                        placeholder="Ex: Changement, Systèmes, Relations (séparés par des virgules)..."
                         className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none"
                       />
                     )}

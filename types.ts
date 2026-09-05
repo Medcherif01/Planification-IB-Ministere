@@ -112,6 +112,7 @@ export interface UnitPlan {
 
   // === INQUIRY SECTION ===
   keyConcept: string;
+  keyConcepts?: string[];          // Liste des concepts clés (un ou plusieurs)
   keyConceptDefinition?: string;   // Définition du concept clé
   keyConceptJustification?: string; // Justification du choix
   keyConceptDevelopment?: string;  // Comment il sera développé

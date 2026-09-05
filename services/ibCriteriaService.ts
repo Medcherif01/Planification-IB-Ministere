@@ -1,3 +1,5 @@
+import { AssessmentData } from '../types';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ibCriteriaService.ts
 // Gestion des objectifs spécifiques IB personnalisés par matière + niveau PEI.
@@ -678,5 +680,101 @@ export function extractCriteriaLetters(objectives: any[]): ('A' | 'B' | 'C' | 'D
 export function formatCriterionFullName(subject: string, letter: 'A' | 'B' | 'C' | 'D'): string {
   const std = getStandardIBCriterion(subject, letter);
   return `Critère ${letter}: ${std.name}`;
+}
+
+/**
+ * Construit une évaluation critériée IB complète et conforme (avec sous-aspects, grille, et exercices)
+ * pour un critère donné, avec titre officiel ou personnalisé.
+ */
+export function createFallbackAssessmentForCriterion(
+  criterion: 'A' | 'B' | 'C' | 'D',
+  subject: string = '',
+  gradeLevel: string = '',
+  unitTitle: string = '',
+  unitChapters: string = '',
+  customName?: string
+): AssessmentData {
+  const std = getStandardIBCriterion(subject, criterion);
+  const title = customName?.trim() || std.name;
+  const strands = std.strands && std.strands.length >= 3 ? std.strands : [
+    `i. Identifier et expliciter les notions fondamentales de ${title}`,
+    `ii. Appliquer les démarches et méthodes adaptées`,
+    `iii. Analyser et interpréter les résultats avec rigueur`,
+    `iv. Réfléchir sur la validité et la portée des conclusions`
+  ];
+
+  const rubricRows = [
+    { level: '1-2', descriptor: `L'élève démontre une compréhension limitée de ${title} et applique les démarches avec une aide soutenue.` },
+    { level: '3-4', descriptor: `L'élève démontre une compréhension de base de ${title} et applique les démarches requises dans des contextes simples.` },
+    { level: '5-6', descriptor: `L'élève démontre une bonne compréhension de ${title} et applique les méthodes avec autonomie dans des situations variées.` },
+    { level: '7-8', descriptor: `L'élève démontre une compréhension approfondie et critique de ${title}, applique les démarches avec rigueur et justifie ses résultats.` }
+  ];
+
+  const topicName = unitTitle ? `« ${unitTitle} »` : "cette unité";
+  const dottedLines = "\n\nRéponse :\n.........................................................\n.........................................................\n.........................................................";
+
+  const exercises = [
+    {
+      title: `Tâche 1 – Mobilisation et compréhension (Critère ${criterion})`,
+      content: `Dans le cadre de l'unité ${topicName}, démontre ta maîtrise des concepts liés à : ${title}.\n\n1. En t'appuyant sur les notions vues en classe, analyse la situation proposée et explicite ta démarche étape par étape.${dottedLines}`,
+      criterionReference: `Critère ${criterion} : ${strands[0] ? strands[0].split('.')[0].trim() : 'i'}, ${strands[1] ? strands[1].split('.')[0].trim() : 'ii'}`,
+      workspaceNeeded: true,
+    },
+    {
+      title: `Tâche 2 – Application et résolution de problème (Critère ${criterion})`,
+      content: `Résous la tâche complexe suivante liée à ${topicName} en justifiant rigoureusement ton raisonnement.\n\n2. Développe ta démarche complète et formule une conclusion critique.${dottedLines}`,
+      criterionReference: `Critère ${criterion} : ${strands[2] ? strands[2].split('.')[0].trim() : 'iii'}${strands[3] ? ', ' + strands[3].split('.')[0].trim() : ''}`,
+      workspaceNeeded: true,
+    }
+  ];
+
+  return {
+    criterion,
+    criterionName: title,
+    maxPoints: 8,
+    strands,
+    rubricRows,
+    exercises
+  };
+}
+
+/**
+ * Synchronise strictement la liste des évaluations avec la liste cible des critères (A, B, C, D) :
+ * - Si un critère est ajouté (ex: C ou D), une évaluation complète pour ce critère est créée.
+ * - Si un critère est supprimé, son évaluation est automatiquement retirée.
+ * - Si le titre du critère est personnalisé, son nom dans l'évaluation est mis à jour.
+ */
+export function syncAssessmentsWithTargetCriteria(
+  existingAssessments: AssessmentData[] = [],
+  targetCriteria: string[] = [],
+  subject: string = '',
+  gradeLevel: string = '',
+  customNames: Record<string, string> = {},
+  unitTitle: string = '',
+  unitChapters: string = ''
+): AssessmentData[] {
+  const normTargets = targetCriteria
+    .map(normalizeCriterionLetter)
+    .filter((c): c is 'A' | 'B' | 'C' | 'D' => c !== null);
+  
+  // Conserver l'ordre A, B, C, D sans doublon
+  const uniqueTargets: ('A' | 'B' | 'C' | 'D')[] = [];
+  for (const c of ['A', 'B', 'C', 'D'] as const) {
+    if (normTargets.includes(c)) uniqueTargets.push(c);
+  }
+
+  return uniqueTargets.map(crit => {
+    const existing = (existingAssessments || []).find(a => normalizeCriterionLetter(a.criterion) === crit);
+    const customName = customNames[crit] || (existing?.criterionName && existing.criterionName !== getStandardIBCriterion(subject, crit).name ? existing.criterionName : undefined);
+    
+    if (existing) {
+      return {
+        ...existing,
+        criterion: crit,
+        criterionName: customName || existing.criterionName,
+      };
+    }
+    return createFallbackAssessmentForCriterion(crit, subject, gradeLevel, unitTitle, unitChapters, customName);
+  });
 }
 

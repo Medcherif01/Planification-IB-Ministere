@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail } from '../types';
 import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS, SUBJECTS } from '../constants';
 import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan, updateUnitFromConceptsAndObjectives, sanitizeUnitPlan } from '../services/geminiService';
-import { normalizeCriterionLetter, extractCriteriaLetters, getStandardIBCriterion, formatCriterionFullName } from '../services/ibCriteriaService';
+import { normalizeCriterionLetter, extractCriteriaLetters, getStandardIBCriterion, formatCriterionFullName, syncAssessmentsWithTargetCriteria } from '../services/ibCriteriaService';
 import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock } from 'lucide-react';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 import ErrorBoundary from './ErrorBoundary';
@@ -108,8 +108,65 @@ const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave,
     }
   };
 
+  const toggleKeyConcept = (concept: string) => {
+    if (isReadOnly('keyConcept')) return;
+    setPlan(prev => {
+      const currentList = (prev.keyConcepts && prev.keyConcepts.length > 0)
+        ? prev.keyConcepts
+        : (prev.keyConcept ? String(prev.keyConcept).split(/[,;/]\s*/).map(s => s.trim()).filter(Boolean) : []);
+      const nextList = currentList.includes(concept)
+        ? currentList.filter(c => c !== concept)
+        : [...currentList, concept];
+      return {
+        ...prev,
+        keyConcept: nextList.join(', '),
+        keyConcepts: nextList,
+      };
+    });
+  };
+
   const handleInputChange = (field: keyof UnitPlan, value: any) => {
-    setPlan(prev => ({ ...prev, [field]: value }));
+    setPlan(prev => {
+      const nextPlan = { ...prev, [field]: value };
+      if (field === 'objectives') {
+        const targetLetters = extractCriteriaLetters(value || []);
+        const customNamesMap: Record<string, string> = {};
+        if (Array.isArray(nextPlan.objectivesDetails)) {
+          for (const d of nextPlan.objectivesDetails) {
+            const l = normalizeCriterionLetter(d.criterion);
+            if (l && d.criterionName) customNamesMap[l] = d.criterionName;
+          }
+        }
+        nextPlan.assessments = syncAssessmentsWithTargetCriteria(
+          nextPlan.assessments || [],
+          targetLetters,
+          nextPlan.subject || '',
+          nextPlan.gradeLevel || '',
+          customNamesMap,
+          nextPlan.title,
+          nextPlan.chapters || nextPlan.content
+        );
+      } else if (field === 'objectivesDetails') {
+        const customNamesMap: Record<string, string> = {};
+        if (Array.isArray(value)) {
+          for (const d of value) {
+            const l = normalizeCriterionLetter(d.criterion);
+            if (l && d.criterionName) customNamesMap[l] = d.criterionName;
+          }
+        }
+        const targetLetters = extractCriteriaLetters(nextPlan.objectives || []);
+        nextPlan.assessments = syncAssessmentsWithTargetCriteria(
+          nextPlan.assessments || [],
+          targetLetters,
+          nextPlan.subject || '',
+          nextPlan.gradeLevel || '',
+          customNamesMap,
+          nextPlan.title,
+          nextPlan.chapters || nextPlan.content
+        );
+      }
+      return nextPlan;
+    });
   };
 
   const handleNestedChange = (section: string, field: string, value: any) => {
@@ -667,11 +724,29 @@ const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave,
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <div>
-                <label className={labelClass}>Concept clé {detailUpdateMode && <span className="text-xs text-amber-600 ml-1">🔒</span>}</label>
-                <select value={plan.keyConcept} onChange={(e) => !isReadOnly('keyConcept') && handleInputChange('keyConcept', e.target.value)} className={`${inputClass} bg-white ${isReadOnly('keyConcept') ? 'bg-slate-100 cursor-not-allowed' : ''}`} disabled={isReadOnly('keyConcept')}>
-                  <option value="">Sélectionner...</option>
-                  {KEY_CONCEPTS.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <label className={labelClass}>
+                  Concept(s) clé(s) ({((plan.keyConcepts && plan.keyConcepts.length > 0) ? plan.keyConcepts.length : (plan.keyConcept ? 1 : 0))})
+                  {detailUpdateMode && <span className="text-xs text-amber-600 ml-1">🔒</span>}
+                </label>
+                <div className={`h-28 overflow-y-auto border border-slate-300 rounded-lg bg-white p-2 ${isReadOnly('keyConcept') ? 'bg-slate-100 pointer-events-none' : ''}`}>
+                  {KEY_CONCEPTS.map(c => {
+                    const currentList = (plan.keyConcepts && plan.keyConcepts.length > 0)
+                      ? plan.keyConcepts
+                      : (plan.keyConcept ? String(plan.keyConcept).split(/[,;/]\s*/).map(s => s.trim()).filter(Boolean) : []);
+                    const isChecked = currentList.includes(c);
+                    return (
+                      <label key={c} className="flex items-center space-x-2 text-xs cursor-pointer hover:bg-blue-50 p-1 rounded">
+                        <input 
+                          type="checkbox" 
+                          checked={isChecked} 
+                          onChange={() => toggleKeyConcept(c)} 
+                          className="rounded text-blue-600" 
+                        />
+                        <span className={isChecked ? 'font-semibold text-blue-700' : 'text-slate-600'}>{c}</span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
               <div>
                 <label className={labelClass}>Concepts connexes (Max 3) {detailUpdateMode && <span className="text-xs text-amber-600 ml-1">🔒</span>}</label>
@@ -837,7 +912,44 @@ const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave,
                               ? [...currentLetters, criterion].sort()
                               : currentLetters.filter(l => l !== criterion);
                             const newObj = updatedLetters.map(l => formatCriterionFullName(plan.subject || '', l));
-                            handleInputChange('objectives', newObj);
+
+                            const currentDetails = plan.objectivesDetails || [];
+                            const newDetails = updatedLetters.map(l => {
+                              const existing = currentDetails.find(d => normalizeCriterionLetter(d.criterion) === l);
+                              if (existing) return existing;
+                              const s = getStandardIBCriterion(plan.subject || '', l as any);
+                              return {
+                                criterion: l,
+                                criterionName: s.name,
+                                aspects: s.aspectsFormatted,
+                                expectedLevel: 'Niveau 5-6 attendu /8',
+                                activities: s.activities,
+                                formativeAssessment: s.formativeAssessment,
+                              };
+                            });
+
+                            const customNamesMap: Record<string, string> = {};
+                            for (const d of newDetails) {
+                              const l = normalizeCriterionLetter(d.criterion);
+                              if (l && d.criterionName) customNamesMap[l] = d.criterionName;
+                            }
+
+                            const newAssessments = syncAssessmentsWithTargetCriteria(
+                              plan.assessments || [],
+                              updatedLetters,
+                              plan.subject || '',
+                              plan.gradeLevel || '',
+                              customNamesMap,
+                              plan.title,
+                              plan.chapters || plan.content
+                            );
+
+                            setPlan(prev => ({
+                              ...prev,
+                              objectives: newObj,
+                              objectivesDetails: newDetails,
+                              assessments: newAssessments,
+                            }));
                           }}
                           className="w-4 h-4 text-emerald-600 rounded"
                         />
@@ -849,6 +961,37 @@ const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave,
                 {extractCriteriaLetters(plan.objectives).length < 2 && (
                   <p className="text-xs text-red-600 mt-1">⚠️ Sélectionnez au moins 2 critères</p>
                 )}
+                {/* Live assessment sync indicator */}
+                <div className="mt-2.5 p-2.5 bg-purple-50 border border-purple-200 rounded-lg text-xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-purple-900 flex items-center gap-1.5">
+                      <Target size={13} className="text-purple-600" />
+                      Évaluations synchronisées ({plan.assessments?.length || 0})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('assessment')}
+                      className="text-[11px] font-bold text-purple-700 hover:text-purple-900 underline"
+                    >
+                      Voir l'onglet Évaluations →
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {(plan.assessments && plan.assessments.length > 0) ? (
+                      plan.assessments.map((a, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-purple-200 rounded text-[11px] font-medium text-purple-800">
+                          <span className="w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] font-bold flex items-center justify-center">
+                            {a.criterion}
+                          </span>
+                          <span className="truncate max-w-[140px]">{a.criterionName}</span>
+                          <span className="text-purple-600 text-[10px]">({a.maxPoints} pts)</span>
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-slate-400 italic text-[11px]">Aucun critère sélectionné</span>
+                    )}
+                  </div>
+                </div>
               </div>
               <div>
                 <label className={labelClass}>Évaluation sommative (aperçu)</label>

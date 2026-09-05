@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UnitPlan, ServiceActionPlan, UnitGroupingPreference } from '../types';
-import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine, Sparkles, Wand2, ListPlus } from 'lucide-react';
+import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, FileCheck, Filter, FileArchive, User, LogOut, ArrowLeft, BookOpen, Printer, Globe, GitMerge, Tag, AlertTriangle, CheckCircle, Info, Heart, ChevronDown, ChevronUp, RefreshCw, RotateCcw, Upload, FolderOpen, ExternalLink, Clock, Eye, Save, Table, PenLine, Sparkles, Wand2, ListPlus, Target } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI, updateUnitFromConceptsAndObjectives, suggestUnitGroupingsFromSyllabus, generateCourseFromUnitGroupings, sanitizeUnitPlan } from '../services/geminiService';
-import { extractCriteriaLetters, formatCriterionFullName, getStandardIBCriterion } from '../services/ibCriteriaService';
+import { extractCriteriaLetters, formatCriterionFullName, getStandardIBCriterion, syncAssessmentsWithTargetCriteria, normalizeCriterionLetter } from '../services/ibCriteriaService';
 import type { AppUser } from '../services/authService';
 import ModificationRequestModal from './ModificationRequestModal';
 import { exportUnitPlanToWord, exportAllUnitPlansToZip, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
@@ -789,7 +789,30 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
         onAddPlans(plans.map(p => p.id === plan.id ? updatedPlan : p));
       }
     } catch (e: any) {
-      alert(`Erreur mise à jour des évaluations : ${e?.message || e}`);
+      console.warn("Mise à jour des évaluations via générateur local conforme IB :", e);
+      const targetLetters = extractCriteriaLetters(plan.objectives || []);
+      const customNames: Record<string, string> = {};
+      if (Array.isArray(plan.objectivesDetails)) {
+        for (const d of plan.objectivesDetails) {
+          const l = normalizeCriterionLetter(d.criterion);
+          if (l && d.criterionName) customNames[l] = d.criterionName;
+        }
+      }
+      const fallbackAssessments = syncAssessmentsWithTargetCriteria(
+        plan.assessments || [],
+        targetLetters.length > 0 ? targetLetters : ['A', 'B'],
+        plan.subject || currentSubject,
+        plan.gradeLevel || currentGrade,
+        customNames,
+        plan.title,
+        plan.chapters || plan.content
+      );
+      const updatedPlan: UnitPlan = {
+        ...plan,
+        assessments: fallbackAssessments,
+      };
+      if (onUpdateUnit) onUpdateUnit(updatedPlan);
+      else onAddPlans(plans.map(p => p.id === plan.id ? updatedPlan : p));
     } finally {
       setUpdatingAssessmentId(null);
     }
@@ -2095,6 +2118,23 @@ Chapitre 4 : Algèbre et équations
                                 </span>
                                 <h3 className="text-lg font-bold text-slate-800 group-hover:text-blue-600 transition">{plan.title || 'Unité sans titre'}</h3>
                                 <p className="text-sm text-slate-500">{plan.gradeLevel} • {plan.duration}</p>
+                                {/* Affichage des concepts clés (un ou plusieurs) */}
+                                {(() => {
+                                  const conceptsList = (plan.keyConcepts && plan.keyConcepts.length > 0)
+                                    ? plan.keyConcepts
+                                    : (plan.keyConcept ? String(plan.keyConcept).split(/[,;/]\s*/).map(s => s.trim()).filter(Boolean) : []);
+                                  if (conceptsList.length === 0) return null;
+                                  return (
+                                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                                      <span className="text-[11px] font-semibold text-slate-400">Concept{conceptsList.length > 1 ? 's' : ''} clé{conceptsList.length > 1 ? 's' : ''} :</span>
+                                      {conceptsList.map((c, i) => (
+                                        <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                                          {c}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
                             </div>
                             <div className="flex flex-col gap-2">
                                 {isAdmin ? (
@@ -2142,23 +2182,45 @@ Chapitre 4 : Algèbre et équations
                             <ChaptersLessonsViewer plan={plan} variant="card" />
                             
                             {/* Affichage des critères d'évaluation */}
-                            {plan.assessments && plan.assessments.length > 0 && (
-                                <div className="bg-purple-50 p-3 rounded-lg border border-purple-100">
-                                    <p className="text-xs font-bold text-purple-900 uppercase mb-2">Critères d'évaluation</p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {plan.assessments.map((assessment, idx) => (
-                                            <span 
-                                                key={idx}
-                                                className="inline-flex items-center gap-1 px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-semibold"
-                                                title={assessment.criterionName}
-                                            >
-                                                Critère {assessment.criterion}
-                                                <span className="text-purple-600">({assessment.maxPoints}pts)</span>
-                                            </span>
-                                        ))}
-                                    </div>
+                            {(() => {
+                              const targetLetters = extractCriteriaLetters(plan.objectives || []);
+                              const listToDisplay = (plan.assessments && plan.assessments.length > 0)
+                                ? plan.assessments
+                                : targetLetters.map(c => ({
+                                    criterion: c,
+                                    criterionName: getStandardIBCriterion(plan.subject || '', c as any).name,
+                                    maxPoints: 8
+                                  }));
+                              if (listToDisplay.length === 0) return null;
+                              return (
+                                <div className="bg-purple-50/80 p-3 rounded-xl border border-purple-200">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <p className="text-xs font-bold text-purple-900 uppercase flex items-center gap-1.5">
+                                      <Target size={13} className="text-purple-600" />
+                                      Critères d'évaluation ({listToDisplay.length})
+                                    </p>
+                                    <span className="text-[10px] text-purple-700 bg-purple-100 font-semibold px-2 py-0.5 rounded-full">
+                                      PEI IB
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {listToDisplay.map((assessment, idx) => (
+                                      <span 
+                                        key={idx}
+                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white text-purple-900 border border-purple-200 rounded-lg text-xs font-semibold shadow-xs"
+                                        title={assessment.criterionName}
+                                      >
+                                        <span className="w-5 h-5 rounded-full bg-purple-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                                          {assessment.criterion}
+                                        </span>
+                                        <span className="truncate max-w-[130px] text-[11px]">{assessment.criterionName || `Critère ${assessment.criterion}`}</span>
+                                        <span className="text-[10px] text-purple-600 font-normal">({assessment.maxPoints || 8}pts)</span>
+                                      </span>
+                                    ))}
+                                  </div>
                                 </div>
-                            )}
+                              );
+                            })()}
                         </div>
 
                         <div className="relative z-10 flex items-center justify-between text-xs text-slate-500 mt-4 pt-4 border-t border-slate-100">
