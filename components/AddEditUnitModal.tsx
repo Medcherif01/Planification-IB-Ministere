@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UnitPlan } from '../types';
-import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS } from '../constants';
+import { getConceptListsForSubject } from '../constants';
 import {
   generateSingleUnit,
   generateAssessmentsForUnit,
@@ -58,6 +58,9 @@ const AddEditUnitModalContent: React.FC<AddEditUnitModalProps> = ({
   gradeLevel,
 }) => {
   const isEdit = !!existingPlan;
+
+  // Listes de concepts / contextes adaptées à la langue de la matière (anglais pour Acquisition de langues)
+  const { keyConcepts: KEY_CONCEPTS, relatedConcepts: RELATED_CONCEPTS_GENERIC, globalContexts: GLOBAL_CONTEXTS } = getConceptListsForSubject(subject);
 
   const [mode, setMode] = useState<ModalMode>(isEdit ? 'manual' : 'auto');
 

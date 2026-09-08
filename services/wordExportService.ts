@@ -20,7 +20,7 @@ import {
 import { UnitPlan, AssessmentData, ServiceActionPlan } from "../types";
 import { loadAllPlansForGrade, loadAllPlansForSubjectAllGrades } from "./databaseService";
 import { generateOverviewForSubject, OverviewUnitRow, InterdisciplinaryUnit, AnnualCalendar, SCHOOL_WEEKS_2026_2027, SUBJECT_COLORS, CalendarEntry } from "./geminiService";
-import { getStandardIBCriterion, extractCriteriaLetters, formatCriterionFullName } from "./ibCriteriaService";
+import { getStandardIBCriterion, extractCriteriaLetters, formatCriterionFullName, isLanguageAcquisitionSubject } from "./ibCriteriaService";
 
 // Cache en mémoire des modèles Word téléchargés pour un export ultra-rapide
 const templateCache: Record<string, ArrayBuffer> = {};
@@ -171,12 +171,126 @@ const forceDocumentLeftToRight = (zip: any) => {
   }
 };
 
-const generateDocumentBlob = (templateContent: ArrayBuffer, data: any, _landscape = false): Blob => {
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGLISH TEMPLATE LABELS — for "Acquisition de langues" (English) the official
+// Word templates (plan.docx / eval.docx) have French static labels. Before
+// rendering, we translate every static text run to English so the whole
+// document (labels + AI-generated content) is consistently in English.
+// ─────────────────────────────────────────────────────────────────────────────
+const TEMPLATE_LABELS_FR_EN: Record<string, string> = {
+  // ── plan.docx ──
+  'Enseignant(s)': 'Teacher(s)',
+  'Groupe de matières et discipline': 'Subject group and discipline',
+  'Titre de l’unité': 'Unit title',
+  "Titre de l'unité": 'Unit title',
+  'Année du\u00a0PEI': 'MYP year',
+  'Année du PEI': 'MYP year',
+  'Durée de l’unité (heures)': 'Unit duration (hours)',
+  "Durée de l'unité (heures)": 'Unit duration (hours)',
+  'Recherche\u00a0: définition de l’objectif de l’unité': 'Inquiry: establishing the purpose of the unit',
+  "Recherche : définition de l'objectif de l'unité": 'Inquiry: establishing the purpose of the unit',
+  'Concept clé': 'Key concept',
+  'Concept(s) connexe(s)': 'Related concept(s)',
+  'Contexte mondial': 'Global context',
+  'Énoncé de recherche': 'Statement of inquiry',
+  ' Questions de recherche': ' Inquiry questions',
+  'Questions de recherche': 'Inquiry questions',
+  'Factuelle(s)\u00a0: ': 'Factual: ',
+  'Factuelle(s) : ': 'Factual: ',
+  'Conceptuelle(s)\u00a0:': 'Conceptual:',
+  'Conceptuelle(s) :': 'Conceptual:',
+  'Invitant au débat\u00a0:': 'Debatable:',
+  'Invitant au débat :': 'Debatable:',
+  'Objectifs spécifiques': 'Objectives',
+  'Évaluation sommative': 'Summative assessment',
+  'Approches de l’apprentissage': 'Approaches to learning (ATL)',
+  "Approches de l'apprentissage": 'Approaches to learning (ATL)',
+  'Action\u00a0: enseignement et apprentissage par le biais de la recherche': 'Action: teaching and learning through inquiry',
+  "Action : enseignement et apprentissage par le biais de la recherche": 'Action: teaching and learning through inquiry',
+  'Contenu': 'Content',
+  'Processus d’apprentissage': 'Learning process',
+  "Processus d'apprentissage": 'Learning process',
+  'Activités d’apprentissage et stratégies d’enseignement': 'Learning experiences and teaching strategies',
+  "Activités d'apprentissage et stratégies d'enseignement": 'Learning experiences and teaching strategies',
+  'Évaluation formative': 'Formative assessment',
+  'Différenciation': 'Differentiation',
+  'Ressources': 'Resources',
+  'Réflexion\u00a0: examen de la planification, du processus et de l’impact de la recherche': 'Reflection: considering the planning, process and impact of the inquiry',
+  "Réflexion : examen de la planification, du processus et de l'impact de la recherche": 'Reflection: considering the planning, process and impact of the inquiry',
+  'Avant l’enseignement de l’unité': 'Prior to teaching the unit',
+  "Avant l'enseignement de l'unité": 'Prior to teaching the unit',
+  'Pendant l’enseignement de l’unité': 'During teaching',
+  "Pendant l'enseignement de l'unité": 'During teaching',
+  'Suite à l’enseignement de l’unité': 'After teaching the unit',
+  "Suite à l'enseignement de l'unité": 'After teaching the unit',
+  'Plan de travail des unités du\u00a0PEI ': 'MYP unit planner ',
+  'Plan de travail des unités du PEI ': 'MYP unit planner ',
+  'Plan de travail des unités du\u00a0PEI': 'MYP unit planner',
+  // ── eval.docx ──
+  'Évaluation de {matiere} ({unite})': 'Assessment of {matiere} ({unite})',
+  'Critère {critere}': 'Criterion {critere}',
+  'Nom et prénom': 'Name and surname',
+  'Classe': 'Class',
+  'Date\u00a0:     /      /                                        ': 'Date:     /      /                                        ',
+  'Maximum : 8': 'Maximum: 8',
+  'Les apprenants seront évalués sur\u00a0: ': 'Students will be assessed on: ',
+  'Les apprenants seront évalués sur : ': 'Students will be assessed on: ',
+  'Descripteurs de niveaux': 'Level descriptors',
+  'Critère {lettre_critere} : {nom_objectif_specifique}': 'Criterion {lettre_critere}: {nom_objectif_specifique}',
+  'Niveaux': 'Levels',
+  'Exercice {numero} : {titre}': 'Exercise {numero}: {titre}',
+  'Critère {lettre_critere} : {ref}': 'Criterion {lettre_critere}: {ref}',
+};
+
+const decodeXmlEntities = (s: string): string =>
+  s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+const encodeXmlEntities = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+const translateTemplateLabelsToEnglish = (zip: any) => {
+  try {
+    const xmlFiles = Object.keys(zip.files).filter(name =>
+      name.startsWith('word/') && name.endsWith('.xml') && !name.includes('theme') && !name.includes('styles')
+    );
+    for (const fileName of xmlFiles) {
+      const file = zip.file(fileName);
+      if (!file) continue;
+      let xml: string = file.asText();
+      let modified = false;
+      xml = xml.replace(/(<w:t(?:\s[^>]*)?>)([^<]*)(<\/w:t>)/g, (full, open, inner, close) => {
+        const raw = decodeXmlEntities(inner);
+        let translated: string | undefined = TEMPLATE_LABELS_FR_EN[raw];
+        if (translated === undefined) {
+          // Tolerant match: ignore surrounding spaces / nbsp / apostrophe variants
+          const norm = raw.replace(/\u00a0/g, ' ').replace(/’/g, "'").trim();
+          for (const [fr, en] of Object.entries(TEMPLATE_LABELS_FR_EN)) {
+            if (fr.replace(/\u00a0/g, ' ').replace(/’/g, "'").trim() === norm) {
+              const lead = raw.match(/^\s*/)?.[0] || '';
+              const trail = raw.match(/\s*$/)?.[0] || '';
+              translated = lead + en.trim() + trail;
+              break;
+            }
+          }
+        }
+        if (translated === undefined || translated === raw) return full;
+        modified = true;
+        return open + encodeXmlEntities(translated) + close;
+      });
+      if (modified) zip.file(fileName, xml);
+    }
+  } catch (err) {
+    console.warn('[WORD] Warning during English label translation:', err);
+  }
+};
+
+const generateDocumentBlob = (templateContent: ArrayBuffer, data: any, _landscape = false, englishLabels = false): Blob => {
     let zip;
     try {
         zip = new PizZip(templateContent);
         // Force LTR before rendering tags
         forceDocumentLeftToRight(zip);
+        // Translate static template labels to English (Language Acquisition)
+        if (englishLabels) translateTemplateLabelsToEnglish(zip);
     } catch(e) {
         throw new Error("Le fichier modèle est corrompu.");
     }
@@ -228,18 +342,18 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
   
   const strands = (ad.strands && Array.isArray(ad.strands) && ad.strands.length > 0) 
     ? ad.strands 
-    : ["(Aucun aspect défini)"];
+    : [isLanguageAcquisitionSubject(plan.subject) ? "(No strand defined)" : "(Aucun aspect défini)"];
 
   const rubrics = (ad.rubricRows && Array.isArray(ad.rubricRows) && ad.rubricRows.length > 0) 
     ? ad.rubricRows 
     : [
-        { level: "1-8", descriptor: "(Aucune rubrique définie)" }
+        { level: "1-8", descriptor: isLanguageAcquisitionSubject(plan.subject) ? "(No rubric defined)" : "(Aucune rubrique définie)" }
       ];
 
   const exercises = (ad.exercises && Array.isArray(ad.exercises) && ad.exercises.length > 0) 
     ? ad.exercises 
     : [
-        { title: "Exercice 1", content: "(Aucun exercice généré)", criterionReference: "" }
+        { title: isLanguageAcquisitionSubject(plan.subject) ? "Exercise 1" : "Exercice 1", content: isLanguageAcquisitionSubject(plan.subject) ? "(No exercise generated)" : "(Aucun exercice généré)", criterionReference: "" }
       ];
 
   const baseData = {
@@ -272,9 +386,9 @@ const mapAssessmentToTemplate = (plan: UnitPlan, ad: AssessmentData) => {
     // DOTS: exactly 57 dots per line × 5 lines
     exercices: exercises.map((ex, index) => {
         // Strip redundant "Exercice N" prefix from title (template already numbers them)
-        const rawTitle = cleanExerciseContent(clean(ex.title).replace(/^exercice\s*\d+\s*[:\-–—]?\s*/i, '').trim());
+        const rawTitle = cleanExerciseContent(clean(ex.title).replace(/^(?:exercice|exercise|task)\s*\d+\s*[:\-–—]?\s*/i, '').trim());
         // Strip "Critère X :" prefix from criterionReference (template shows criterion header separately)
-        const rawRef = clean(ex.criterionReference).replace(/^crit[eè]re\s+[ABCD]\s*[:\-–—]\s*/i, '').trim();
+        const rawRef = clean(ex.criterionReference).replace(/^(?:crit[eè]re|criterion)\s+[ABCD]\s*[:\-–—]\s*/i, '').trim();
         // Answer lines: 5 lines of dots (strictly 57 dots per line)
         const DOT_LINE = '.'.repeat(57);
         const reponse_lines = Array(5).fill(DOT_LINE).join('\n');
@@ -488,6 +602,8 @@ const applyIBConformityCorrections = (plan: UnitPlan): UnitPlan => {
 // ─────────────────────────────────────────────────────────────────────────────
 export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
   const plan = applyIBConformityCorrections(rawPlan);
+  const EN = isLanguageAcquisitionSubject(plan.subject);
+  const L = (fr: string, en: string) => (EN ? en : fr);
   const calDates = getCalendarDates(plan);
   const startDate = calDates.startDate || plan.startDate || '';
   const endDate   = calDates.endDate   || plan.endDate   || '';
@@ -518,140 +634,140 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     const rawAspects = d?.aspects ? String(d.aspects).trim() : '';
     // Conserver en priorité absolue les aspects saisis ou modifiés par l'enseignant !
     const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
-    const level = d?.expectedLevel ? ` (niveau attendu : ${d.expectedLevel})` : '';
-    const activities = d?.activities ? `\nActivités : ${d.activities}` : '';
-    const formEval = d?.formativeAssessment ? `\nÉval. formative : ${d.formativeAssessment}` : '';
-    const summEval = d?.summativeAssessment ? `\nÉval. sommative : ${d.summativeAssessment}` : '';
-    return `Critère ${cr} [${critTitle}] : ${aspects}${level}${activities}${formEval}${summEval}`;
+    const level = d?.expectedLevel ? ` (${L('niveau attendu','expected level')}: ${d.expectedLevel})` : '';
+    const activities = d?.activities ? `\n${L('Activités','Activities')}: ${d.activities}` : '';
+    const formEval = d?.formativeAssessment ? `\n${L('Éval. formative','Formative assessment')}: ${d.formativeAssessment}` : '';
+    const summEval = d?.summativeAssessment ? `\n${L('Éval. sommative','Summative assessment')}: ${d.summativeAssessment}` : '';
+    return `${L('Critère','Criterion')} ${cr} [${critTitle}]: ${aspects}${level}${activities}${formEval}${summEval}`;
   }).join('\n\n') || c(plan.content?.slice(0, 200));
 
   const contenuTxt = [
     c(plan.content),
-    plan.contentDetails?.knowledges      ? 'Connaissances : ' + c(plan.contentDetails.knowledges) : '',
-    plan.contentDetails?.notions         ? 'Notions/Vocabulaire : ' + c(plan.contentDetails.notions || plan.contentDetails.vocabulary) : '',
-    plan.contentDetails?.methods         ? 'Méthodes : ' + c(plan.contentDetails.methods) : '',
-    plan.contentDetails?.disciplinarySkills ? 'Compétences disciplinaires : ' + c(plan.contentDetails.disciplinarySkills) : '',
-    plan.contentDetails?.mandatoryContent   ? 'Contenu obligatoire IB : ' + c(plan.contentDetails.mandatoryContent) : '',
-    plan.contentDetails?.nationalLinks      ? 'Liens programme national : ' + c(plan.contentDetails.nationalLinks) : '',
+    plan.contentDetails?.knowledges      ? L('Connaissances : ','Knowledge: ') + c(plan.contentDetails.knowledges) : '',
+    plan.contentDetails?.notions         ? L('Notions/Vocabulaire : ','Notions/Vocabulary: ') + c(plan.contentDetails.notions || plan.contentDetails.vocabulary) : '',
+    plan.contentDetails?.methods         ? L('Méthodes : ','Methods: ') + c(plan.contentDetails.methods) : '',
+    plan.contentDetails?.disciplinarySkills ? L('Compétences disciplinaires : ','Subject-specific skills: ') + c(plan.contentDetails.disciplinarySkills) : '',
+    plan.contentDetails?.mandatoryContent   ? L('Contenu obligatoire IB : ','Mandatory IB content: ') + c(plan.contentDetails.mandatoryContent) : '',
+    plan.contentDetails?.nationalLinks      ? L('Liens programme national : ','Links with national curriculum: ') + c(plan.contentDetails.nationalLinks) : '',
   ].filter(Boolean).join('\n\n');
 
   const processusBlocs: string[] = [];
   if (plan.learningProcess) {
     const lp = plan.learningProcess;
-    if (lp.phase1_activation)  processusBlocs.push('Phase 1 – Activation des connaissances :\n' + c(lp.phase1_activation));
-    if (lp.phase2_acquisition) processusBlocs.push('Phase 2 – Acquisition :\n' + c(lp.phase2_acquisition));
-    if (lp.phase3_practice)    processusBlocs.push('Phase 3 – Mise en pratique :\n' + c(lp.phase3_practice));
-    if (lp.phase4_transfer)    processusBlocs.push('Phase 4 – Transfert et application :\n' + c(lp.phase4_transfer));
-    if (lp.phase5_reflection)  processusBlocs.push('Phase 5 – Réflexion :\n' + c(lp.phase5_reflection));
+    if (lp.phase1_activation)  processusBlocs.push(L('Phase 1 – Activation des connaissances :\n','Phase 1 – Activation of prior knowledge:\n') + c(lp.phase1_activation));
+    if (lp.phase2_acquisition) processusBlocs.push(L('Phase 2 – Acquisition :\n','Phase 2 – Acquisition:\n') + c(lp.phase2_acquisition));
+    if (lp.phase3_practice)    processusBlocs.push(L('Phase 3 – Mise en pratique :\n','Phase 3 – Practice:\n') + c(lp.phase3_practice));
+    if (lp.phase4_transfer)    processusBlocs.push(L('Phase 4 – Transfert et application :\n','Phase 4 – Transfer and application:\n') + c(lp.phase4_transfer));
+    if (lp.phase5_reflection)  processusBlocs.push(L('Phase 5 – Réflexion :\n','Phase 5 – Reflection:\n') + c(lp.phase5_reflection));
   }
-  if (plan.teachingStrategies)  processusBlocs.push('Stratégies de l\'enseignant :\n' + c(plan.teachingStrategies));
-  if (plan.studentActivities)   processusBlocs.push('Activités des élèves :\n' + c(plan.studentActivities));
-  if (plan.learningExperiences) processusBlocs.push('Expériences d\'apprentissage :\n' + c(plan.learningExperiences));
+  if (plan.teachingStrategies)  processusBlocs.push(L('Stratégies de l\'enseignant :\n','Teaching strategies:\n') + c(plan.teachingStrategies));
+  if (plan.studentActivities)   processusBlocs.push(L('Activités des élèves :\n','Student activities:\n') + c(plan.studentActivities));
+  if (plan.learningExperiences) processusBlocs.push(L('Expériences d\'apprentissage :\n','Learning experiences:\n') + c(plan.learningExperiences));
 
   if (plan.sessions && plan.sessions.length > 0) {
     const sessionsText = plan.sessions.map(sess =>
-      `Séance ${sess.numero} (${c(sess.duree)}) :\n` +
-      `  Objectif : ${c(sess.objectifApprentissage)}\n` +
-      `  Contenu : ${c(sess.contenu)}\n` +
-      `  Activité : ${c(sess.activite)}\n` +
+      `${L('Séance','Lesson')} ${sess.numero} (${c(sess.duree)}):\n` +
+      `  ${L('Objectif','Objective')}: ${c(sess.objectifApprentissage)}\n` +
+      `  ${L('Contenu','Content')}: ${c(sess.contenu)}\n` +
+      `  ${L('Activité','Activity')}: ${c(sess.activite)}\n` +
       `  ATL : ${c(sess.atl)}\n` +
-      `  Éval. formative : ${c(sess.evaluationFormative)}\n` +
-      `  Différenciation : ${c(sess.differenciation)}\n` +
-      `  Ressources : ${c(sess.ressources)}`
+      `  ${L('Éval. formative','Formative assessment')}: ${c(sess.evaluationFormative)}\n` +
+      `  ${L('Différenciation','Differentiation')}: ${c(sess.differenciation)}\n` +
+      `  ${L('Ressources','Resources')}: ${c(sess.ressources)}`
     ).join('\n\n');
-    processusBlocs.push('Séances détaillées :\n' + sessionsText);
+    processusBlocs.push(L('Séances détaillées :\n','Detailed lessons:\n') + sessionsText);
   }
 
   const processusTxt = processusBlocs.join('\n\n') || c(plan.learningExperiences);
 
   const evalFormTxt = [
     c(plan.formativeAssessment),
-    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => d.formativeAssessment ? `Critère ${d.criterion} : ${c(d.formativeAssessment)}` : '').filter(Boolean).join('\n') || '',
+    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => d.formativeAssessment ? `${L('Critère','Criterion')} ${d.criterion}: ${c(d.formativeAssessment)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
   const evalSommTxt = [
     c(plan.summativeAssessment),
-    objectives.length > 0 ? 'Critères évalués : ' + objectives.join(', ') : '',
-    plan.summativeDetails?.consigne          ? 'Consigne : ' + c(plan.summativeDetails.consigne) : '',
-    plan.summativeDetails?.productionAttendue ? 'Production attendue : ' + c(plan.summativeDetails.productionAttendue) : '',
-    plan.summativeDetails?.duree             ? 'Durée : ' + c(plan.summativeDetails.duree) : '',
-    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => d.summativeAssessment ? `Critère ${d.criterion} : ${c(d.summativeAssessment)}` : '').filter(Boolean).join('\n') || '',
+    objectives.length > 0 ? L('Critères évalués : ','Criteria assessed: ') + objectives.join(', ') : '',
+    plan.summativeDetails?.consigne          ? L('Consigne : ','Instructions: ') + c(plan.summativeDetails.consigne) : '',
+    plan.summativeDetails?.productionAttendue ? L('Production attendue : ','Expected product: ') + c(plan.summativeDetails.productionAttendue) : '',
+    plan.summativeDetails?.duree             ? L('Durée : ','Duration: ') + c(plan.summativeDetails.duree) : '',
+    plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => d.summativeAssessment ? `${L('Critère','Criterion')} ${d.criterion}: ${c(d.summativeAssessment)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
   const difftxt = [
     c(plan.differentiation),
     plan.differentiationDetails?.supportStudents ? [
-      'Élèves en difficulté :',
-      plan.differentiationDetails.supportStudents.vocabulary      ? '  - Soutien vocabulaire : ' + c(plan.differentiationDetails.supportStudents.vocabulary) : '',
-      plan.differentiationDetails.supportStudents.visualSupports  ? '  - Supports visuels : ' + c(plan.differentiationDetails.supportStudents.visualSupports) : '',
-      plan.differentiationDetails.supportStudents.models          ? '  - Modèles/étayage : ' + c(plan.differentiationDetails.supportStudents.models) : '',
-      plan.differentiationDetails.supportStudents.adaptedInstructions ? '  - Instructions adaptées : ' + c(plan.differentiationDetails.supportStudents.adaptedInstructions) : '',
-      plan.differentiationDetails.supportStudents.individualSupport   ? '  - Soutien individuel : ' + c(plan.differentiationDetails.supportStudents.individualSupport) : '',
-      plan.differentiationDetails.supportStudents.extraTime           ? '  - Temps supplémentaire : ' + c(plan.differentiationDetails.supportStudents.extraTime) : '',
+      L('Élèves en difficulté :','Students needing support:'),
+      plan.differentiationDetails.supportStudents.vocabulary      ? L('  - Soutien vocabulaire : ','  - Vocabulary support: ') + c(plan.differentiationDetails.supportStudents.vocabulary) : '',
+      plan.differentiationDetails.supportStudents.visualSupports  ? L('  - Supports visuels : ','  - Visual supports: ') + c(plan.differentiationDetails.supportStudents.visualSupports) : '',
+      plan.differentiationDetails.supportStudents.models          ? L('  - Modèles/étayage : ','  - Models/scaffolding: ') + c(plan.differentiationDetails.supportStudents.models) : '',
+      plan.differentiationDetails.supportStudents.adaptedInstructions ? L('  - Instructions adaptées : ','  - Adapted instructions: ') + c(plan.differentiationDetails.supportStudents.adaptedInstructions) : '',
+      plan.differentiationDetails.supportStudents.individualSupport   ? L('  - Soutien individuel : ','  - Individual support: ') + c(plan.differentiationDetails.supportStudents.individualSupport) : '',
+      plan.differentiationDetails.supportStudents.extraTime           ? L('  - Temps supplémentaire : ','  - Extra time: ') + c(plan.differentiationDetails.supportStudents.extraTime) : '',
     ].filter(Boolean).join('\n') : '',
     plan.differentiationDetails?.advancedStudents ? [
-      'Élèves avancés :',
-      plan.differentiationDetails.advancedStudents.deepening         ? '  - Approfondissement : ' + c(plan.differentiationDetails.advancedStudents.deepening) : '',
-      plan.differentiationDetails.advancedStudents.challenges        ? '  - Défis : ' + c(plan.differentiationDetails.advancedStudents.challenges) : '',
-      plan.differentiationDetails.advancedStudents.autonomousResearch ? '  - Recherche autonome : ' + c(plan.differentiationDetails.advancedStudents.autonomousResearch) : '',
-      plan.differentiationDetails.advancedStudents.transfer          ? '  - Transfert : ' + c(plan.differentiationDetails.advancedStudents.transfer) : '',
+      L('Élèves avancés :','Advanced students:'),
+      plan.differentiationDetails.advancedStudents.deepening         ? L('  - Approfondissement : ','  - Deepening: ') + c(plan.differentiationDetails.advancedStudents.deepening) : '',
+      plan.differentiationDetails.advancedStudents.challenges        ? L('  - Défis : ','  - Challenges: ') + c(plan.differentiationDetails.advancedStudents.challenges) : '',
+      plan.differentiationDetails.advancedStudents.autonomousResearch ? L('  - Recherche autonome : ','  - Independent research: ') + c(plan.differentiationDetails.advancedStudents.autonomousResearch) : '',
+      plan.differentiationDetails.advancedStudents.transfer          ? L('  - Transfert : ','  - Transfer: ') + c(plan.differentiationDetails.advancedStudents.transfer) : '',
     ].filter(Boolean).join('\n') : '',
-    plan.differentiationDetails?.contentDifferentiation  ? 'Différenciation du contenu : ' + c(plan.differentiationDetails.contentDifferentiation) : '',
-    plan.differentiationDetails?.processDifferentiation  ? 'Différenciation du processus : ' + c(plan.differentiationDetails.processDifferentiation) : '',
-    plan.differentiationDetails?.productDifferentiation  ? 'Différenciation de la production : ' + c(plan.differentiationDetails.productDifferentiation) : '',
+    plan.differentiationDetails?.contentDifferentiation  ? L('Différenciation du contenu : ','Content differentiation: ') + c(plan.differentiationDetails.contentDifferentiation) : '',
+    plan.differentiationDetails?.processDifferentiation  ? L('Différenciation du processus : ','Process differentiation: ') + c(plan.differentiationDetails.processDifferentiation) : '',
+    plan.differentiationDetails?.productDifferentiation  ? L('Différenciation de la production : ','Product differentiation: ') + c(plan.differentiationDetails.productDifferentiation) : '',
   ].filter(Boolean).join('\n\n');
 
   const ressourcesTxt = [
     c(plan.resources),
-    plan.sessions?.map(s => s.ressources ? `Séance ${s.numero} : ${c(s.ressources)}` : '').filter(Boolean).join('\n') || '',
+    plan.sessions?.map(s => s.ressources ? `${L('Séance','Lesson')} ${s.numero}: ${c(s.ressources)}` : '').filter(Boolean).join('\n') || '',
   ].filter(Boolean).join('\n\n');
 
   const reflexionAvantTxt = [
     plan.reflectionDetails?.before ? [
-      plan.reflectionDetails.before.priorKnowledge      ? 'Connaissances antérieures : ' + c(plan.reflectionDetails.before.priorKnowledge) : '',
-      plan.reflectionDetails.before.studentNeeds        ? 'Besoins des élèves : ' + c(plan.reflectionDetails.before.studentNeeds) : '',
-      plan.reflectionDetails.before.anticipatedDifficulties ? 'Difficultés anticipées : ' + c(plan.reflectionDetails.before.anticipatedDifficulties) : '',
-      plan.reflectionDetails.before.relevance           ? 'Pertinence : ' + c(plan.reflectionDetails.before.relevance) : '',
-      plan.reflectionDetails.before.plannedStrategies   ? 'Stratégies planifiées : ' + c(plan.reflectionDetails.before.plannedStrategies) : '',
-      plan.reflectionDetails.before.plannedDifferentiation ? 'Différenciation prévue : ' + c(plan.reflectionDetails.before.plannedDifferentiation) : '',
-      plan.reflectionDetails.before.expectedOutcomes    ? 'Résultats attendus : ' + c(plan.reflectionDetails.before.expectedOutcomes) : '',
+      plan.reflectionDetails.before.priorKnowledge      ? L('Connaissances antérieures : ','Prior knowledge: ') + c(plan.reflectionDetails.before.priorKnowledge) : '',
+      plan.reflectionDetails.before.studentNeeds        ? L('Besoins des élèves : ','Student needs: ') + c(plan.reflectionDetails.before.studentNeeds) : '',
+      plan.reflectionDetails.before.anticipatedDifficulties ? L('Difficultés anticipées : ','Anticipated difficulties: ') + c(plan.reflectionDetails.before.anticipatedDifficulties) : '',
+      plan.reflectionDetails.before.relevance           ? L('Pertinence : ','Relevance: ') + c(plan.reflectionDetails.before.relevance) : '',
+      plan.reflectionDetails.before.plannedStrategies   ? L('Stratégies planifiées : ','Planned strategies: ') + c(plan.reflectionDetails.before.plannedStrategies) : '',
+      plan.reflectionDetails.before.plannedDifferentiation ? L('Différenciation prévue : ','Planned differentiation: ') + c(plan.reflectionDetails.before.plannedDifferentiation) : '',
+      plan.reflectionDetails.before.expectedOutcomes    ? L('Résultats attendus : ','Expected outcomes: ') + c(plan.reflectionDetails.before.expectedOutcomes) : '',
     ].filter(Boolean).join('\n') : c(plan.reflection?.prior),
   ].filter(Boolean).join('\n');
 
   const reflexionPendantTxt = [
     plan.reflectionDetails?.during ? [
-      plan.reflectionDetails.during.progressObserved      ? 'Progrès observés : ' + c(plan.reflectionDetails.during.progressObserved) : '',
-      plan.reflectionDetails.during.difficulties          ? 'Difficultés rencontrées : ' + c(plan.reflectionDetails.during.difficulties) : '',
-      plan.reflectionDetails.during.effectiveStrategies   ? 'Stratégies efficaces : ' + c(plan.reflectionDetails.during.effectiveStrategies) : '',
-      plan.reflectionDetails.during.adjustmentsMade       ? 'Ajustements effectués : ' + c(plan.reflectionDetails.during.adjustmentsMade) : '',
-      plan.reflectionDetails.during.studentParticipation  ? 'Participation élèves : ' + c(plan.reflectionDetails.during.studentParticipation) : '',
+      plan.reflectionDetails.during.progressObserved      ? L('Progrès observés : ','Progress observed: ') + c(plan.reflectionDetails.during.progressObserved) : '',
+      plan.reflectionDetails.during.difficulties          ? L('Difficultés rencontrées : ','Difficulties encountered: ') + c(plan.reflectionDetails.during.difficulties) : '',
+      plan.reflectionDetails.during.effectiveStrategies   ? L('Stratégies efficaces : ','Effective strategies: ') + c(plan.reflectionDetails.during.effectiveStrategies) : '',
+      plan.reflectionDetails.during.adjustmentsMade       ? L('Ajustements effectués : ','Adjustments made: ') + c(plan.reflectionDetails.during.adjustmentsMade) : '',
+      plan.reflectionDetails.during.studentParticipation  ? L('Participation élèves : ','Student participation: ') + c(plan.reflectionDetails.during.studentParticipation) : '',
     ].filter(Boolean).join('\n') : c(plan.reflection?.during),
   ].filter(Boolean).join('\n');
 
   const reflexionApresTxt = [
     plan.reflectionDetails?.after ? [
-      plan.reflectionDetails.after.achievedObjectives     ? 'Objectifs atteints : ' + c(plan.reflectionDetails.after.achievedObjectives) : '',
-      plan.reflectionDetails.after.partialObjectives      ? 'Objectifs partiels : ' + c(plan.reflectionDetails.after.partialObjectives) : '',
-      plan.reflectionDetails.after.studentDifficulties    ? 'Difficultés élèves : ' + c(plan.reflectionDetails.after.studentDifficulties) : '',
-      plan.reflectionDetails.after.successes              ? 'Succès : ' + c(plan.reflectionDetails.after.successes) : '',
-      plan.reflectionDetails.after.improvements           ? 'Points à améliorer : ' + c(plan.reflectionDetails.after.improvements) : '',
-      plan.reflectionDetails.after.modificationsNext      ? 'Modifications pour la prochaine fois : ' + c(plan.reflectionDetails.after.modificationsNext) : '',
+      plan.reflectionDetails.after.achievedObjectives     ? L('Objectifs atteints : ','Objectives achieved: ') + c(plan.reflectionDetails.after.achievedObjectives) : '',
+      plan.reflectionDetails.after.partialObjectives      ? L('Objectifs partiels : ','Partially achieved objectives: ') + c(plan.reflectionDetails.after.partialObjectives) : '',
+      plan.reflectionDetails.after.studentDifficulties    ? L('Difficultés élèves : ','Student difficulties: ') + c(plan.reflectionDetails.after.studentDifficulties) : '',
+      plan.reflectionDetails.after.successes              ? L('Succès : ','Successes: ') + c(plan.reflectionDetails.after.successes) : '',
+      plan.reflectionDetails.after.improvements           ? L('Points à améliorer : ','Areas for improvement: ') + c(plan.reflectionDetails.after.improvements) : '',
+      plan.reflectionDetails.after.modificationsNext      ? L('Modifications pour la prochaine fois : ','Changes for next time: ') + c(plan.reflectionDetails.after.modificationsNext) : '',
     ].filter(Boolean).join('\n') : c(plan.reflection?.after),
   ].filter(Boolean).join('\n');
 
   const prerequisTxt = [
     c(plan.prerequisites),
-    plan.studentContext?.priorKnowledge      ? 'Connaissances antérieures : ' + c(plan.studentContext.priorKnowledge) : '',
-    plan.studentContext?.acquiredSkills      ? 'Compétences acquises : ' + c(plan.studentContext.acquiredSkills) : '',
-    plan.studentContext?.linksPreviousUnits  ? 'Liens unités précédentes : ' + c(plan.studentContext.linksPreviousUnits) : '',
-    plan.studentContext?.specificNeeds       ? 'Besoins spécifiques : ' + c(plan.studentContext.specificNeeds) : '',
-    plan.studentContext?.anticipatedDifficulties ? 'Difficultés anticipées : ' + c(plan.studentContext.anticipatedDifficulties) : '',
+    plan.studentContext?.priorKnowledge      ? L('Connaissances antérieures : ','Prior knowledge: ') + c(plan.studentContext.priorKnowledge) : '',
+    plan.studentContext?.acquiredSkills      ? L('Compétences acquises : ','Acquired skills: ') + c(plan.studentContext.acquiredSkills) : '',
+    plan.studentContext?.linksPreviousUnits  ? L('Liens unités précédentes : ','Links with previous units: ') + c(plan.studentContext.linksPreviousUnits) : '',
+    plan.studentContext?.specificNeeds       ? L('Besoins spécifiques : ','Specific needs: ') + c(plan.studentContext.specificNeeds) : '',
+    plan.studentContext?.anticipatedDifficulties ? L('Difficultés anticipées : ','Anticipated difficulties: ') + c(plan.studentContext.anticipatedDifficulties) : '',
   ].filter(Boolean).join('\n');
 
   const coherenceTxt = [
-    plan.verticalCoherenceText    ? 'Cohérence verticale : ' + c(plan.verticalCoherenceText) : '',
-    plan.horizontalCoherenceText  ? 'Cohérence horizontale : ' + c(plan.horizontalCoherenceText) : '',
-    plan.interdisciplinaryLinksText ? 'Liens interdisciplinaires : ' + c(plan.interdisciplinaryLinksText) : '',
+    plan.verticalCoherenceText    ? L('Cohérence verticale : ','Vertical coherence: ') + c(plan.verticalCoherenceText) : '',
+    plan.horizontalCoherenceText  ? L('Cohérence horizontale : ','Horizontal coherence: ') + c(plan.horizontalCoherenceText) : '',
+    plan.interdisciplinaryLinksText ? L('Liens interdisciplinaires : ','Interdisciplinary links: ') + c(plan.interdisciplinaryLinksText) : '',
   ].filter(Boolean).join('\n\n');
 
   // ── Nettoyage anti-répétition de la durée ──
@@ -659,21 +775,21 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     const raw = (plan.numberOfHours || plan.duration || '').trim();
     if (!raw) return '';
     const num = raw.replace(/[^\d.,]/g, '').trim();
-    return num ? `${num} heures` : raw;
+    return num ? `${num} ${L('heures','hours')}` : raw;
   };
 
   const cleanPeriods = () => {
     const raw = (plan.numberOfPeriods || '').trim();
     if (!raw) return '';
     const num = raw.replace(/[^\d.,]/g, '').trim();
-    return num ? `${num} périodes` : raw;
+    return num ? `${num} ${L('périodes','periods')}` : raw;
   };
 
   const hoursStr = cleanHours();
   const periodsStr = cleanPeriods();
   const dateRangeStr = (startDate && endDate)
-    ? `Du ${startDate} au ${endDate}`
-    : startDate ? `À partir du ${startDate}` : '';
+    ? L(`Du ${startDate} au ${endDate}`, `From ${startDate} to ${endDate}`)
+    : startDate ? L(`À partir du ${startDate}`, `From ${startDate}`) : '';
 
   const dureeParts: string[] = [];
   if (hoursStr) dureeParts.push(hoursStr);
@@ -706,9 +822,9 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     niveau:                   c(plan.gradeLevel),
     classe:                   c(plan.gradeLevel),
     Classe:                   c(plan.gradeLevel),
-    duree:                    dureeTxt || c(plan.duration) || '18 heures',
-    duree_unite:              dureeTxt || c(plan.duration) || '18 heures',
-    heures:                   hoursStr || c(plan.numberOfHours || plan.duration || '18 heures'),
+    duree:                    dureeTxt || c(plan.duration) || L('18 heures','18 hours'),
+    duree_unite:              dureeTxt || c(plan.duration) || L('18 heures','18 hours'),
+    heures:                   hoursStr || c(plan.numberOfHours || plan.duration || L('18 heures','18 hours')),
     periodes:                 periodsStr || c(plan.numberOfPeriods || ''),
 
     // ── Recherche : définition de l'objectif de l'unité ───────────────────────
@@ -729,29 +845,29 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     énoncé:                   c(plan.statementOfInquiry),
     
     // Questions de recherche
-    questions_factuelles:     listTxt(plan.inquiryQuestions?.factual) || 'Quelles sont les notions fondamentales de cette unité ?',
-    question_factuelle:       listTxt(plan.inquiryQuestions?.factual) || 'Quelles sont les notions fondamentales de cette unité ?',
-    questions_conceptuelles:  listTxt(plan.inquiryQuestions?.conceptual) || 'Comment ces concepts s\'articulent-ils dans le monde réel ?',
-    question_conceptuelle:    listTxt(plan.inquiryQuestions?.conceptual) || 'Comment ces concepts s\'articulent-ils dans le monde réel ?',
-    questions_debat:          listTxt(plan.inquiryQuestions?.debatable) || 'Dans quelle mesure cette approche est-elle universelle ?',
-    question_debat:           listTxt(plan.inquiryQuestions?.debatable) || 'Dans quelle mesure cette approche est-elle universelle ?',
-    questions_debatables:     listTxt(plan.inquiryQuestions?.debatable) || 'Dans quelle mesure cette approche est-elle universelle ?',
+    questions_factuelles:     listTxt(plan.inquiryQuestions?.factual) || L('Quelles sont les notions fondamentales de cette unité ?','What are the fundamental notions of this unit?'),
+    question_factuelle:       listTxt(plan.inquiryQuestions?.factual) || L('Quelles sont les notions fondamentales de cette unité ?','What are the fundamental notions of this unit?'),
+    questions_conceptuelles:  listTxt(plan.inquiryQuestions?.conceptual) || L('Comment ces concepts s\'articulent-ils dans le monde réel ?','How do these concepts connect in the real world?'),
+    question_conceptuelle:    listTxt(plan.inquiryQuestions?.conceptual) || L('Comment ces concepts s\'articulent-ils dans le monde réel ?','How do these concepts connect in the real world?'),
+    questions_debat:          listTxt(plan.inquiryQuestions?.debatable) || L('Dans quelle mesure cette approche est-elle universelle ?','To what extent is this approach universal?'),
+    question_debat:           listTxt(plan.inquiryQuestions?.debatable) || L('Dans quelle mesure cette approche est-elle universelle ?','To what extent is this approach universal?'),
+    questions_debatables:     listTxt(plan.inquiryQuestions?.debatable) || L('Dans quelle mesure cette approche est-elle universelle ?','To what extent is this approach universal?'),
 
     // Objectifs, Évaluation & ATL
-    objectifs_specifiques:    objectifsTxt || 'Critères IB évalués dans cette unité',
-    objectifs_spécifiques:    objectifsTxt || 'Critères IB évalués dans cette unité',
-    Objectifs_specifiques:    objectifsTxt || 'Critères IB évalués dans cette unité',
-    objectifs:                objectifsTxt || 'Critères IB évalués dans cette unité',
-    criteres:                 objectifsTxt || 'Critères IB évalués dans cette unité',
-    critères:                 objectifsTxt || 'Critères IB évalués dans cette unité',
-    evaluation_sommative:     evalSommTxt || 'Évaluation sommative de fin d\'unité basée sur les critères IB.',
-    évaluation_sommative:     evalSommTxt || 'Évaluation sommative de fin d\'unité basée sur les critères IB.',
-    Evaluation_sommative:     evalSommTxt || 'Évaluation sommative de fin d\'unité basée sur les critères IB.',
-    sommative:                evalSommTxt || 'Évaluation sommative de fin d\'unité basée sur les critères IB.',
-    approches_apprentissage:  atl.join('\n') || 'Compétences de communication, pensée critique et autogestion.',
-    Approches_apprentissage:  atl.join('\n') || 'Compétences de communication, pensée critique et autogestion.',
-    atl:                      atl.join('\n') || 'Compétences de communication, pensée critique et autogestion.',
-    ATL:                      atl.join('\n') || 'Compétences de communication, pensée critique et autogestion.',
+    objectifs_specifiques:    objectifsTxt || L('Critères IB évalués dans cette unité','IB criteria assessed in this unit'),
+    objectifs_spécifiques:    objectifsTxt || L('Critères IB évalués dans cette unité','IB criteria assessed in this unit'),
+    Objectifs_specifiques:    objectifsTxt || L('Critères IB évalués dans cette unité','IB criteria assessed in this unit'),
+    objectifs:                objectifsTxt || L('Critères IB évalués dans cette unité','IB criteria assessed in this unit'),
+    criteres:                 objectifsTxt || L('Critères IB évalués dans cette unité','IB criteria assessed in this unit'),
+    critères:                 objectifsTxt || L('Critères IB évalués dans cette unité','IB criteria assessed in this unit'),
+    evaluation_sommative:     evalSommTxt || L('Évaluation sommative de fin d\'unité basée sur les critères IB.','End-of-unit summative assessment based on the IB criteria.'),
+    évaluation_sommative:     evalSommTxt || L('Évaluation sommative de fin d\'unité basée sur les critères IB.','End-of-unit summative assessment based on the IB criteria.'),
+    Evaluation_sommative:     evalSommTxt || L('Évaluation sommative de fin d\'unité basée sur les critères IB.','End-of-unit summative assessment based on the IB criteria.'),
+    sommative:                evalSommTxt || L('Évaluation sommative de fin d\'unité basée sur les critères IB.','End-of-unit summative assessment based on the IB criteria.'),
+    approches_apprentissage:  atl.join('\n') || L('Compétences de communication, pensée critique et autogestion.','Communication, critical-thinking and self-management skills.'),
+    Approches_apprentissage:  atl.join('\n') || L('Compétences de communication, pensée critique et autogestion.','Communication, critical-thinking and self-management skills.'),
+    atl:                      atl.join('\n') || L('Compétences de communication, pensée critique et autogestion.','Communication, critical-thinking and self-management skills.'),
+    ATL:                      atl.join('\n') || L('Compétences de communication, pensée critique et autogestion.','Communication, critical-thinking and self-management skills.'),
 
     // ── Action : enseignement et apprentissage par le biais de la recherche ───
     contenu:                  contenuTxt || c(plan.content),
@@ -762,26 +878,26 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
     activites_apprentissage:  processusTxt || c(plan.learningExperiences),
     activites:                plan.studentActivities || processusTxt || c(plan.learningExperiences),
     strategies_enseignement:  plan.teachingStrategies || '',
-    evaluation_formative:     evalFormTxt || 'Évaluations formatives continues et auto-évaluations.',
-    évaluation_formative:     evalFormTxt || 'Évaluations formatives continues et auto-évaluations.',
-    Evaluation_formative:     evalFormTxt || 'Évaluations formatives continues et auto-évaluations.',
-    formative:                evalFormTxt || 'Évaluations formatives continues et auto-évaluations.',
-    differenciation:          difftxt || 'Différenciation pédagogique par étayage, soutien et approfondissement.',
-    différenciation:          difftxt || 'Différenciation pédagogique par étayage, soutien et approfondissement.',
-    Differenciation:          difftxt || 'Différenciation pédagogique par étayage, soutien et approfondissement.',
-    ressources:               ressourcesTxt + (coherenceTxt ? '\n\n' + coherenceTxt : '') || 'Manuels scolaires, fiches d\'activités, plateformes numériques.',
-    Ressources:               ressourcesTxt + (coherenceTxt ? '\n\n' + coherenceTxt : '') || 'Manuels scolaires, fiches d\'activités, plateformes numériques.',
+    evaluation_formative:     evalFormTxt || L('Évaluations formatives continues et auto-évaluations.','Ongoing formative assessments and self-assessments.'),
+    évaluation_formative:     evalFormTxt || L('Évaluations formatives continues et auto-évaluations.','Ongoing formative assessments and self-assessments.'),
+    Evaluation_formative:     evalFormTxt || L('Évaluations formatives continues et auto-évaluations.','Ongoing formative assessments and self-assessments.'),
+    formative:                evalFormTxt || L('Évaluations formatives continues et auto-évaluations.','Ongoing formative assessments and self-assessments.'),
+    differenciation:          difftxt || L('Différenciation pédagogique par étayage, soutien et approfondissement.','Differentiation through scaffolding, support and extension.'),
+    différenciation:          difftxt || L('Différenciation pédagogique par étayage, soutien et approfondissement.','Differentiation through scaffolding, support and extension.'),
+    Differenciation:          difftxt || L('Différenciation pédagogique par étayage, soutien et approfondissement.','Differentiation through scaffolding, support and extension.'),
+    ressources:               ressourcesTxt + (coherenceTxt ? '\n\n' + coherenceTxt : '') || L('Manuels scolaires, fiches d\'activités, plateformes numériques.','Textbooks, activity sheets, digital platforms.'),
+    Ressources:               ressourcesTxt + (coherenceTxt ? '\n\n' + coherenceTxt : '') || L('Manuels scolaires, fiches d\'activités, plateformes numériques.','Textbooks, activity sheets, digital platforms.'),
 
     // ── Réflexion : examen de la planification ────────────────────────────────
-    reflexion_avant:          reflexionAvantTxt || '(À compléter avant l\'enseignement de l\'unité)',
-    réflexion_avant:          reflexionAvantTxt || '(À compléter avant l\'enseignement de l\'unité)',
-    Reflexion_avant:          reflexionAvantTxt || '(À compléter avant l\'enseignement de l\'unité)',
-    reflexion_pendant:        reflexionPendantTxt || '(À compléter pendant l\'enseignement de l\'unité)',
-    réflexion_pendant:        reflexionPendantTxt || '(À compléter pendant l\'enseignement de l\'unité)',
-    Reflexion_pendant:        reflexionPendantTxt || '(À compléter pendant l\'enseignement de l\'unité)',
-    reflexion_apres:          reflexionApresTxt || '(À compléter après l\'enseignement de l\'unité)',
-    réflexion_après:          reflexionApresTxt || '(À compléter après l\'enseignement de l\'unité)',
-    Reflexion_apres:          reflexionApresTxt || '(À compléter après l\'enseignement de l\'unité)',
+    reflexion_avant:          reflexionAvantTxt || L('(À compléter avant l\'enseignement de l\'unité)','(To be completed prior to teaching the unit)'),
+    réflexion_avant:          reflexionAvantTxt || L('(À compléter avant l\'enseignement de l\'unité)','(To be completed prior to teaching the unit)'),
+    Reflexion_avant:          reflexionAvantTxt || L('(À compléter avant l\'enseignement de l\'unité)','(To be completed prior to teaching the unit)'),
+    reflexion_pendant:        reflexionPendantTxt || L('(À compléter pendant l\'enseignement de l\'unité)','(To be completed during teaching)'),
+    réflexion_pendant:        reflexionPendantTxt || L('(À compléter pendant l\'enseignement de l\'unité)','(To be completed during teaching)'),
+    Reflexion_pendant:        reflexionPendantTxt || L('(À compléter pendant l\'enseignement de l\'unité)','(To be completed during teaching)'),
+    reflexion_apres:          reflexionApresTxt || L('(À compléter après l\'enseignement de l\'unité)','(To be completed after teaching the unit)'),
+    réflexion_après:          reflexionApresTxt || L('(À compléter après l\'enseignement de l\'unité)','(To be completed after teaching the unit)'),
+    Reflexion_apres:          reflexionApresTxt || L('(À compléter après l\'enseignement de l\'unité)','(To be completed after teaching the unit)'),
 
     // ── Cohérence et interdisciplinarité ─────────────────────────────────────
     coherence_verticale:      plan.verticalCoherenceText || plan.verticalCoherence?.before || '',
@@ -855,7 +971,7 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
       const critTitle = d.criterionName?.trim() || d.title?.trim() || std.name;
       const rawAspects = d.aspects ? String(d.aspects).trim() : '';
       const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
-      return `Critère ${d.criterion} [${critTitle}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
+      return `${L('Critère','Criterion')} ${d.criterion} [${critTitle}]:\n- ${L('Aspects','Strands')}: ${aspects}\n- ${L('Niveau attendu','Expected level')}: ${d.expectedLevel || L('Niveau 5-6 /8','Level 5-6 /8')}\n- ${L('Activités','Activities')}: ${d.activities || std.activities}\n- ${L('Éval. formative','Formative assessment')}: ${d.formativeAssessment || std.formativeAssessment}\n- ${L('Éval. sommative','Summative assessment')}: ${d.summativeAssessment || std.summativeAssessment}`;
     }).join('\n\n') || '',
     objectifs_details:        plan.objectivesDetails?.filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => {
       const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
@@ -863,7 +979,7 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
       const critTitle = d.criterionName?.trim() || d.title?.trim() || std.name;
       const rawAspects = d.aspects ? String(d.aspects).trim() : '';
       const aspects = rawAspects ? rawAspects : std.aspectsFormatted;
-      return `Critère ${d.criterion} [${critTitle}] :\n- Aspects : ${aspects}\n- Niveau attendu : ${d.expectedLevel || 'Niveau 5-6 /8'}\n- Activités : ${d.activities || std.activities}\n- Éval. formative : ${d.formativeAssessment || std.formativeAssessment}\n- Éval. sommative : ${d.summativeAssessment || std.summativeAssessment}`;
+      return `${L('Critère','Criterion')} ${d.criterion} [${critTitle}]:\n- ${L('Aspects','Strands')}: ${aspects}\n- ${L('Niveau attendu','Expected level')}: ${d.expectedLevel || L('Niveau 5-6 /8','Level 5-6 /8')}\n- ${L('Activités','Activities')}: ${d.activities || std.activities}\n- ${L('Éval. formative','Formative assessment')}: ${d.formativeAssessment || std.formativeAssessment}\n- ${L('Éval. sommative','Summative assessment')}: ${d.summativeAssessment || std.summativeAssessment}`;
     }).join('\n\n') || '',
     objectifs_liste:          (plan.objectivesDetails || []).filter(d => objectives.includes((d.criterion || '').toUpperCase() as any)).map(d => {
       const cr = (d.criterion || 'A').toUpperCase() as 'A' | 'B' | 'C' | 'D';
@@ -892,6 +1008,8 @@ export const buildUnitPlanTemplateData = (rawPlan: UnitPlan) => {
 export const generateUnitPlanNativeDocxBlob = async (rawPlan: UnitPlan): Promise<Blob> => {
   const plan = applyIBConformityCorrections(rawPlan);
   const data = buildUnitPlanTemplateData(plan);
+  const EN = isLanguageAcquisitionSubject(plan.subject);
+  const L = (fr: string, en: string) => (EN ? en : fr);
 
   const border = { style: BorderStyle.SINGLE, size: 1, color: "CBD5E1" };
   const cellBorders = { top: border, bottom: border, left: border, right: border };
@@ -938,7 +1056,7 @@ export const generateUnitPlanNativeDocxBlob = async (rawPlan: UnitPlan): Promise
     return new DocxTableRow({
       children: [
         createCell(label, true, 30),
-        createCell(value || '(Non renseigné)', false, 70),
+        createCell(value || L('(Non renseigné)','(Not provided)'), false, 70),
       ]
     });
   };
@@ -969,7 +1087,7 @@ export const generateUnitPlanNativeDocxBlob = async (rawPlan: UnitPlan): Promise
           alignment: AlignmentType.CENTER,
           children: [
             new TextRun({
-              text: `PLAN DE L'UNITÉ D'APPRENTISSAGE DU PEI (IB MYP)`,
+              text: L(`PLAN DE L'UNITÉ D'APPRENTISSAGE DU PEI (IB MYP)`, `MYP UNIT PLANNER (IB MYP)`),
               bold: true,
               size: 24,
               color: "2563EB",
@@ -986,73 +1104,73 @@ export const generateUnitPlanNativeDocxBlob = async (rawPlan: UnitPlan): Promise
           rows: [
             new DocxTableRow({
               children: [
-                createCell("Titre de l'unité", true, 25),
+                createCell(L("Titre de l'unité","Unit title"), true, 25),
                 createCell(data.titre_unite, false, 75),
               ]
             }),
             new DocxTableRow({
               children: [
-                createCell("Matière & Classe", true, 25),
+                createCell(L("Matière & Classe","Subject & Class"), true, 25),
                 createCell(`${data.groupe_matiere}`, false, 75),
               ]
             }),
             new DocxTableRow({
               children: [
-                createCell("Enseignant(e)", true, 25),
-                createCell(data.enseignant || 'Non spécifié', false, 75),
+                createCell(L("Enseignant(e)","Teacher"), true, 25),
+                createCell(data.enseignant || L('Non spécifié','Not specified'), false, 75),
               ]
             }),
             new DocxTableRow({
               children: [
-                createCell("Durée & Période", true, 25),
-                createCell(data.duree || 'Non spécifié', false, 75),
+                createCell(L("Durée & Période","Duration & Period"), true, 25),
+                createCell(data.duree || L('Non spécifié','Not specified'), false, 75),
               ]
             }),
           ]
         }),
 
         // 1. RECHERCHE
-        createSectionHeader("1. ÉTABLIR L'OBJECTIF DE L'UNITÉ (RECHERCHE)"),
+        createSectionHeader(L("1. ÉTABLIR L'OBJECTIF DE L'UNITÉ (RECHERCHE)","1. INQUIRY: ESTABLISHING THE PURPOSE OF THE UNIT")),
         new DocxTable({
           width: { size: 100, type: WidthType.PERCENTAGE },
           borders: cellBorders,
           rows: [
-            createRow("Énoncé de recherche", data.enonce_de_recherche),
-            createRow("Concept clé", data.concept_cle),
-            createRow("Concepts connexes", data.concepts_connexes),
-            createRow("Contexte mondial & exploration", data.contexte_mondial),
-            createRow("Questions d'investigation\n(Factuelles, Conceptuelles, Débat)",
-              `Factuelles :\n${data.questions_factuelles || '—'}\n\nConceptuelles :\n${data.questions_conceptuelles || '—'}\n\nÀ débat :\n${data.questions_debat || '—'}`
+            createRow(L("Énoncé de recherche","Statement of inquiry"), data.enonce_de_recherche),
+            createRow(L("Concept clé","Key concept"), data.concept_cle),
+            createRow(L("Concepts connexes","Related concepts"), data.concepts_connexes),
+            createRow(L("Contexte mondial & exploration","Global context & exploration"), data.contexte_mondial),
+            createRow(L("Questions d'investigation\n(Factuelles, Conceptuelles, Débat)","Inquiry questions\n(Factual, Conceptual, Debatable)"),
+              `${L('Factuelles','Factual')}:\n${data.questions_factuelles || '—'}\n\n${L('Conceptuelles','Conceptual')}:\n${data.questions_conceptuelles || '—'}\n\n${L('À débat','Debatable')}:\n${data.questions_debat || '—'}`
             ),
           ]
         }),
 
         // 2. ACTION
-        createSectionHeader("2. PLANIFIER L'APPRENTISSAGE PAR LE BIAIS DE LA RECHERCHE (ACTION)"),
+        createSectionHeader(L("2. PLANIFIER L'APPRENTISSAGE PAR LE BIAIS DE LA RECHERCHE (ACTION)","2. ACTION: TEACHING AND LEARNING THROUGH INQUIRY")),
         new DocxTable({
           width: { size: 100, type: WidthType.PERCENTAGE },
           borders: cellBorders,
           rows: [
-            createRow("Objectifs spécifiques & Critères", data.objectifs_specifiques),
-            createRow("Évaluation sommative", data.evaluation_sommative),
-            createRow("Approches de l'apprentissage (ATL)", data.approches_apprentissage),
-            createRow("Contenu & Notions", data.contenu),
-            createRow("Processus d'apprentissage & Séances", data.processus_apprentissage),
-            createRow("Évaluation formative", data.evaluation_formative),
-            createRow("Différenciation", data.differenciation),
-            createRow("Ressources & Coopération", data.ressources),
+            createRow(L("Objectifs spécifiques & Critères","Objectives & Criteria"), data.objectifs_specifiques),
+            createRow(L("Évaluation sommative","Summative assessment"), data.evaluation_sommative),
+            createRow(L("Approches de l'apprentissage (ATL)","Approaches to learning (ATL)"), data.approches_apprentissage),
+            createRow(L("Contenu & Notions","Content & Notions"), data.contenu),
+            createRow(L("Processus d'apprentissage & Séances","Learning process & Lessons"), data.processus_apprentissage),
+            createRow(L("Évaluation formative","Formative assessment"), data.evaluation_formative),
+            createRow(L("Différenciation","Differentiation"), data.differenciation),
+            createRow(L("Ressources & Coopération","Resources & Cooperation"), data.ressources),
           ]
         }),
 
         // 3. RÉFLEXION
-        createSectionHeader("3. RÉFLÉCHIR : PLANIFIER, ENSEIGNER ET APPRENDRE (RÉFLEXION)"),
+        createSectionHeader(L("3. RÉFLÉCHIR : PLANIFIER, ENSEIGNER ET APPRENDRE (RÉFLEXION)","3. REFLECTION: PLANNING, TEACHING AND LEARNING")),
         new DocxTable({
           width: { size: 100, type: WidthType.PERCENTAGE },
           borders: cellBorders,
           rows: [
-            createRow("Avant l'enseignement", data.reflexion_avant),
-            createRow("Pendant l'enseignement", data.reflexion_pendant),
-            createRow("Après l'enseignement", data.reflexion_apres),
+            createRow(L("Avant l'enseignement","Prior to teaching the unit"), data.reflexion_avant),
+            createRow(L("Pendant l'enseignement","During teaching"), data.reflexion_pendant),
+            createRow(L("Après l'enseignement","After teaching the unit"), data.reflexion_apres),
           ]
         }),
       ]
@@ -1071,7 +1189,7 @@ export const generateUnitPlanWordBlob = async (rawPlan: UnitPlan): Promise<Blob>
 
   try {
     const templateContent = await loadFile('plan');
-    const blob = generateDocumentBlob(templateContent, data);
+    const blob = generateDocumentBlob(templateContent, data, false, isLanguageAcquisitionSubject(plan.subject));
     console.log(`[WORD] Plan d'unité généré avec succès à partir du modèle Word Drive (${blob.size} bytes)`);
     return blob;
   } catch (templateError: any) {
@@ -1203,7 +1321,7 @@ export const exportAssessmentsToZip = async (plan: UnitPlan) => {
     // 4. Generate each doc and add to zip
     for (const assessment of assessmentsToExport) {
         const data = mapAssessmentToTemplate(plan, assessment);
-        const blob = generateDocumentBlob(templateContent, data);
+        const blob = generateDocumentBlob(templateContent, data, false, isLanguageAcquisitionSubject(plan.subject));
         const fileName = `Eval_Critere_${assessment.criterion}_${clean(plan.title).substring(0, 20)}.docx`;
         folder?.file(fileName, blob);
     }

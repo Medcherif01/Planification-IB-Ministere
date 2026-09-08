@@ -278,6 +278,12 @@ const DEFAULT_CRITERIA_BY_SUBJECT: Record<string, Array<{ criterion: string; cri
     { criterion: 'C', criterionName: 'Traitement et évaluation', strands: ['i. Présenter les données recueillies', 'ii. Analyser et interpréter les données', 'iii. Évaluer la validité des hypothèses', 'iv. Évaluer les faiblesses de la recherche'] },
     { criterion: 'D', criterionName: 'Réflexion sur les répercussions de la science', strands: ['i. Décrire une application de la science', 'ii. Analyser des répercussions de la science', 'iii. Proposer des solutions fondées sur des données scientifiques'] },
   ],
+  'acquisition de langues': [
+    { criterion: 'A', criterionName: 'Listening', strands: ['i. Identify explicit and implicit information (facts, opinions, messages and supporting details)', 'ii. Analyse conventions', 'iii. Analyse connections'] },
+    { criterion: 'B', criterionName: 'Reading', strands: ['i. Identify explicit and implicit information (facts, opinions, messages and supporting details)', 'ii. Analyse conventions', 'iii. Analyse connections'] },
+    { criterion: 'C', criterionName: 'Speaking', strands: ['i. Use a wide range of vocabulary', 'ii. Use a wide range of grammatical structures generally accurately', 'iii. Use clear pronunciation and intonation in a comprehensible manner', 'iv. Communicate all the required information clearly and effectively'] },
+    { criterion: 'D', criterionName: 'Writing', strands: ['i. Use a wide range of vocabulary', 'ii. Use a wide range of grammatical structures generally accurately', 'iii. Organize information effectively and coherently in an appropriate format using a wide range of cohesive devices', 'iv. Communicate all the required information with a clear sense of audience and purpose to suit the context'] },
+  ],
   'individus et sociétés': [
     { criterion: 'A', criterionName: 'Connaissances et compréhension', strands: ['i. Utiliser la terminologie propre à la matière', 'ii. Démontrer une connaissance et une compréhension des concepts', 'iii. Analyser des concepts dans des contextes variés'] },
     { criterion: 'B', criterionName: 'Recherche', strands: ['i. Formuler une question de recherche claire', 'ii. Sélectionner et recenser des sources', 'iii. Évaluer des sources', 'iv. Reconnaître les lacunes de la recherche'] },
@@ -302,6 +308,7 @@ const DEFAULT_CRITERIA_DESIGN = [
 const getDefaultCriteria = (subject: string) => {
   const norm = subject.toLowerCase();
   if (norm === 'design' || norm.startsWith('design')) return DEFAULT_CRITERIA_DESIGN;
+  if (isLanguageAcquisition(subject)) return DEFAULT_CRITERIA_BY_SUBJECT['acquisition de langues'];
   if (norm.includes('math')) return DEFAULT_CRITERIA_BY_SUBJECT['mathématiques'];
   if (norm.includes('science')) return DEFAULT_CRITERIA_BY_SUBJECT['sciences'];
   if (norm.includes('individu') || norm.includes('société')) return DEFAULT_CRITERIA_BY_SUBJECT['individus et sociétés'];
@@ -364,17 +371,23 @@ const enforceAssessmentsRules = (
       ? customConfig.criteria.map(c => ({ criterion: c.criterion, criterionName: c.criterionName, strands: c.strands }))
       : getDefaultCriteria(subject);
   let result = [...assessments];
+  const en = isLanguageAcquisition(subject); // Language Acquisition → English fallbacks
 
   // ── Règle 1 : chaque critère doit avoir ≥ 3 sous-aspects (strands) ─────────
   result = result.map(a => {
     if (a.strands.length >= 3) return a;
     const defCrit = defaults.find(d => d.criterion === a.criterion);
-    const extraStrands = defCrit ? defCrit.strands : [
+    const extraStrands = defCrit ? defCrit.strands : (en ? [
+      `i. Understand the key ideas related to ${a.criterionName}`,
+      `ii. Apply language knowledge in a variety of contexts`,
+      `iii. Analyse and evaluate information`,
+      `iv. Justify ideas and communicate clearly`,
+    ] : [
       `i. Comprendre les concepts fondamentaux de ${a.criterionName}`,
       `ii. Appliquer les connaissances dans des contextes variés`,
       `iii. Analyser et évaluer les résultats`,
       `iv. Justifier les démarches et les solutions`,
-    ];
+    ]);
     const merged = [...a.strands];
     for (const s of extraStrands) {
       if (merged.length >= 3) break;
@@ -391,8 +404,12 @@ const enforceAssessmentsRules = (
     return {
       ...a,
       exercises: a.strands.slice(0, 3).map((s, i) => ({
-        title: `Analyse et application`,
-        content: `En lien avec l'aspect évalué, réponds à la question suivante.
+        title: en ? `Analysis and application` : `Analyse et application`,
+        content: en
+          ? `In relation to the strand assessed, answer the following question.
+
+${i + 1}. With reference to "${s}", explain and justify your answer.`
+          : `En lien avec l'aspect évalué, réponds à la question suivante.
 
 ${i + 1}. En lien avec « ${s} », explique et justifie ta réponse.`,
         criterionReference: s.split('.')[0].trim(),
@@ -420,15 +437,24 @@ ${i + 1}. En lien avec « ${s} », explique et justifie ta réponse.`,
         criterionName: d.criterionName,
         maxPoints: 8,
         strands: d.strands.slice(0, 4),
-        rubricRows: [
+        rubricRows: en ? [
+          { level: '1-2', descriptor: `The student demonstrates limited ${d.criterionName.toLowerCase()} skills.` },
+          { level: '3-4', descriptor: `The student demonstrates basic ${d.criterionName.toLowerCase()} skills.` },
+          { level: '5-6', descriptor: `The student demonstrates good ${d.criterionName.toLowerCase()} skills.` },
+          { level: '7-8', descriptor: `The student demonstrates excellent and nuanced ${d.criterionName.toLowerCase()} skills.` },
+        ] : [
           { level: '1-2', descriptor: `L'élève est capable de démontrer une compréhension limitée de ${d.criterionName.toLowerCase()}.` },
           { level: '3-4', descriptor: `L'élève est capable de démontrer une compréhension partielle de ${d.criterionName.toLowerCase()}.` },
           { level: '5-6', descriptor: `L'élève est capable de démontrer une bonne compréhension de ${d.criterionName.toLowerCase()}.` },
           { level: '7-8', descriptor: `L'élève est capable de démontrer une compréhension approfondie et nuancée de ${d.criterionName.toLowerCase()}.` },
         ],
         exercises: d.strands.slice(0, 3).map((s, idx) => ({
-          title: `Analyse et application`,
-          content: `En lien avec l'aspect évalué, réponds à la question suivante.
+          title: en ? `Analysis and application` : `Analyse et application`,
+          content: en
+            ? `In relation to the strand assessed, answer the following question.
+
+${idx + 1}. ${s}`
+            : `En lien avec l'aspect évalué, réponds à la question suivante.
 
 ${idx + 1}. ${s}`,
           criterionReference: s.split('.')[0].trim(),
@@ -905,9 +931,10 @@ const IB_CONCEPTS_BY_SUBJECT: Record<string, { keyConcepts: string[]; relatedCon
     keyConcepts: ['Communication', 'Créativité', 'Liens', 'Perspective'],
     relatedConcepts: ['But', 'Cadre', 'Contexte', 'Expression personnelle', 'Genre', 'Interpellation du destinataire', 'Intertextualité', 'Personnage', 'Point de vue', 'Structure', 'Style', 'Thème']
   },
+  // Language Acquisition (English) — official IB MYP concepts IN ENGLISH
   'acquisition de langues': {
-    keyConcepts: ['Communication', 'Connexions', 'Créativité', 'Culture'],
-    relatedConcepts: ['But', 'Contexte', 'Conventions', 'Forme', 'Fonction', 'Sens', 'Message', 'Schémas', 'Choix des mots', 'Public', 'Empathie', 'Idiome', 'Point de vue', 'Argument', 'Déduction', 'Biais', 'Thème', 'Voix']
+    keyConcepts: ['Communication', 'Connections', 'Creativity', 'Culture'],
+    relatedConcepts: ['Accent', 'Argument', 'Audience', 'Bias', 'Context', 'Conventions', 'Empathy', 'Form', 'Function', 'Idiom', 'Inference', 'Meaning', 'Message', 'Patterns', 'Point of view', 'Purpose', 'Structure', 'Stylistic choices', 'Theme', 'Voice', 'Word choice']
   },
   'arts': {
     keyConcepts: ['Changement', 'Communication', 'Esthétique', 'Identité'],
@@ -2680,6 +2707,13 @@ ${unitDescriptions}
 Subject: ${subject}
 Grade: ${gradeLevel}
 
+Official IB MYP concepts for ${subject} (ENGLISH terms only):
+- Allowed key concepts: ${subjectConcepts.keyConcepts.join(', ')}
+- Allowed related concepts: ${subjectConcepts.relatedConcepts.join(', ')}
+- Global contexts: Identities and relationships; Orientation in space and time; Personal and cultural expression; Scientific and technical innovation; Globalization and sustainability; Fairness and development
+
+⚠️ This is a LANGUAGE ACQUISITION subject: EVERYTHING (concepts, questions, content, assessments, rubrics, exercises) MUST be written in ENGLISH.
+
 RULES:
 - Keep the EXACT title and statement of inquiry as provided (do not change them)
 - Keep the same chapters/content as provided
@@ -2785,7 +2819,30 @@ export const suggestUnitGroupingsFromSyllabus = async (
   gradeLevel: string
 ): Promise<UnitGroupingPreference[]> => {
   const isDesign = isDesignSubject(subject);
-  const prompt = `
+  const prompt = isLanguageAcquisition(subject) ? `
+You are an expert IB MYP curriculum coordinator for Language Acquisition (English).
+Here is the syllabus / list of chapters for the subject "${subject}" (${gradeLevel}):
+
+---
+${syllabusText}
+---
+
+TASK:
+Organise this syllabus into 4 to 6 coherent yearly learning units. EVERYTHING must be written in ENGLISH.
+For each unit:
+1. Propose a striking, pedagogical "unitTitle" in English (e.g. "Unit 1: Voices and identities in everyday communication").
+2. Group in "chapters" the specific chapters and notions of the syllabus that build this unit (in English).
+3. Define the "targetCriteria" (array of 2 criteria among ["A", "B", "C", "D"] — A Listening, B Reading, C Speaking, D Writing).
+
+Return ONLY a valid JSON array in the format:
+[
+  {
+    "unitTitle": "...",
+    "chapters": "Chapter 1: ...\\nChapter 2: ...",
+    "targetCriteria": ["A", "C"]
+  }
+]
+` : `
 Tu es un coordonnateur pédagogique expert du PEI (Programme d'Éducation Intermédiaire de l'IB).
 Voici le programme / la liste des chapitres pour la matière "${subject}" (${gradeLevel}) :
 
@@ -2812,7 +2869,9 @@ Retourne UNIQUEMENT un tableau JSON valide au format :
 
   const rawText = await callGeminiViaProxy(
     prompt,
-    "Tu es un coordinateur IB PEI expert en structuration curriculaire.",
+    isLanguageAcquisition(subject)
+      ? "You are an IB MYP coordinator expert in curriculum structuring. Answer in English only."
+      : "Tu es un coordinateur IB PEI expert en structuration curriculaire.",
     { responseMimeType: 'application/json', temperature: 0.5 }
   );
 
@@ -2861,7 +2920,27 @@ export const generateCourseFromUnitGroupings = async (
     const criteriaFormatted = criteria.map(c => formatCriterionFullName(subject, c));
 
     // 1. Générer le squelette d'unité complet pour ce titre et ces chapitres
-    const unitPrompt = `
+    const unitPrompt = isLanguageAcquisition(subject) ? `
+You are an expert IB MYP coordinator for Language Acquisition (English).
+Generate a COMPLETE and RIGOROUS MYP learning unit, 100% in ENGLISH, with the imposed title and the grouped chapters below:
+
+- Imposed title: "${group.unitTitle}"
+- Subject: ${subject}
+- MYP year: ${gradeLevel}
+- Chapters / notions grouped in this unit:
+${group.chapters}
+- Targeted IB criteria: ${criteria.map(c => `Criterion ${c}`).join(', ')}
+
+INSTRUCTIONS:
+1. Respect the imposed title SCRUPULOUSLY: "${group.unitTitle}".
+2. The statement of inquiry must connect the key concept, a related concept and the global context to the content of these chapters (official IB English terms).
+3. Generate the inquiry questions (factual, conceptual, debatable).
+4. Generate adapted ATL skills.
+5. Generate summative and formative assessments strictly targeted on the criteria: ${criteria.join(', ')}.
+6. Generate the criterion-based summative assessment with rubric and exercises for EACH targeted criterion (${criteria.join(', ')}), all in ENGLISH.
+
+Return ONLY a JSON object representing a complete UnitPlan.
+` : `
 Tu es un coordonnateur expert du PEI IB.
 Génère une unité d'apprentissage PEI COMPLÈTE et RIGOUREUSE avec le titre imposé et les chapitres regroupés suivants :
 
@@ -2958,6 +3037,13 @@ Chapters/Content: ${chapters}
 Subject: ${subject}
 Grade: ${gradeLevel}
 Assessment Criteria to use: ${criteriaRule}
+
+Official IB MYP concepts for ${subject} (ENGLISH terms only):
+- Allowed key concepts: ${subjectConcepts.keyConcepts.join(', ')}
+- Allowed related concepts: ${subjectConcepts.relatedConcepts.join(', ')}
+- Global contexts: Identities and relationships; Orientation in space and time; Personal and cultural expression; Scientific and technical innovation; Globalization and sustainability; Fairness and development
+
+⚠️ This is a LANGUAGE ACQUISITION subject: EVERYTHING (concepts, questions, content, assessments, rubrics, exercises) MUST be written in ENGLISH.
 
 Generate all fields: keyConcept, relatedConcepts, globalContext, inquiryQuestions, atlSkills, content, learningExperiences, summativeAssessment, formativeAssessment, differentiation, resources, reflection, AND assessments array.
 
@@ -4045,6 +4131,11 @@ export const generateUnitDetailsWithAI = async (
   plan: UnitPlan,
   onProgress?: (msg: string) => void
 ): Promise<Partial<UnitPlan>> => {
+  // ── Acquisition de langues (Anglais) → génération 100 % en ANGLAIS ────────
+  if (isLanguageAcquisition(plan.subject || '')) {
+    return generateUnitDetailsWithAI_EN(plan, onProgress);
+  }
+
   onProgress?.('Analyse globale de l\'unité en cours...');
 
   // ── Année scolaire 2026/2027 par défaut ────────────────────────────────────
@@ -4861,6 +4952,675 @@ Règles : JSON valide uniquement, français soigné, adapté à la matière "${p
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// generateUnitDetailsWithAI_EN — ENGLISH version used for Language Acquisition
+// (English). Same structure as the French version (3 Gemini calls) but every
+// prompt, sample value and fallback is written in ENGLISH so the whole unit
+// plan, its Word export and its assessments are consistently in English.
+// ─────────────────────────────────────────────────────────────────────────────
+const parseJsonSafeGeneric = (raw: string): Record<string, unknown> => {
+  let s = (raw || '').trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) s = fence[1].trim();
+  const firstBrace = s.indexOf('{');
+  if (firstBrace !== -1) {
+    let depth = 0; let endIdx = -1;
+    for (let i = firstBrace; i < s.length; i++) {
+      if (s[i] === '{') depth++;
+      else if (s[i] === '}') { depth--; if (depth === 0) { endIdx = i; break; } }
+    }
+    s = endIdx !== -1 ? s.slice(firstBrace, endIdx + 1) : s.slice(firstBrace, s.lastIndexOf('}') + 1);
+  }
+  s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+  s = s.replace(/,\s*([\]}])/g, '$1');
+  try { return JSON.parse(s) as Record<string, unknown>; } catch (_) { /* continue */ }
+  const cleaned = s.replace(/("(?:[^"\\]|\\.)*")/g, (m) =>
+    m.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'));
+  try { return JSON.parse(cleaned) as Record<string, unknown>; } catch (_) { /* continue */ }
+  const safe = s.replace(/:\s*"([^"]*)"(\s*[,}])/gs, (_m, val, end) => {
+    const ev = val.replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/\r/g,'\\r').replace(/\t/g,'\\t').replace(/"/g,'\\"');
+    return `: "${ev}"${end}`;
+  });
+  try { return JSON.parse(safe) as Record<string, unknown>; } catch (_) { return {}; }
+};
+
+const GLOBAL_CONTEXT_FR_EN: Record<string, string> = {
+  "Identités et relations": "Identities and relationships",
+  "Orientation dans l'espace et dans le temps": "Orientation in space and time",
+  "Expression personnelle et culturelle": "Personal and cultural expression",
+  "Innovation scientifique et technique": "Scientific and technical innovation",
+  "Mondialisation et durabilité": "Globalization and sustainability",
+  "Équité et développement": "Fairness and development",
+};
+const KEY_CONCEPT_FR_EN: Record<string, string> = {
+  "Esthétique": "Aesthetics", "Changement": "Change", "Communautés": "Communities",
+  "Connexions": "Connections", "Liens": "Connections", "Créativité": "Creativity",
+  "Développement": "Development", "Forme": "Form", "Interactions mondiales": "Global interactions",
+  "Identité": "Identity", "Logique": "Logic", "Relations": "Relationships",
+  "Systèmes": "Systems", "Temps, lieu et espace": "Time, place and space",
+};
+const toEnglishGlobalContext = (v?: string): string => (v && GLOBAL_CONTEXT_FR_EN[v.trim()]) || v || '';
+const toEnglishKeyConcept = (v?: string): string => (v && KEY_CONCEPT_FR_EN[v.trim()]) || v || '';
+
+const generateUnitDetailsWithAI_EN = async (
+  plan: UnitPlan,
+  onProgress?: (msg: string) => void
+): Promise<Partial<UnitPlan>> => {
+  onProgress?.('Analysing the unit (English mode)...');
+
+  const effectiveSchoolYear = (plan.schoolYear && !plan.schoolYear.includes('2024') && !plan.schoolYear.includes('2025'))
+    ? plan.schoolYear
+    : '2026/2027';
+
+  const extractedLetters = extractCriteriaLetters(plan.objectives);
+  const fromAssessments = extractCriteriaLetters((plan.assessments || []).map(a => a?.criterion));
+  const targetObjectives: ('A' | 'B' | 'C' | 'D')[] = extractedLetters.length > 0
+    ? extractedLetters
+    : fromAssessments.length > 0 ? fromAssessments : ['A', 'C'];
+
+  const calStartDate = plan.startDate || '30 August 2026';
+  const calEndDate   = plan.endDate || '15 October 2026';
+
+  const keyConceptSeed = toEnglishKeyConcept(plan.keyConcept) || 'Communication';
+  const globalContextSeed = toEnglishGlobalContext(plan.globalContext) || 'Identities and relationships';
+  const relatedSeed = (Array.isArray(plan.relatedConcepts) && plan.relatedConcepts.length > 0)
+    ? plan.relatedConcepts : ['Audience', 'Purpose', 'Message'];
+  const atlSeed = (Array.isArray(plan.atlSkills) && plan.atlSkills.length > 0)
+    ? plan.atlSkills : ['Communication skills', 'Thinking skills', 'Research skills', 'Self-management skills'];
+
+  const unitInfo = [
+    'Unit title: ' + (plan.title || 'Not defined'),
+    'Subject: ' + (plan.subject || 'Language Acquisition (English)'),
+    'MYP year: ' + (plan.gradeLevel || 'Not defined'),
+    'Duration: ' + (plan.duration || '20 hours'),
+    'School year: ' + effectiveSchoolYear,
+    'Dates (school calendar): From ' + calStartDate + ' to ' + calEndDate,
+    'Key concept: ' + keyConceptSeed,
+    'Related concepts: ' + relatedSeed.join(', '),
+    'Global context: ' + globalContextSeed,
+    'Statement of inquiry: ' + (plan.statementOfInquiry || 'Not defined'),
+    'Targeted objectives (STRICTLY LIMITED CRITERIA): ' + targetObjectives.join(', '),
+    'ATL: ' + atlSeed.join(', '),
+    'Content / Chapters: ' + (plan.chapters || plan.content || '').slice(0, 400),
+    'Summative assessment: ' + (plan.summativeAssessment || '').slice(0, 200),
+  ].join('\n');
+
+  const sampleObjectivesDetails = targetObjectives.map(crit => {
+    const std = getStandardIBCriterion(plan.subject || '', crit);
+    return {
+      criterion: crit,
+      criterionName: std.name,
+      aspects: std.aspectsFormatted,
+      expectedLevel: 'Level 5-6 expected /8',
+      activities: std.activities,
+      formativeAssessment: std.formativeAssessment,
+      summativeAssessment: std.summativeAssessment
+    };
+  });
+
+  // ── Call 1: Conceptual framing + student context + content + objectives ───
+  onProgress?.('Conceptual framing, student context and content (1/3)...');
+  const prompt1 = `You are an expert IB MYP Language Acquisition (English) coordinator. Return ONLY one valid, complete JSON object for this unit.
+IMPORTANT: Fill in ABSOLUTELY EVERY field below with rich, professional content written 100% in ENGLISH (this is a Language Acquisition unit — no French at all).
+CRUCIAL RULE ON OBJECTIVES: In "objectivesDetails", restrict yourself STRICTLY to the targeted objectives: [${targetObjectives.join(', ')}].
+Use the official IB MYP Language Acquisition criteria (A Listening, B Reading, C Speaking, D Writing) and their strands with roman numerals "i. ..., ii. ..., iii. ...".
+The key concept, related concepts and global context MUST be official IB MYP English terms (e.g. Communication, Connections, Creativity, Culture; Audience, Purpose, Message, Context, Conventions...; Identities and relationships, Personal and cultural expression...).
+
+${unitInfo}
+
+Expected JSON format:
+{
+  "schoolYear": "${effectiveSchoolYear}",
+  "numberOfPeriods": "20 periods",
+  "numberOfHours": "${plan.duration || '20 hours'}",
+  "startDate": "${calStartDate}",
+  "endDate": "${calEndDate}",
+  "prerequisites": "Prior language knowledge and skills students need before starting the unit.",
+  "chapters": "- Chapter 1: Discovery and conceptual framing\\n- Chapter 2: Analysis and deepening\\n- Chapter 3: Production and consolidation",
+  "keyConcept": "${keyConceptSeed}",
+  "keyConceptDefinition": "In-depth, contextualised definition of the key concept for this unit.",
+  "keyConceptJustification": "Clear pedagogical justification for choosing this key concept for this subject and year.",
+  "keyConceptDevelopment": "How this key concept will be developed and deepened throughout the unit.",
+  "relatedConcepts": ${JSON.stringify(relatedSeed)},
+  "globalContext": "${globalContextSeed}",
+  "globalContextJustification": "Justification of the global context and its relevance to students' lives.",
+  "globalContextAspects": "Concrete aspects and specific explorations of the global context targeted in the unit.",
+  "globalContextLinks": "Explanation of the dynamic links between the global context, the concepts and the learning content.",
+  "statementOfInquiry": "${(plan.statementOfInquiry || 'A declarative statement of inquiry connecting the key concept, related concepts and global context.').replace(/"/g, '\\"')}",
+  "statementExplanation": "Pedagogical explanation and detailed conceptual justification of the statement of inquiry.",
+  "statementTransfer": "Possibilities of transferring this statement to other real-life contexts and subjects.",
+  "inquiryQuestions": {
+    "factual": ["Factual question 1?", "Factual question 2?", "Factual question 3?"],
+    "conceptual": ["Conceptual question 1?", "Conceptual question 2?"],
+    "debatable": ["Debatable question 1?", "Debatable question 2?"]
+  },
+  "objectives": ${JSON.stringify(targetObjectives)},
+  "atlSkills": ${JSON.stringify(atlSeed)},
+  "atlDetails": [
+    {
+      "categorie": "Communication",
+      "competence": "Communication skills",
+      "sousCompetence": "Read, write and use language to gather and communicate information",
+      "objectifDeveloppement": "Develop clear, structured expression adapted to different audiences and purposes",
+      "activite": "Role-plays, structured discussions, oral presentations and written productions",
+      "methodeEnseignement": "Explicit teaching of connectives, peer feedback and self-assessment checklists",
+      "observation": "Observation of fluency, accuracy and range of vocabulary",
+      "reflexionEleve": "Students record their progress in a language journal and assess their communication"
+    },
+    {
+      "categorie": "Thinking",
+      "competence": "Critical thinking",
+      "sousCompetence": "Analyse and evaluate issues and ideas",
+      "objectifDeveloppement": "Develop a critical and justified view of texts and issues",
+      "activite": "Comparison of sources, deconstruction of arguments and inference tasks",
+      "methodeEnseignement": "Socratic questioning, visible-thinking routines and analysis grids",
+      "observation": "Ability to justify opinions with evidence from texts",
+      "reflexionEleve": "Self-assessment of reasoning and identification of bias"
+    }
+  ],
+  "studentContext": {
+    "priorKnowledge": "Students' precise prior knowledge and language level linked to the unit.",
+    "acquiredSkills": "Language and ATL skills students already master.",
+    "linksPreviousUnits": "Explicit links and continuity with previous units.",
+    "specificNeeds": "Identified specific learning needs and planned adaptations.",
+    "profileDiversity": "Diversity of learner profiles (linguistic, cultural, learning styles).",
+    "culturalContexts": "Cultural, local and international contexts used to give meaning.",
+    "anticipatedDifficulties": "Conceptual, linguistic and methodological obstacles to anticipate."
+  },
+  "content": "Overall description of the unit's learning content.",
+  "contentDetails": {
+    "knowledges": "Theoretical knowledge and fundamental language content to acquire in this unit.",
+    "notions": "Key notions and language concepts.",
+    "vocabulary": "Essential vocabulary and expressions to master.",
+    "methods": "Language-learning strategies and methods (skimming, scanning, inference, drafting...).",
+    "techniques": "Practical techniques and know-how developed.",
+    "disciplinarySkills": "Language skills targeted according to the subject guide (listening, reading, speaking, writing).",
+    "mandatoryContent": "Mandatory content of the IB MYP Language Acquisition guide for this phase.",
+    "selectedContent": "Specific content chosen by the teacher and didactic justification.",
+    "nationalLinks": "Precise correspondences with the national curriculum for this year."
+  },
+  "objectivesDetails": ${JSON.stringify(sampleObjectivesDetails, null, 2)},
+  "formativeAssessment": "Complete formative assessment plan: regular observations, targeted descriptive feedback, self-assessment and ongoing regulation of learning.",
+  "formativeDetails": [
+    {
+      "titre": "Diagnostic and initial formative assessment",
+      "moment": "Start of unit (Lessons 1-2)",
+      "objectifEvalue": "Assess prior knowledge and understanding of key concepts",
+      "activite": "Interactive quiz, structured brainstorming and mind map",
+      "criteres": "Criterion ${targetObjectives[0] || 'A'}",
+      "methodeEvaluation": "Direct observation and self-positioning grid",
+      "feedbackEnseignant": "Immediate oral formative feedback to adjust pace",
+      "autoevaluation": "3-level self-assessment checklist",
+      "evaluationPairs": "Pair discussion to compare understanding",
+      "actionApres": "Targeted remediation for students with gaps"
+    },
+    {
+      "titre": "Mid-unit formative assessment",
+      "moment": "Middle of unit (Lessons 3-4)",
+      "objectifEvalue": "Check language accuracy and development of ATL skills",
+      "activite": "Short written production / guided speaking task",
+      "criteres": "Criteria ${targetObjectives.join(' and ')}",
+      "methodeEvaluation": "Formative marking with annotated IB criteria",
+      "feedbackEnseignant": "Personalised comments with explicit improvement paths",
+      "autoevaluation": "Metacognitive progress check",
+      "evaluationPairs": "Peer assessment using a descriptive rubric",
+      "actionApres": "Differentiated consolidation or extension workshops"
+    }
+  ],
+  "summativeAssessment": "Authentic, meaningful criterion-based summative task directly linked to the statement of inquiry and global context.",
+  "summativeDetails": {
+    "titre": "Final summative task: Production and analysis",
+    "contexte": "Authentic situation rooted in the unit's global context",
+    "situation": "Complex communicative situation mobilising all skills and knowledge acquired",
+    "consigne": "Detailed instructions guiding the student step by step in the production",
+    "productionAttendue": "Written / oral production and comprehension answers with justification",
+    "duree": "2 hours",
+    "objectifsEvalues": ${JSON.stringify(targetObjectives)},
+    "criteresPEI": ${JSON.stringify(targetObjectives)},
+    "grille": "IB assessment criteria applied with explicit level descriptors (1-8)",
+    "feedback": "Criterion-based summative report with formative comments for future learning",
+    "possibiliteRevision": true
+  },
+  "interdisciplinaryLinks": "Concrete interdisciplinary connections with other MYP subjects sharing similar concepts or skills."
+}
+
+Rules: valid JSON only, no text outside JSON, polished ENGLISH adapted to the subject "${plan.subject}" year ${plan.gradeLevel}.`;
+
+  const raw1 = await callGeminiViaProxy(prompt1, undefined, { temperature: 0.4, maxOutputTokens: 4000 });
+
+  // ── Call 2: Learning process (5 phases) + detailed lessons ────────────────
+  onProgress?.('Learning process in 5 phases and lessons (2/3)...');
+  const prompt2 = `You are an expert IB MYP Language Acquisition (English) educator. Return ONLY one valid JSON object for the 5-phase learning process and the detailed lesson sequence, written 100% in ENGLISH:
+IMPORTANT: Each phase must contain at least 2 rich, precise sentences describing concrete activities for the subject "${plan.subject}" year ${plan.gradeLevel}.
+
+${unitInfo}
+
+Expected JSON format:
+{
+  "learningProcess": {
+    "phase1_activation": "Phase 1 - Activation of prior knowledge and engagement: ...",
+    "phase2_acquisition": "Phase 2 - Acquisition of new language and strategies: ...",
+    "phase3_practice": "Phase 3 - Guided and collaborative practice: ...",
+    "phase4_transfer": "Phase 4 - Independent application and transfer: ...",
+    "phase5_reflection": "Phase 5 - Metacognitive reflection and review: ..."
+  },
+  "sessions": [
+    {
+      "numero": 1,
+      "duree": "2h",
+      "objectifApprentissage": "Discover the statement of inquiry and activate prior knowledge of the key concept",
+      "contenu": "Presentation of the theme, discovery of the global context and core vocabulary",
+      "activite": "Hook activity, small-group brainstorming and co-construction of a mind map",
+      "roleEnseignant": "Facilitator of questioning, guide in formulating inquiry questions",
+      "roleEleves": "Active inquirers, proposing hypotheses and taking part in discussions",
+      "atl": "Communication and thinking skills",
+      "evaluationFormative": "Direct observation of exchanges and collection of students' questions",
+      "differenciation": "Visual supports and glossary for students with specific needs; extension questions for advanced students",
+      "ressources": "Trigger texts/videos, interactive board, inquiry journal",
+      "questionsRecherche": "What are the essential features of the concept studied?"
+    },
+    { "numero": 2, "duree": "2h", "objectifApprentissage": "...", "contenu": "...", "activite": "...", "roleEnseignant": "...", "roleEleves": "...", "atl": "...", "evaluationFormative": "...", "differenciation": "...", "ressources": "...", "questionsRecherche": "..." },
+    { "numero": 3, "duree": "2h", "objectifApprentissage": "...", "contenu": "...", "activite": "...", "roleEnseignant": "...", "roleEleves": "...", "atl": "...", "evaluationFormative": "...", "differenciation": "...", "ressources": "...", "questionsRecherche": "..." },
+    { "numero": 4, "duree": "2h", "objectifApprentissage": "...", "contenu": "...", "activite": "...", "roleEnseignant": "...", "roleEleves": "...", "atl": "...", "evaluationFormative": "...", "differenciation": "...", "ressources": "...", "questionsRecherche": "..." },
+    { "numero": 5, "duree": "2h", "objectifApprentissage": "Finalise the summative production and carry out a metacognitive reflection", "contenu": "...", "activite": "...", "roleEnseignant": "...", "roleEleves": "...", "atl": "...", "evaluationFormative": "...", "differenciation": "...", "ressources": "...", "questionsRecherche": "..." }
+  ],
+  "learningExperiences": "The unit is built around active inquiry experiences combining authentic texts, communicative tasks, collaborative workshops and demanding personal productions.",
+  "teachingStrategies": "Inquiry-based approach, Socratic questioning, explicit teaching of language strategies, progressive scaffolding and differentiated pathways.",
+  "studentActivities": "Text analysis, structured debates, role-plays, visual summaries, structured written productions and regular reflective reviews."
+}
+
+Rules: valid JSON only, polished ENGLISH, adapted to the subject "${plan.subject}". Generate exactly 5 complete lessons.`;
+
+  const raw2 = await callGeminiViaProxy(prompt2, undefined, { temperature: 0.4, maxOutputTokens: 4000 });
+
+  // ── Call 3: Differentiation + Reflection + Coherence ──────────────────────
+  onProgress?.('Differentiation, full reflection and coherence (3/3)...');
+  const prompt3 = `You are an expert IB MYP Language Acquisition (English) educator. Return ONLY one valid JSON object for the differentiation, the reflection (prior, during, after) and the coherence of the unit, written 100% in ENGLISH:
+IMPORTANT: Every reflection sub-field must contain a complete professional sentence in English.
+
+${unitInfo}
+
+Expected JSON format:
+{
+  "differentiation": "Overall inclusive differentiation strategy guaranteeing access and intellectual challenge for all learner profiles.",
+  "differentiationDetails": {
+    "supportStudents": {
+      "vocabulary": "Bilingual/illustrated glossary, vocabulary cards, visual memo sheets",
+      "visualSupports": "Graphic organisers, infographics, concept maps and subtitled videos",
+      "models": "Annotated model texts and self-checking guides",
+      "adaptedInstructions": "Instructions broken down into simple sequential steps, guided oral rephrasing",
+      "intermediateSteps": "Roadmaps with intermediate milestones and progressive scaffolding",
+      "smallGroups": "Flexible needs-based groups, peer tutoring and guided workshops",
+      "individualSupport": "Regular individual check-ins and immediate corrective feedback",
+      "extraTime": "Adjusted working time and adapted production length",
+      "additionalResources": "Graded readers and methodological aids"
+    },
+    "advancedStudents": {
+      "deepening": "Expert readings, advanced critical analysis and theoretical extensions",
+      "autonomousResearch": "Autonomous inquiry projects on related themes",
+      "complexProblems": "Open communicative situations with multiple variables and constraints",
+      "challenges": "Interdisciplinary challenges and high-value extension productions",
+      "transfer": "Conceptual transfer to new contemporary contexts and global realities",
+      "advancedProduction": "Demanding output formats (analytical article, video capsule, argued speech)"
+    },
+    "contentDifferentiation": "Differentiation by content: variety of texts, dual-level readings and modular resources.",
+    "processDifferentiation": "Differentiation by process: flexible approaches, personalised pace and flexible grouping.",
+    "productDifferentiation": "Differentiation by product: choice of modes of expression (written, oral, visual, digital) meeting the same IB criteria."
+  },
+  "reflection": {
+    "prior": "Prior to teaching the unit: diagnostic assessment of prior knowledge and anticipation of conceptual difficulties.",
+    "during": "During teaching: continuous observation of learning, real-time adjustments and targeted remediation.",
+    "after": "After teaching the unit: overall review of summative results, identification of successes and improvements for the next iteration."
+  },
+  "reflectionDetails": {
+    "before": {
+      "priorKnowledge": "...", "studentNeeds": "...", "anticipatedDifficulties": "...", "relevance": "...",
+      "previousLinks": "...", "plannedStrategies": "...", "plannedDifferentiation": "...", "expectedOutcomes": "..."
+    },
+    "during": {
+      "progressObserved": "...", "difficulties": "...", "effectiveStrategies": "...", "ineffectiveStrategies": "...",
+      "studentParticipation": "...", "adjustmentsMade": "...", "planningChanges": "...", "emergingNeeds": "..."
+    },
+    "after": {
+      "achievedObjectives": "...", "partialObjectives": "...", "studentDifficulties": "...", "assessmentResults": "...",
+      "activityEfficiency": "...", "teachingEfficiency": "...", "differentiationEfficiency": "...", "successes": "...",
+      "improvements": "...", "modificationsNext": "...", "elementsToKeep": "...", "elementsToRemove": "...", "elementsToAdd": "..."
+    }
+  },
+  "verticalCoherence": "Vertical coherence: progressive continuity of language skills and key concepts with previous and following MYP years.",
+  "horizontalCoherence": "Horizontal coherence: methodological synergies and conceptual resonances with other subjects of the same year.",
+  "verticalCoherenceDetails": {
+    "before": "The unit builds on the achievements of previous MYP phases by consolidating the fundamentals.",
+    "during": "The unit develops intermediate-level skills according to the requirements of the subject guide.",
+    "after": "The unit directly prepares the concepts and methodological requirements of higher MYP phases and the DP."
+  },
+  "horizontalCoherenceDetails": {
+    "otherSubjectLinks": "Active interdisciplinary links with individuals and societies, arts and language and literature.",
+    "transversalSkills": "Shared development of communication, critical analysis and intercultural skills."
+  },
+  "resources": "Reference textbooks, authentic texts and media, interactive digital resources, audio/video material and IB methodological guides."
+}
+
+Rules: valid JSON only, polished ENGLISH, adapted to the subject "${plan.subject}".`;
+
+  const raw3 = await callGeminiViaProxy(prompt3, undefined, { temperature: 0.4, maxOutputTokens: 4000 });
+
+  onProgress?.('Processing results...');
+
+  let p1: Record<string, unknown> = {};
+  let p2: Record<string, unknown> = {};
+  let p3: Record<string, unknown> = {};
+  try { p1 = parseJsonSafeGeneric(raw1); } catch (e) { console.error('Parsing error call 1:', e); }
+  try { p2 = parseJsonSafeGeneric(raw2); } catch (e) { console.error('Parsing error call 2:', e); }
+  try { p3 = parseJsonSafeGeneric(raw3); } catch (e) { console.error('Parsing error call 3:', e); }
+
+  onProgress?.('Finalising and saving automatically...');
+
+  const str = (v: unknown, fallback: string): string => {
+    if (typeof v === 'string' && v.trim().length > 0) return v.trim();
+    return fallback;
+  };
+
+  const keyConceptVal = toEnglishKeyConcept(str(p1.keyConcept, keyConceptSeed));
+  const globalContextVal = toEnglishGlobalContext(str(p1.globalContext, globalContextSeed));
+  const statementVal = str(p1.statementOfInquiry, plan.statementOfInquiry || `Exploring ${keyConceptVal.toLowerCase()} through purpose and audience helps us understand how language shapes identities and relationships.`);
+  const subjectName = plan.subject || 'English';
+  const unitName = plan.title || 'the unit';
+
+  const result: Partial<UnitPlan> = {
+    // A. General information
+    schoolYear: effectiveSchoolYear,
+    numberOfPeriods: str(p1.numberOfPeriods, plan.numberOfPeriods || '20 periods'),
+    numberOfHours: str(p1.numberOfHours, plan.numberOfHours || plan.duration || '20 hours'),
+    startDate: str(p1.startDate, calStartDate),
+    endDate: str(p1.endDate, calEndDate),
+    prerequisites: str(p1.prerequisites, plan.prerequisites || `Basic command of everyday English vocabulary and structures, and familiarity with simple text types.`),
+    chapters: str(p1.chapters, plan.chapters || `- Chapter 1: Introduction and problematisation\n- Chapter 2: In-depth analysis and inquiry\n- Chapter 3: Final production and synthesis`),
+
+    // B. Student context
+    studentContext: {
+      priorKnowledge: str((p1.studentContext as any)?.priorKnowledge, plan.studentContext?.priorKnowledge || `Students have basic knowledge of English and can use fundamental language strategies.`),
+      acquiredSkills: str((p1.studentContext as any)?.acquiredSkills, plan.studentContext?.acquiredSkills || `Skimming and scanning, note-taking and collaborative work in pairs.`),
+      linksPreviousUnits: str((p1.studentContext as any)?.linksPreviousUnits, plan.studentContext?.linksPreviousUnits || `This unit follows on from previously studied notions by increasing autonomy in language use.`),
+      specificNeeds: str((p1.studentContext as any)?.specificNeeds, plan.studentContext?.specificNeeds || `Adaptations planned for students with reading or expression difficulties, with targeted scaffolding.`),
+      profileDiversity: str((p1.studentContext as any)?.profileDiversity, plan.studentContext?.profileDiversity || `Heterogeneous class with a diversity of interests, learning styles and language profiles.`),
+      culturalContexts: str((p1.studentContext as any)?.culturalContexts, plan.studentContext?.culturalContexts || `English-speaking, local and international cultural contexts highlighted to broaden perspectives.`),
+      anticipatedDifficulties: str((p1.studentContext as any)?.anticipatedDifficulties, plan.studentContext?.anticipatedDifficulties || `Complexity of specific vocabulary, accuracy of grammatical structures and transfer to new contexts.`),
+    },
+
+    // C. Concepts & global context
+    keyConcept: keyConceptVal,
+    keyConceptDefinition: str(p1.keyConceptDefinition, plan.keyConceptDefinition || `${keyConceptVal} refers to the fundamental ideas, forms and meanings explored in this unit.`),
+    keyConceptJustification: str(p1.keyConceptJustification, plan.keyConceptJustification || `This key concept is central to structuring the inquiry and developing lasting conceptual understanding in ${subjectName}.`),
+    keyConceptDevelopment: str(p1.keyConceptDevelopment, plan.keyConceptDevelopment || `The concept will be developed through text study, comparative analysis and progressive communicative tasks.`),
+    relatedConcepts: (Array.isArray(p1.relatedConcepts) && (p1.relatedConcepts as string[]).length > 0)
+      ? (p1.relatedConcepts as string[])
+      : relatedSeed,
+    globalContext: globalContextVal,
+    globalContextJustification: str(p1.globalContextJustification, plan.globalContextJustification || `This global context provides an authentic, meaningful framework allowing students to connect their learning to the real world.`),
+    globalContextAspects: str(p1.globalContextAspects, plan.globalContextAspects || `Exploration of aspects related to personal identity, cultural exchange and representation in society.`),
+    globalContextLinks: str(p1.globalContextLinks, plan.globalContextLinks || `The global context illuminates the key concept by giving a human and societal dimension to the language content.`),
+
+    // D. Statement of inquiry
+    statementOfInquiry: statementVal,
+    statementExplanation: str(p1.statementExplanation, plan.statementExplanation || `This statement synthesises the dynamic relationship between the key concept, the related concepts and the chosen global context.`),
+    statementTransfer: str(p1.statementTransfer, plan.statementTransfer || `This statement can be transferred to other times, cultures and subjects to understand human communication.`),
+
+    // E. Inquiry questions
+    inquiryQuestions: {
+      factual: (p1.inquiryQuestions as any)?.factual?.length ? (p1.inquiryQuestions as any).factual : (plan.inquiryQuestions?.factual?.length ? plan.inquiryQuestions.factual : ['What are the key elements of the topic studied?', 'How can we define the key notions of this unit?', 'Which conventions apply to this text type?']),
+      conceptual: (p1.inquiryQuestions as any)?.conceptual?.length ? (p1.inquiryQuestions as any).conceptual : (plan.inquiryQuestions?.conceptual?.length ? plan.inquiryQuestions.conceptual : ['How do the concepts interact in this context?', 'How does understanding these mechanisms influence our judgement?']),
+      debatable: (p1.inquiryQuestions as any)?.debatable?.length ? (p1.inquiryQuestions as any).debatable : (plan.inquiryQuestions?.debatable?.length ? plan.inquiryQuestions.debatable : ['To what extent is this approach universal?', 'What is the ethical responsibility linked to this knowledge?']),
+    },
+
+    // F. Objectives (strictly limited to chosen criteria)
+    objectives: targetObjectives.map(crit => formatCriterionFullName(plan.subject || '', crit)),
+    objectivesDetails: targetObjectives.map(crit => {
+      const existing = (Array.isArray(p1.objectivesDetails) ? p1.objectivesDetails : (plan.objectivesDetails || [])).find(
+        (o: any) => (o?.criterion || '').toUpperCase() === crit
+      );
+      const std = getStandardIBCriterion(plan.subject || '', crit);
+      const rawAspects = typeof existing?.aspects === 'string' && existing.aspects.trim().length > 0 ? existing.aspects.trim() : '';
+      const aspects = (rawAspects.includes('i.') || rawAspects.includes('i,') || rawAspects.includes('i -') || rawAspects.includes('(i)'))
+        ? rawAspects
+        : std.aspectsFormatted;
+      return {
+        criterion: crit,
+        criterionName: str(existing?.criterionName, std.name),
+        aspects,
+        expectedLevel: str(existing?.expectedLevel, 'Level 5-6 expected /8'),
+        activities: str(existing?.activities, std.activities),
+        formativeAssessment: str(existing?.formativeAssessment, std.formativeAssessment),
+        summativeAssessment: str(existing?.summativeAssessment, std.summativeAssessment),
+      };
+    }),
+
+    // G. Content
+    content: str(p1.content, plan.content || `Complete programme of study on ${unitName}, structured in progressive learning sequences.`),
+    contentDetails: {
+      knowledges: str((p1.contentDetails as any)?.knowledges, plan.contentDetails?.knowledges || `Fundamental language knowledge and content on ${unitName}.`),
+      notions: str((p1.contentDetails as any)?.notions, plan.contentDetails?.notions || `Key notions: ${relatedSeed.join(', ')}.`),
+      vocabulary: str((p1.contentDetails as any)?.vocabulary, plan.contentDetails?.vocabulary || `Essential thematic vocabulary and expressions to master.`),
+      methods: str((p1.contentDetails as any)?.methods, plan.contentDetails?.methods || `Reading and listening strategies, inference, drafting and revising.`),
+      techniques: str((p1.contentDetails as any)?.techniques, plan.contentDetails?.techniques || `Skimming, scanning, note-taking, paragraph building and peer editing.`),
+      disciplinarySkills: str((p1.contentDetails as any)?.disciplinarySkills, plan.contentDetails?.disciplinarySkills || `Listening, reading, speaking and writing skills prescribed by the IB MYP Language Acquisition guide.`),
+      mandatoryContent: str((p1.contentDetails as any)?.mandatoryContent, plan.contentDetails?.mandatoryContent || `Mandatory content of the IB MYP Language Acquisition curriculum for this phase.`),
+      selectedContent: str((p1.contentDetails as any)?.selectedContent, plan.contentDetails?.selectedContent || `Content selected for its relevance to the statement of inquiry.`),
+      nationalLinks: str((p1.contentDetails as any)?.nationalLinks, plan.contentDetails?.nationalLinks || `Correspondences and equivalences with the national English curriculum.`),
+    },
+
+    // H. ATL
+    atlSkills: (Array.isArray(p1.atlSkills) && p1.atlSkills.length > 0) ? (p1.atlSkills as string[]) : atlSeed,
+    atlDetails: ((p1.atlDetails as any[])?.length ? (p1.atlDetails as any[]) : (plan.atlDetails?.length ? plan.atlDetails : [
+      {
+        categorie: 'Communication',
+        competence: 'Communication skills',
+        sousCompetence: 'Read, write and use language to gather and communicate information',
+        objectifDeveloppement: 'Develop clear, structured expression adapted to different audiences and purposes',
+        activite: 'Role-plays, structured discussions, oral presentations and written productions',
+        methodeEnseignement: 'Explicit teaching of connectives, peer feedback and self-assessment checklists',
+        observation: 'Observation of fluency, accuracy and range of vocabulary',
+        reflexionEleve: 'Students record their progress in a language journal and assess their communication'
+      },
+      {
+        categorie: 'Thinking',
+        competence: 'Critical thinking',
+        sousCompetence: 'Analyse and evaluate issues and ideas',
+        objectifDeveloppement: 'Develop a critical and justified view of texts and issues',
+        activite: 'Comparison of sources, deconstruction of arguments and inference tasks',
+        methodeEnseignement: 'Socratic questioning, visible-thinking routines and analysis grids',
+        observation: 'Ability to justify opinions with evidence from texts',
+        reflexionEleve: 'Self-assessment of reasoning and identification of bias'
+      }
+    ])),
+
+    // I. Learning process (5 phases)
+    learningProcess: {
+      phase1_activation: str((p2.learningProcess as any)?.phase1_activation, plan.learningProcess?.phase1_activation || `Phase 1 - Activation of prior knowledge and engagement: hook activity with a provocative question linked to ${keyConceptVal.toLowerCase()}. Diagnostic assessment of prior knowledge and collection of students' hypotheses.`),
+      phase2_acquisition: str((p2.learningProcess as any)?.phase2_acquisition, plan.learningProcess?.phase2_acquisition || `Phase 2 - Acquisition of new language and strategies: guided inquiry, analysis of authentic texts and explicit teaching of key vocabulary and structures.`),
+      phase3_practice: str((p2.learningProcess as any)?.phase3_practice, plan.learningProcess?.phase3_practice || `Phase 3 - Guided and collaborative practice: progressive application workshops, cooperative teamwork and regular formative feedback to anchor skills.`),
+      phase4_transfer: str((p2.learningProcess as any)?.phase4_transfer, plan.learningProcess?.phase4_transfer || `Phase 4 - Independent application and transfer: autonomous reinvestment of learning in a complex communicative situation directly linked to the statement of inquiry and global context.`),
+      phase5_reflection: str((p2.learningProcess as any)?.phase5_reflection, plan.learningProcess?.phase5_reflection || `Phase 5 - Metacognitive reflection and review: individual reflective review of learning, self-assessment of ATL skills developed and consolidation of achievements.`),
+    },
+
+    // J. Experiences & strategies
+    learningExperiences: str(p2.learningExperiences, plan.learningExperiences || `Stimulating learning experiences combining inquiry, critical analysis of authentic texts and creative communicative productions.`),
+    teachingStrategies: str(p2.teachingStrategies, plan.teachingStrategies || `Active pedagogy, Socratic questioning, explicit teaching of language strategies and differentiated guidance.`),
+    studentActivities: str(p2.studentActivities, plan.studentActivities || `Text analysis, role-plays, structured debates, structured written productions and reflective reviews.`),
+
+    // K. Lessons
+    sessions: ((p2.sessions as any[])?.length ? (p2.sessions as any[]) : (plan.sessions?.length ? plan.sessions : Array.from({ length: 5 }, (_, i) => ({
+      numero: i + 1,
+      duree: '2h',
+      objectifApprentissage: [`Discovery of the unit and conceptual activation`, `Acquisition of key language and strategies`, `Guided practice and collaborative work`, `Independent application and summative preparation`, `Summative finalisation and metacognitive reflection`][i],
+      contenu: [`Framing of the key concept "${keyConceptVal}" and the statement of inquiry`, `Core vocabulary and text analysis`, `Application of strategies and scaffolded exercises`, `Inquiry project and complex communicative task`, `Summative assessment and reflective review`][i],
+      activite: [`Brainstorming and collective mind map`, `Guided close reading and summary`, `Cooperative workshops and progressive exercises`, `Production of an analysis or communicative task`, `Criterion-based presentation and self-assessment`][i],
+      roleEnseignant: ['Facilitator of questioning', 'Methodological guide', 'Coach', 'Consultant and mentor', 'Assessor according to IB criteria'][i],
+      roleEleves: ['Active inquirers', 'Methodical learners', 'Collaborative practitioners', 'Autonomous authors', 'Reflective assessors'][i],
+      atl: ['Communication skills', 'Research skills', 'Social skills', 'Critical-thinking skills', 'Self-management skills'][i],
+      evaluationFormative: ['Collection of initial questions', 'Formative check of summaries', 'Peer feedback', 'Individual progress check', 'Self-assessment on IB rubric'][i],
+      differenciation: ['Visual supports and glossary', 'Dual-level adapted texts', 'Guided roadmaps', 'Choice of production format', 'Adjusted time according to needs'][i],
+      ressources: ['Textbook, trigger texts', 'Text corpus, tool sheets', 'Progressive exercise sheets', 'Official criterion rubric', 'Student learning journal'][i],
+      questionsRecherche: plan.inquiryQuestions?.factual?.[i] || `Guiding question for lesson ${i + 1}`,
+      concepts: keyConceptVal,
+      strategie: 'Active inquiry approach',
+      technologie: 'Collaborative digital tools',
+      extensionAvances: 'Conceptual deepening challenges',
+      soutienDifficultes: 'Reinforced scaffolding and guidance',
+      preuveApprentissage: 'Written or recorded oral production',
+      reflexion: 'End-of-lesson progress check'
+    })))),
+
+    // L. Formative assessment
+    formativeAssessment: str(p1.formativeAssessment, plan.formativeAssessment || `Regular and continuous formative assessment: targeted observations, constructive feedback and regular self-assessment.`),
+    formativeDetails: ((p1.formativeDetails as any[])?.length ? (p1.formativeDetails as any[]) : (plan.formativeDetails?.length ? plan.formativeDetails : [
+      {
+        titre: 'Initial diagnostic assessment',
+        moment: 'Lessons 1-2 (Start of unit)',
+        objectifEvalue: 'Identify prior knowledge and initial representations',
+        activite: 'Mind map and interactive quiz',
+        criteres: `Criterion ${targetObjectives[0] || 'A'}`,
+        methodeEvaluation: 'Direct observation and oral regulation',
+        feedbackEnseignant: 'Immediate feedback on fundamental knowledge',
+        autoevaluation: 'Self-positioning on a confidence scale',
+        evaluationPairs: 'Pair discussion',
+        actionApres: 'Adjustment of the pace of the sequence'
+      },
+      {
+        titre: 'Mid-unit formative check',
+        moment: 'Lessons 3-4 (Mid-unit)',
+        objectifEvalue: 'Check language accuracy and strategy use',
+        activite: 'Short production and guided application',
+        criteres: `Criteria ${targetObjectives.join(' and ')}`,
+        methodeEvaluation: 'Annotated descriptive rubric',
+        feedbackEnseignant: 'Personalised advice for the summative task',
+        autoevaluation: 'IB self-assessment rubric',
+        evaluationPairs: 'Supportive peer assessment',
+        actionApres: 'Support and remediation workshops'
+      }
+    ])),
+
+    // M. Summative assessment
+    summativeAssessment: str(p1.summativeAssessment, plan.summativeAssessment || `Final criterion-based summative task assessing all the targeted objectives in connection with the statement of inquiry.`),
+    summativeDetails: {
+      titre: str((p1.summativeDetails as any)?.titre, plan.summativeDetails?.titre || `Final summative task: Production and analysis`),
+      contexte: str((p1.summativeDetails as any)?.contexte, plan.summativeDetails?.contexte || `Authentic situation rooted in the global context "${globalContextVal}".`),
+      situation: str((p1.summativeDetails as any)?.situation, plan.summativeDetails?.situation || `Complex communicative situation mobilising the knowledge and skills acquired.`),
+      consigne: str((p1.summativeDetails as any)?.consigne, plan.summativeDetails?.consigne || `Produce a well-argued, accurate piece of work meeting the IB assessment criteria.`),
+      productionAttendue: str((p1.summativeDetails as any)?.productionAttendue, plan.summativeDetails?.productionAttendue || `Written or oral production and structured comprehension answers with justification.`),
+      objectifsEvalues: targetObjectives,
+      criteresPEI: targetObjectives,
+      aspectsEvalues: targetObjectives.map(c => `Criterion ${c}: ${getStandardIBCriterion(plan.subject || '', c).aspectsFormatted}`).join('\n'),
+      niveauAttendu: str((p1.summativeDetails as any)?.niveauAttendu, `Level 5-6 /8 expected on average.`),
+      ressourcesAutorisees: str((p1.summativeDetails as any)?.ressourcesAutorisees, `Learning journal and strategy sheets.`),
+      duree: str((p1.summativeDetails as any)?.duree, `2 hours`),
+      modalites: str((p1.summativeDetails as any)?.modalites, `Individual work in class.`),
+      grilleCriteres: str((p1.summativeDetails as any)?.grilleCriteres, `Official level descriptors of the IB MYP Language Acquisition guide.`),
+      feedback: str((p1.summativeDetails as any)?.feedback, `Detailed criterion-based feedback given to the student.`),
+      possibiliteRevision: true,
+    },
+
+    // N. Differentiation
+    differentiation: str(p3.differentiation, plan.differentiation || `Complete differentiation plan guaranteeing the success of every student.`),
+    differentiationDetails: {
+      supportStudents: {
+        vocabulary: str((p3.differentiationDetails as any)?.supportStudents?.vocabulary, `Illustrated glossaries, vocabulary cards and visual summaries.`),
+        visualSupports: str((p3.differentiationDetails as any)?.supportStudents?.visualSupports, `Graphic organisers, infographics and concept maps.`),
+        models: str((p3.differentiationDetails as any)?.supportStudents?.models, `Annotated examples and model texts.`),
+        adaptedInstructions: str((p3.differentiationDetails as any)?.supportStudents?.adaptedInstructions, `Instructions segmented into simple steps and oral rephrasing.`),
+        intermediateSteps: str((p3.differentiationDetails as any)?.supportStudents?.intermediateSteps, `Guided roadmaps with self-checking milestones.`),
+        smallGroups: str((p3.differentiationDetails as any)?.supportStudents?.smallGroups, `Flexible needs-based groups and peer tutoring.`),
+        individualSupport: str((p3.differentiationDetails as any)?.supportStudents?.individualSupport, `Targeted help and personalised remediation check-ins.`),
+        extraTime: str((p3.differentiationDetails as any)?.supportStudents?.extraTime, `Extra time and adapted workload.`),
+        additionalResources: str((p3.differentiationDetails as any)?.supportStudents?.additionalResources, `Adapted resources with progressive difficulty levels.`),
+      },
+      advancedStudents: {
+        deepening: str((p3.differentiationDetails as any)?.advancedStudents?.deepening, `In-depth complementary readings and expert sources.`),
+        autonomousResearch: str((p3.differentiationDetails as any)?.advancedStudents?.autonomousResearch, `Autonomous inquiries on complex issues.`),
+        complexProblems: str((p3.differentiationDetails as any)?.advancedStudents?.complexProblems, `Open communicative situations with multiple variables.`),
+        challenges: str((p3.differentiationDetails as any)?.advancedStudents?.challenges, `Intellectual extension challenges and demanding creative projects.`),
+        transfer: str((p3.differentiationDetails as any)?.advancedStudents?.transfer, `Transfer of concepts to current global situations.`),
+        advancedProduction: str((p3.differentiationDetails as any)?.advancedStudents?.advancedProduction, `Advanced output formats (expert report, presentation).`),
+      },
+      contentDifferentiation: str((p3.differentiationDetails as any)?.contentDifferentiation, `Variety of texts and levels of complexity.`),
+      processDifferentiation: str((p3.differentiationDetails as any)?.processDifferentiation, `Flexible working modes and personalised pace.`),
+      productDifferentiation: str((p3.differentiationDetails as any)?.productDifferentiation, `Choice of mode of expression meeting the same IB criteria.`),
+    },
+
+    // O. Resources
+    resources: str(p3.resources, plan.resources || `Textbooks, authentic texts and media, multimedia resources, strategy sheets.`),
+
+    // P. Reflection
+    reflection: {
+      prior: str((p3.reflection as any)?.prior, plan.reflection?.prior || `Diagnostic assessment of prior knowledge and anticipation of conceptual difficulties.`),
+      during: str((p3.reflection as any)?.during, plan.reflection?.during || `Continuous observation of progress and formative regulation of pace.`),
+      after: str((p3.reflection as any)?.after, plan.reflection?.after || `Review of summative results and identification of areas for improvement.`),
+    },
+    reflectionDetails: {
+      before: {
+        priorKnowledge: str((p3.reflectionDetails as any)?.before?.priorKnowledge, `Diagnostic assessment of students' prior knowledge.`),
+        studentNeeds: str((p3.reflectionDetails as any)?.before?.studentNeeds, `Consideration of learning profiles and individual needs.`),
+        anticipatedDifficulties: str((p3.reflectionDetails as any)?.before?.anticipatedDifficulties, `Anticipated conceptual obstacles and specialised vocabulary.`),
+        relevance: str((p3.reflectionDetails as any)?.before?.relevance, `Anchoring in learners' experiences and realities.`),
+        previousLinks: str((p3.reflectionDetails as any)?.before?.previousLinks, `Links with the concepts of previous units.`),
+        plannedStrategies: str((p3.reflectionDetails as any)?.before?.plannedStrategies, `Deliberate choice of inquiry and scaffolding strategies.`),
+        plannedDifferentiation: str((p3.reflectionDetails as any)?.before?.plannedDifferentiation, `Proactive planning of support and extension measures.`),
+        expectedOutcomes: str((p3.reflectionDetails as any)?.before?.expectedOutcomes, `Clear success indicators for each IB criterion.`),
+      },
+      during: {
+        progressObserved: str((p3.reflectionDetails as any)?.during?.progressObserved, `Continuous observation of concept acquisition and ATL skills.`),
+        difficulties: str((p3.reflectionDetails as any)?.during?.difficulties, `Real-time management of blockages and misunderstandings.`),
+        effectiveStrategies: str((p3.reflectionDetails as any)?.during?.effectiveStrategies, `Teaching approaches that generated strong engagement and progress.`),
+        ineffectiveStrategies: str((p3.reflectionDetails as any)?.during?.ineffectiveStrategies, `Activities requiring adjustment or simplification.`),
+        studentParticipation: str((p3.reflectionDetails as any)?.during?.studentParticipation, `Level of engagement, autonomy and collaboration of students.`),
+        adjustmentsMade: str((p3.reflectionDetails as any)?.during?.adjustmentsMade, `Changes to pace, resources or groupings.`),
+        planningChanges: str((p3.reflectionDetails as any)?.during?.planningChanges, `Adaptations of the planned lesson calendar.`),
+        emergingNeeds: str((p3.reflectionDetails as any)?.during?.emergingNeeds, `New needs identified requiring remediation.`),
+      },
+      after: {
+        achievedObjectives: str((p3.reflectionDetails as any)?.after?.achievedObjectives, `Review of criteria and skills fully mastered by the majority.`),
+        partialObjectives: str((p3.reflectionDetails as any)?.after?.partialObjectives, `Partially achieved objectives requiring reinvestment.`),
+        studentDifficulties: str((p3.reflectionDetails as any)?.after?.studentDifficulties, `Persistent points of vigilance to record for the future.`),
+        assessmentResults: str((p3.reflectionDetails as any)?.after?.assessmentResults, `Qualitative and quantitative analysis of summative results.`),
+        activityEfficiency: str((p3.reflectionDetails as any)?.after?.activityEfficiency, `Evaluation of the relevance of the tasks and experiences proposed.`),
+        teachingEfficiency: str((p3.reflectionDetails as any)?.after?.teachingEfficiency, `Self-evaluation of teaching practices.`),
+        differentiationEfficiency: str((p3.reflectionDetails as any)?.after?.differentiationEfficiency, `Measured impact of differentiation measures.`),
+        successes: str((p3.reflectionDetails as any)?.after?.successes, `Main successes of the unit to consolidate and share.`),
+        improvements: str((p3.reflectionDetails as any)?.after?.improvements, `Concrete improvement paths for the next iteration.`),
+        modificationsNext: str((p3.reflectionDetails as any)?.after?.modificationsNext, `Priority changes to integrate into the unit plan.`),
+        elementsToKeep: str((p3.reflectionDetails as any)?.after?.elementsToKeep, `Essential activities, resources and hooks to keep.`),
+        elementsToRemove: str((p3.reflectionDetails as any)?.after?.elementsToRemove, `Sequences that were too heavy or not stimulating to remove.`),
+        elementsToAdd: str((p3.reflectionDetails as any)?.after?.elementsToAdd, `New resources or interdisciplinary bridges to add.`),
+      },
+    },
+
+    // Q. Coherence
+    verticalCoherenceText: str(p3.verticalCoherence, `Continuity of skills and concepts with previous and following MYP years.`),
+    horizontalCoherenceText: str(p3.horizontalCoherence, `Synergies and resonances with other subjects of the same MYP year.`),
+    verticalCoherence: {
+      before: str((p3.verticalCoherenceDetails as any)?.before, `Builds on the achievements of previous MYP units.`),
+      during: str((p3.verticalCoherenceDetails as any)?.during, `Develops the specific skills of ${plan.gradeLevel || 'this MYP year'}.`),
+      after: str((p3.verticalCoherenceDetails as any)?.after, `Prepares the methodological and conceptual requirements of higher phases.`),
+    },
+    horizontalCoherence: {
+      otherSubjectLinks: str((p3.horizontalCoherenceDetails as any)?.otherSubjectLinks, `Connections with other subjects sharing the same key concept.`),
+      commonConcepts: str((p3.horizontalCoherenceDetails as any)?.commonConcepts, `${keyConceptVal} and transversal related concepts`),
+      commonATL: str((p3.horizontalCoherenceDetails as any)?.commonATL, `Communication and research skills`),
+      commonProjects: str((p3.horizontalCoherenceDetails as any)?.commonProjects, `Integrated projects and interdisciplinary assessment tasks`),
+      transversalSkills: str((p3.horizontalCoherenceDetails as any)?.transversalSkills, `Concerted development of inquiry and critical-thinking skills.`),
+    },
+
+    // R. Interdisciplinary links
+    interdisciplinaryLinksText: str(p1.interdisciplinaryLinks, `Active interdisciplinary links exploring conceptual resonances with other MYP subjects.`),
+
+    // Markers
+    lastDetailUpdate: new Date().toISOString().slice(0, 10),
+    isDetailUpdate: true,
+  };
+
+  return result;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TYPES ET CONSTANTES DU CALENDRIER ANNUEL
 // ─────────────────────────────────────────────────────────────────────────────
 export interface CalendarWeek {
@@ -5078,7 +5838,30 @@ export const structureChaptersWithAI = async (
   unitTitle?: string
 ): Promise<string> => {
   try {
-    const prompt = `
+    const prompt = isLanguageAcquisition(subject) ? `
+You are an IB MYP Language Acquisition (English) expert for the subject "${subject}" (Year: ${gradeLevel}).
+Task: Organise and structure the following content into several distinct chapters, each with 2 to 4 specific lessons. EVERYTHING must be written in ENGLISH.
+
+Unit title: "${unitTitle || 'Learning unit'}"
+Raw text or notions:
+"""
+${rawContent}
+"""
+
+MANDATORY OUTPUT FORMAT (PLAIN TEXT ONLY, no code block markdown, no comments):
+Chapter 1: [Representative title of chapter 1]
+- Lesson 1: [Precise title of lesson 1]
+- Lesson 2: [Precise title of lesson 2]
+- Lesson 3: [Precise title of lesson 3]
+Chapter 2: [Representative title of chapter 2]
+- Lesson 1: [Precise title of lesson 1]
+- Lesson 2: [Precise title of lesson 2]
+
+Rules:
+1. Create at least 2 chapters (ideally 2 to 3 chapters per unit).
+2. Each chapter MUST contain at least 2 lessons in the format "- Lesson X: ...".
+3. Be precise, concrete and adapted to the year level.
+` : `
 Tu es un expert pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB pour la matière "${subject}" (Niveau: ${gradeLevel}).
 Tâche : Organise et structure le contenu suivant en plusieurs chapitres distincts, avec pour chaque chapitre 2 à 4 leçons spécifiques.
 
@@ -5111,6 +5894,25 @@ Règles :
     console.error('Erreur structureChaptersWithAI:', e);
     // Fallback heuristique local sans crash
     const lines = (rawContent || '').split(/\n|[.;]/).map(s => s.trim()).filter(Boolean);
+    if (isLanguageAcquisition(subject)) {
+      if (lines.length >= 4) {
+        const half = Math.ceil(lines.length / 2);
+        return [
+          `Chapter 1: Core notions`,
+          ...lines.slice(0, half).map((l, i) => `- Lesson ${i + 1}: ${l}`),
+          `Chapter 2: Deepening and applications`,
+          ...lines.slice(half).map((l, i) => `- Lesson ${i + 1}: ${l}`)
+        ].join('\n');
+      }
+      return [
+        `Chapter 1: Introduction and foundations`,
+        `- Lesson 1: Discovering the notions`,
+        `- Lesson 2: Analysis and methodology`,
+        `Chapter 2: Application and assessment`,
+        `- Lesson 1: Practical tasks and production`,
+        `- Lesson 2: Synthesis and consolidation`
+      ].join('\n');
+    }
     if (lines.length >= 4) {
       const half = Math.ceil(lines.length / 2);
       return [

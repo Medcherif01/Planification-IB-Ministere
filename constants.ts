@@ -31,6 +31,78 @@ export const GLOBAL_CONTEXTS = [
   "Équité et développement"
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGLISH VERSIONS — used for "Acquisition de langues" (Language Acquisition /
+// English). For this subject the whole unit plan, assessments and overview are
+// produced in ENGLISH (IB MYP official terminology).
+// ─────────────────────────────────────────────────────────────────────────────
+export const KEY_CONCEPTS_EN = [
+  "Aesthetics", "Change", "Communication", "Communities",
+  "Connections", "Creativity", "Culture", "Development",
+  "Form", "Global interactions", "Identity", "Logic",
+  "Perspective", "Relationships", "Systems", "Time, place and space"
+];
+
+// Official IB MYP Language Acquisition related concepts
+export const RELATED_CONCEPTS_LANGUAGE_ACQUISITION_EN = [
+  "Accent", "Argument", "Audience", "Bias", "Context", "Conventions",
+  "Empathy", "Form", "Function", "Idiom", "Inference", "Meaning",
+  "Message", "Patterns", "Point of view", "Purpose", "Structure",
+  "Stylistic choices", "Theme", "Voice", "Word choice"
+];
+
+export const GLOBAL_CONTEXTS_EN = [
+  "Identities and relationships",
+  "Orientation in space and time",
+  "Personal and cultural expression",
+  "Scientific and technical innovation",
+  "Globalization and sustainability",
+  "Fairness and development"
+];
+
+// French ⇄ English mapping of global contexts (to normalise legacy data)
+export const GLOBAL_CONTEXT_FR_TO_EN: Record<string, string> = {
+  "Identités et relations": "Identities and relationships",
+  "Orientation dans l'espace et dans le temps": "Orientation in space and time",
+  "Expression personnelle et culturelle": "Personal and cultural expression",
+  "Innovation scientifique et technique": "Scientific and technical innovation",
+  "Mondialisation et durabilité": "Globalization and sustainability",
+  "Équité et développement": "Fairness and development",
+};
+
+// French ⇄ English mapping of key concepts
+export const KEY_CONCEPT_FR_TO_EN: Record<string, string> = {
+  "Esthétique": "Aesthetics", "Changement": "Change", "Communication": "Communication",
+  "Communautés": "Communities", "Connexions": "Connections", "Liens": "Connections",
+  "Créativité": "Creativity", "Culture": "Culture", "Développement": "Development",
+  "Forme": "Form", "Interactions mondiales": "Global interactions", "Identité": "Identity",
+  "Logique": "Logic", "Perspective": "Perspective", "Relations": "Relationships",
+  "Systèmes": "Systems", "Temps, lieu et espace": "Time, place and space",
+};
+
+/** Detects the Language Acquisition / English subject (content generated in English). */
+export const isEnglishSubject = (subject?: string): boolean => {
+  const n = (subject || '').toLowerCase().trim();
+  return (n.includes('acquisition') && (n.includes('langue') || n.includes('language'))) ||
+         n.includes('anglais') || n.includes('english');
+};
+
+/** Returns the concept / context option lists adapted to the subject language. */
+export const getConceptListsForSubject = (subject?: string) => {
+  if (isEnglishSubject(subject)) {
+    return {
+      keyConcepts: KEY_CONCEPTS_EN,
+      relatedConcepts: RELATED_CONCEPTS_LANGUAGE_ACQUISITION_EN,
+      globalContexts: GLOBAL_CONTEXTS_EN,
+    };
+  }
+  return {
+    keyConcepts: KEY_CONCEPTS,
+    relatedConcepts: RELATED_CONCEPTS_GENERIC,
+    globalContexts: GLOBAL_CONTEXTS,
+  };
+};
+
 export const SUBJECTS = [
   "Langue et littérature",
   "Acquisition de langues",

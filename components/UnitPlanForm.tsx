@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail } from '../types';
-import { KEY_CONCEPTS, RELATED_CONCEPTS_GENERIC, GLOBAL_CONTEXTS, SUBJECTS } from '../constants';
+import { SUBJECTS, getConceptListsForSubject } from '../constants';
 import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan, updateUnitFromConceptsAndObjectives, sanitizeUnitPlan } from '../services/geminiService';
 import { normalizeCriterionLetter, extractCriteriaLetters, getStandardIBCriterion, formatCriterionFullName, syncAssessmentsWithTargetCriteria } from '../services/ibCriteriaService';
 import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock } from 'lucide-react';
@@ -67,6 +67,9 @@ const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave,
   });
 
   const [allowUnlock, setAllowUnlock] = useState(false);
+
+  // Listes de concepts / contextes adaptées à la langue de la matière (anglais pour Acquisition de langues)
+  const { keyConcepts: KEY_CONCEPTS, relatedConcepts: RELATED_CONCEPTS_GENERIC, globalContexts: GLOBAL_CONTEXTS } = getConceptListsForSubject(plan.subject);
 
   // Synchroniser le plan lorsque initialPlan change (notamment après génération IA)
   useEffect(() => {

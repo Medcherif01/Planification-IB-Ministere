@@ -598,8 +598,73 @@ export const STANDARD_IB_CRITERIA_BY_SUBJECT: Record<string, Record<'A'|'B'|'C'|
       formativeAssessment: "Auto-positionnement sur carnet de bord après chaque séance.",
       summativeAssessment: "Bilan réflexif écrit ou oral sur la progression motrice et les perspectives d'amélioration."
     }
+  },
+  // Language Acquisition (English / Language B) — official IB MYP criteria, generated in ENGLISH
+  acquisition_langues: {
+    A: {
+      name: 'Listening',
+      strands: [
+        "i. Identify explicit and implicit information (facts, opinions, messages and supporting details)",
+        "ii. Analyse conventions",
+        "iii. Analyse connections"
+      ],
+      aspectsFormatted: "i. Identify explicit and implicit information (facts, opinions, messages and supporting details); ii. Analyse conventions; iii. Analyse connections.",
+      expectedLevel: 'Level 5-6 expected /8',
+      activities: "Guided listening to authentic audio and video texts, note-taking, identification of speaker purpose and audience, and discussion of cultural references.",
+      formativeAssessment: "Short listening quizzes, comprehension grids and peer discussion of key messages.",
+      summativeAssessment: "Listening comprehension task on an authentic spoken text with explicit/implicit questions and analysis of conventions and connections."
+    },
+    B: {
+      name: 'Reading',
+      strands: [
+        "i. Identify explicit and implicit information (facts, opinions, messages and supporting details)",
+        "ii. Analyse conventions",
+        "iii. Analyse connections"
+      ],
+      aspectsFormatted: "i. Identify explicit and implicit information (facts, opinions, messages and supporting details); ii. Analyse conventions; iii. Analyse connections.",
+      expectedLevel: 'Level 5-6 expected /8',
+      activities: "Close reading of authentic written and visual texts, skimming and scanning strategies, vocabulary in context and analysis of text-type conventions.",
+      formativeAssessment: "Reading comprehension exit tickets, graphic organisers and vocabulary logs.",
+      summativeAssessment: "Reading comprehension test on an authentic text with explicit/implicit information questions and analysis of conventions and connections."
+    },
+    C: {
+      name: 'Speaking',
+      strands: [
+        "i. Use a wide range of vocabulary",
+        "ii. Use a wide range of grammatical structures generally accurately",
+        "iii. Use clear pronunciation and intonation in a comprehensible manner",
+        "iv. Communicate all the required information clearly and effectively"
+      ],
+      aspectsFormatted: "i. Use a wide range of vocabulary; ii. Use a wide range of grammatical structures generally accurately; iii. Use clear pronunciation and intonation in a comprehensible manner; iv. Communicate all the required information clearly and effectively.",
+      expectedLevel: 'Level 5-6 expected /8',
+      activities: "Role-plays, structured debates, oral presentations, interviews and pronunciation drills with peer feedback.",
+      formativeAssessment: "Recorded speaking practice with self-assessment checklists and teacher feedback on fluency and accuracy.",
+      summativeAssessment: "Individual oral presentation or interactive oral task assessed on vocabulary, grammar, pronunciation and communication."
+    },
+    D: {
+      name: 'Writing',
+      strands: [
+        "i. Use a wide range of vocabulary",
+        "ii. Use a wide range of grammatical structures generally accurately",
+        "iii. Organize information effectively and coherently in an appropriate format using a wide range of cohesive devices",
+        "iv. Communicate all the required information with a clear sense of audience and purpose to suit the context"
+      ],
+      aspectsFormatted: "i. Use a wide range of vocabulary; ii. Use a wide range of grammatical structures generally accurately; iii. Organize information effectively and coherently in an appropriate format using a wide range of cohesive devices; iv. Communicate all the required information with a clear sense of audience and purpose to suit the context.",
+      expectedLevel: 'Level 5-6 expected /8',
+      activities: "Process writing workshops (planning, drafting, peer editing), text-type modelling and cohesive-device practice.",
+      formativeAssessment: "Draft reviews with rubric-based peer feedback and targeted grammar/vocabulary checks.",
+      summativeAssessment: "Written production (letter, article, blog post, story) assessed on vocabulary, grammar, organisation and audience awareness."
+    }
   }
 };
+
+/**
+ * Détecte si la matière est "Acquisition de langues" (Anglais / Language B) →
+ * tout le contenu (plan, évaluations, overview) est produit en ANGLAIS.
+ */
+export function isLanguageAcquisitionSubject(subjectName?: string): boolean {
+  return getSubjectCategory(subjectName) === 'acquisition_langues';
+}
 
 /**
  * Trouver la catégorie de matière correspondante
@@ -679,6 +744,9 @@ export function extractCriteriaLetters(objectives: any[]): ('A' | 'B' | 'C' | 'D
  */
 export function formatCriterionFullName(subject: string, letter: 'A' | 'B' | 'C' | 'D'): string {
   const std = getStandardIBCriterion(subject, letter);
+  if (isLanguageAcquisitionSubject(subject)) {
+    return `Criterion ${letter}: ${std.name}`;
+  }
   return `Critère ${letter}: ${std.name}`;
 }
 
@@ -696,6 +764,40 @@ export function createFallbackAssessmentForCriterion(
 ): AssessmentData {
   const std = getStandardIBCriterion(subject, criterion);
   const title = customName?.trim() || std.name;
+
+  // ── Language Acquisition: fully ENGLISH fallback assessment ─────────────
+  if (isLanguageAcquisitionSubject(subject)) {
+    const enStrands = std.strands && std.strands.length >= 3 ? std.strands : [
+      `i. Identify and explain the key ideas related to ${title}`,
+      `ii. Apply appropriate language strategies`,
+      `iii. Analyse and interpret information accurately`,
+      `iv. Reflect on the validity and scope of conclusions`
+    ];
+    const enRubric = [
+      { level: '1-2', descriptor: `The student demonstrates limited ${title.toLowerCase()} skills and communicates with considerable support.` },
+      { level: '3-4', descriptor: `The student demonstrates basic ${title.toLowerCase()} skills and completes simple tasks with some accuracy.` },
+      { level: '5-6', descriptor: `The student demonstrates good ${title.toLowerCase()} skills and completes varied tasks with generally accurate language.` },
+      { level: '7-8', descriptor: `The student demonstrates excellent ${title.toLowerCase()} skills, communicating clearly, accurately and effectively in a range of contexts.` }
+    ];
+    const enTopic = unitTitle ? `"${unitTitle}"` : 'this unit';
+    const enDots = "\n\nAnswer:\n.........................................................\n.........................................................\n.........................................................";
+    const enExercises = [
+      {
+        title: `Task 1 – Understanding and use of language (Criterion ${criterion})`,
+        content: `In the context of the unit ${enTopic}, show your ${title.toLowerCase()} skills.\n\n1. Read/listen carefully to the source provided and identify the main ideas, supporting details and the author's purpose.${enDots}`,
+        criterionReference: `Criterion ${criterion}: ${enStrands[0] ? enStrands[0].split('.')[0].trim() : 'i'}, ${enStrands[1] ? enStrands[1].split('.')[0].trim() : 'ii'}`,
+        workspaceNeeded: true,
+      },
+      {
+        title: `Task 2 – Analysis and communication (Criterion ${criterion})`,
+        content: `Complete the following task related to ${enTopic}, justifying your answers with evidence from the text or your own ideas.\n\n2. Analyse the conventions used and explain the connections with your own experience or culture.${enDots}`,
+        criterionReference: `Criterion ${criterion}: ${enStrands[2] ? enStrands[2].split('.')[0].trim() : 'iii'}${enStrands[3] ? ', ' + enStrands[3].split('.')[0].trim() : ''}`,
+        workspaceNeeded: true,
+      }
+    ];
+    return { criterion, criterionName: title, maxPoints: 8, strands: enStrands, rubricRows: enRubric, exercises: enExercises };
+  }
+
   const strands = std.strands && std.strands.length >= 3 ? std.strands : [
     `i. Identifier et expliciter les notions fondamentales de ${title}`,
     `ii. Appliquer les démarches et méthodes adaptées`,
