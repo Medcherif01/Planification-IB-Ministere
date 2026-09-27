@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, ShieldCheck, ChevronRight, Check } from 'lucide-react';
-import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData } from '../types';
+import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon } from 'lucide-react';
+import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
 
@@ -20,6 +20,39 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   C: { bg: 'bg-amber-50',   border: 'border-amber-300',  text: 'text-amber-800',   badge: 'bg-amber-600',   light: 'bg-amber-100' },
   D: { bg: 'bg-rose-50',    border: 'border-rose-300',   text: 'text-rose-800',    badge: 'bg-rose-600',    light: 'bg-rose-100' },
 };
+
+const ARTWORK_PRESETS = [
+  {
+    name: 'La Nuit étoilée (Van Gogh)',
+    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg/800px-Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg',
+    caption: 'La Nuit étoilée, Vincent van Gogh (1889), Huile sur toile, MoMA New York'
+  },
+  {
+    name: 'La Joconde (Léonard de Vinci)',
+    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/800px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg',
+    caption: 'Mona Lisa (La Joconde), Léonard de Vinci (1503-1506), Musée du Louvre'
+  },
+  {
+    name: 'La Grande Vague de Kanagawa (Hokusai)',
+    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Tsunami_by_hokusai_19th_century.jpg/800px-Tsunami_by_hokusai_19th_century.jpg',
+    caption: 'La Grande Vague de Kanagawa, Katsushika Hokusai (vers 1831), Estampe japonaise'
+  },
+  {
+    name: 'Calligraphie Arabe Koufique',
+    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Kufic_script_in_blue_Quran.jpg/800px-Kufic_script_in_blue_Quran.jpg',
+    caption: 'Coran Bleu, Calligraphie en écriture koufique dorée sur parchemin teinté à l\'indigo (IXe siècle)'
+  },
+  {
+    name: 'Art Islamique - Géométrie & Mosaïque',
+    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Alhambra_Mosaics.jpg/800px-Alhambra_Mosaics.jpg',
+    caption: 'Motif géométrique et arabesque en zellige, Palais de l\'Alhambra, Grenade'
+  },
+  {
+    name: 'Guernica (Pablo Picasso)',
+    url: 'https://upload.wikimedia.org/wikipedia/en/7/74/PicassoGuernica.jpg',
+    caption: 'Guernica, Pablo Picasso (1937), Musée Reina Sofía Madrid'
+  }
+];
 
 const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   currentSubject,
@@ -41,6 +74,11 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [customTitle, setCustomTitle] = useState('');
   const [customDuration, setCustomDuration] = useState('45');
   const [customInstructions, setCustomInstructions] = useState('Répondez de manière structurée et détaillée à chaque question.');
+
+  // Question editing modal
+  const [editingEvaluation, setEditingEvaluation] = useState<OnlineEvaluation | null>(null);
+  const [editingCriterionIdx, setEditingCriterionIdx] = useState(0);
+  const [isSavingEvalChanges, setIsSavingEvalChanges] = useState(false);
 
   // Submissions view & correction
   const [selectedEvaluation, setSelectedEvaluation] = useState<OnlineEvaluation | null>(null);
@@ -142,6 +180,82 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       setSelectedEvaluation(null);
       setSubmissions([]);
     }
+  };
+
+  // Enregistrer les modifications de questions de l'évaluation
+  const handleSaveEditedEvaluation = async () => {
+    if (!editingEvaluation) return;
+    setIsSavingEvalChanges(true);
+    try {
+      const updated = await createOrUpdateEvaluation(editingEvaluation);
+      setEvaluations(prev => prev.map(e => e.id === updated.id ? updated : e));
+      if (selectedEvaluation?.id === updated.id) {
+        setSelectedEvaluation(updated);
+      }
+      setEditingEvaluation(null);
+      alert('✅ Évaluation et questions mises à jour avec succès !');
+    } catch (err: any) {
+      alert(`Erreur : ${err.message || 'Impossible d\'enregistrer'}`);
+    } finally {
+      setIsSavingEvalChanges(false);
+    }
+  };
+
+  // Ajouter une nouvelle question dans le critère sélectionné
+  const handleAddQuestionToEditingEval = (critIndex: number) => {
+    if (!editingEvaluation) return;
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    const targetCrit = newEval.assessments[critIndex];
+    if (!targetCrit) return;
+
+    const count = (targetCrit.exercises || []).length + 1;
+    const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+    const roman = romanNumerals[(count - 1) % romanNumerals.length];
+    const defaultStrandText = targetCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || `Compétence ${targetCrit.criterion}`;
+
+    const newExercise: AssessmentExercise = {
+      title: `Tâche ${count} : Question d'évaluation`,
+      content: 'Consigne détaillée de la question...',
+      criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+      strandIndex: roman,
+      strandText: defaultStrandText,
+      type: 'open',
+      options: ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'],
+      correctAnswer: 'Proposition A',
+    };
+
+    if (!targetCrit.exercises) targetCrit.exercises = [];
+    targetCrit.exercises.push(newExercise);
+    setEditingEvaluation(newEval);
+  };
+
+  // Mettre à jour une question
+  const handleUpdateEditingExercise = (
+    critIdx: number,
+    exIdx: number,
+    updates: Partial<AssessmentExercise>
+  ) => {
+    if (!editingEvaluation) return;
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    const targetCrit = newEval.assessments[critIdx];
+    if (!targetCrit || !targetCrit.exercises[exIdx]) return;
+
+    targetCrit.exercises[exIdx] = {
+      ...targetCrit.exercises[exIdx],
+      ...updates,
+    };
+    setEditingEvaluation(newEval);
+  };
+
+  // Supprimer une question
+  const handleDeleteEditingExercise = (critIdx: number, exIdx: number) => {
+    if (!editingEvaluation) return;
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    const targetCrit = newEval.assessments[critIdx];
+    if (!targetCrit) return;
+
+    targetCrit.exercises.splice(exIdx, 1);
+    setEditingEvaluation(newEval);
   };
 
   // Créer une nouvelle évaluation en ligne depuis une unité
@@ -422,22 +536,36 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                       </div>
 
                       {/* Boutons actions principales */}
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          onClick={() => handleOpenSubmissions(ev)}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow transition"
-                        >
-                          <Eye size={14} /> Copies d'élèves
-                        </button>
+                      <div className="flex flex-col gap-2 pt-1">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleOpenSubmissions(ev)}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow transition"
+                          >
+                            <Eye size={14} /> Copies d'élèves
+                          </button>
+                          <button
+                            onClick={() => {
+                              setPrintEvaluation(ev);
+                              setPrintSubmission(null);
+                            }}
+                            className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition"
+                            title="Imprimer le sujet au format A4 (Marges 1 cm, PDF / HTML)"
+                          >
+                            <Printer size={15} />
+                          </button>
+                        </div>
+
+                        {/* Personnalisation des questions, types et oeuvres d'art */}
                         <button
                           onClick={() => {
-                            setPrintEvaluation(ev);
-                            setPrintSubmission(null);
+                            setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
+                            setEditingCriterionIdx(0);
                           }}
-                          className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition"
-                          title="Imprimer le sujet au format A4 (Marges 1 cm)"
+                          className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition border border-indigo-200"
+                          title="Modifier les questions, types (Vrai/Faux, QCM), oeuvres d'art et sous-aspects"
                         >
-                          <Printer size={15} />
+                          <Edit3 size={13} /> Modifier questions & types (Vrai/Faux, QCM, Art)
                         </button>
                       </div>
                     </div>
@@ -875,6 +1003,420 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               setPrintSubmission(null);
             }}
           />
+        )}
+
+        {/* ── MODALE ÉDITION DES QUESTIONS & TYPES D'ÉVALUATION ── */}
+        {editingEvaluation && (
+          <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden animate-fadeIn my-auto border border-slate-200">
+              
+              {/* Header */}
+              <div className="bg-gradient-to-r from-indigo-800 via-purple-800 to-indigo-900 p-5 text-white flex items-center justify-between gap-4 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center font-bold text-lg">
+                    ✏️
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300 bg-purple-700/60 px-2 py-0.5 rounded">
+                      Configuration des Questions & Types
+                    </span>
+                    <h3 className="text-base font-black mt-0.5">
+                      {editingEvaluation.title} ({editingEvaluation.accessCode})
+                    </h3>
+                    <p className="text-xs text-purple-200">
+                      Ajoutez des questions, changez le type (Vrai/Faux, QCM, Rédaction), associez des oeuvres d'art et assignez le sous-aspect précis (i, ii, iii...).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setEditingEvaluation(null)}
+                    className="p-2 text-white/70 hover:text-white rounded-xl hover:bg-white/10 transition"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Paramètres généraux rapides */}
+              <div className="bg-slate-50 border-b border-slate-200 p-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Titre de l'évaluation :
+                  </label>
+                  <input
+                    type="text"
+                    value={editingEvaluation.title}
+                    onChange={e => setEditingEvaluation({ ...editingEvaluation, title: e.target.value })}
+                    className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Durée conseillée (minutes) :
+                  </label>
+                  <input
+                    type="number"
+                    value={editingEvaluation.durationMinutes || 45}
+                    onChange={e => setEditingEvaluation({ ...editingEvaluation, durationMinutes: parseInt(e.target.value) || 45 })}
+                    className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Code d'accès élèves :
+                  </label>
+                  <span className="inline-block py-2 px-3 bg-purple-100 text-purple-900 font-mono font-bold rounded-lg text-xs">
+                    {editingEvaluation.accessCode}
+                  </span>
+                </div>
+              </div>
+
+              {/* Navigation par critère */}
+              <div className="flex border-b border-slate-200 bg-white px-4 pt-2 overflow-x-auto gap-2">
+                {editingEvaluation.assessments.map((crit, idx) => {
+                  const colors = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
+                  const isCurrent = editingCriterionIdx === idx;
+                  return (
+                    <button
+                      key={crit.criterion}
+                      onClick={() => setEditingCriterionIdx(idx)}
+                      className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-bold text-xs border-b-2 transition ${
+                        isCurrent
+                          ? `border-purple-600 text-purple-900 bg-purple-50/70`
+                          : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className={`w-5 h-5 rounded ${colors.badge} text-white font-black text-[10px] flex items-center justify-center`}>
+                        {crit.criterion}
+                      </span>
+                      <span>Critère {crit.criterion}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                        {crit.exercises?.length || 0} tâche(s)
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Contenu du critère actif */}
+              {(() => {
+                const activeCrit = editingEvaluation.assessments[editingCriterionIdx];
+                if (!activeCrit) return null;
+                const colors = CRITERION_COLORS[activeCrit.criterion] || CRITERION_COLORS.A;
+
+                return (
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {/* Bannière du critère */}
+                    <div className={`p-4 rounded-2xl border ${colors.border} ${colors.bg} flex items-center justify-between gap-4`}>
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-900">
+                          Critère {activeCrit.criterion} : {activeCrit.criterionName}
+                        </h4>
+                        <p className="text-xs text-slate-600 mt-0.5">
+                          Échelle : 1-{activeCrit.maxPoints || 8} points · {activeCrit.exercises?.length || 0} question(s) enregistrée(s)
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => handleAddQuestionToEditingEval(editingCriterionIdx)}
+                        className="flex items-center gap-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs shadow transition"
+                      >
+                        <Plus size={15} /> Ajouter une question
+                      </button>
+                    </div>
+
+                    {/* Liste des questions */}
+                    <div className="space-y-5">
+                      {(activeCrit.exercises || []).map((ex, exIdx) => {
+                        const qType = ex.type || 'open';
+                        const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+
+                        return (
+                          <div
+                            key={exIdx}
+                            className="bg-white rounded-2xl p-5 border border-slate-300 shadow-xs space-y-4 hover:border-purple-300 transition"
+                          >
+                            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold text-white ${colors.badge}`}>
+                                  Question {exIdx + 1}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={ex.title}
+                                  onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { title: e.target.value })}
+                                  placeholder="Titre de la tâche..."
+                                  className="font-bold text-sm text-slate-800 border-b border-dashed border-slate-300 focus:border-purple-600 focus:outline-none px-1 py-0.5"
+                                />
+                              </div>
+
+                              <button
+                                onClick={() => handleDeleteEditingExercise(editingCriterionIdx, exIdx)}
+                                className="text-slate-400 hover:text-rose-600 p-1 transition"
+                                title="Supprimer cette question"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+
+                            {/* 🔴 CONFIGURATION DU SOUS-ASPECT INDIVIDUEL (EN ROUGE) */}
+                            <div className="bg-red-50/70 border border-red-200 rounded-xl p-3 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[11px] font-black text-red-700 uppercase tracking-wide flex items-center gap-1">
+                                  <span>●</span> Sous-aspect individuel (précisé en rouge sous la question) :
+                                </label>
+                                <span className="text-[10px] text-red-600 italic">
+                                  Un seul sous-aspect par question (pas d'aspects groupés)
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                                <div>
+                                  <select
+                                    value={ex.strandIndex || romanNumerals[exIdx % romanNumerals.length]}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      const matchedDesc = activeCrit.strands?.find(s => s.toLowerCase().startsWith(`${val}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                        strandIndex: val,
+                                        strandText: matchedDesc || ex.strandText || '',
+                                        criterionReference: `Critère ${activeCrit.criterion} : ${val}.`,
+                                      });
+                                    }}
+                                    className="w-full p-2 bg-white border border-red-300 rounded-lg text-xs font-bold text-red-800 focus:outline-none"
+                                  >
+                                    {romanNumerals.map(r => (
+                                      <option key={r} value={r}>
+                                        Sous-aspect ({r})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="sm:col-span-3">
+                                  <input
+                                    type="text"
+                                    value={ex.strandText || ''}
+                                    onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { strandText: e.target.value })}
+                                    placeholder="Description de la compétence évaluée (ex: appliquer les concepts mathématiques...)"
+                                    className="w-full p-2 bg-white border border-red-300 rounded-lg text-xs font-medium text-red-900 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* ⚙️ TYPE DE QUESTION */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
+                                  Type de question :
+                                </label>
+                                <select
+                                  value={qType}
+                                  onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { type: e.target.value as any })}
+                                  className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none"
+                                >
+                                  <option value="open">📝 Rédaction libre (avec outils maths/géométrie)</option>
+                                  <option value="true_false">⚖️ Vrai ou Faux</option>
+                                  <option value="multiple_choice">☑️ Choix multiples (QCM)</option>
+                                </select>
+                              </div>
+
+                              {/* Options pour Vrai / Faux */}
+                              {qType === 'true_false' && (
+                                <div className="sm:col-span-2">
+                                  <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
+                                    Bonne réponse attendue :
+                                  </label>
+                                  <div className="flex gap-4 pt-1">
+                                    {['Vrai', 'Faux'].map(opt => (
+                                      <label key={opt} className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer">
+                                        <input
+                                          type="radio"
+                                          name={`tf_correct_${exIdx}`}
+                                          checked={ex.correctAnswer === opt}
+                                          onChange={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { correctAnswer: opt })}
+                                          className="text-purple-600 focus:ring-purple-400"
+                                        />
+                                        <span>{opt}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Options pour QCM */}
+                              {qType === 'multiple_choice' && (
+                                <div className="sm:col-span-2">
+                                  <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
+                                    Cochez la bonne réponse parmi les propositions ci-dessous :
+                                  </label>
+                                  <span className="text-[11px] text-purple-700 font-semibold">
+                                    Réponse correcte sélectionnée : <strong>{ex.correctAnswer || 'Non définie'}</strong>
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Édition des propositions du QCM si actif */}
+                            {qType === 'multiple_choice' && (
+                              <div className="p-3 bg-purple-50/50 border border-purple-200 rounded-xl space-y-2">
+                                <label className="text-[10px] font-bold text-purple-900 uppercase block">
+                                  Propositions du QCM (cochez le bouton radio de la bonne réponse) :
+                                </label>
+                                <div className="space-y-1.5">
+                                  {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => (
+                                    <div key={optIdx} className="flex items-center gap-2">
+                                      <input
+                                        type="radio"
+                                        name={`qcm_correct_${exIdx}`}
+                                        checked={ex.correctAnswer === opt}
+                                        onChange={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { correctAnswer: opt })}
+                                        className="text-purple-600 focus:ring-purple-400"
+                                        title="Définir comme bonne réponse"
+                                      />
+                                      <input
+                                        type="text"
+                                        value={opt}
+                                        onChange={e => {
+                                          const nextOptions = [...(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'])];
+                                          const oldVal = nextOptions[optIdx];
+                                          nextOptions[optIdx] = e.target.value;
+                                          const update: Partial<AssessmentExercise> = { options: nextOptions };
+                                          if (ex.correctAnswer === oldVal) {
+                                            update.correctAnswer = e.target.value;
+                                          }
+                                          handleUpdateEditingExercise(editingCriterionIdx, exIdx, update);
+                                        }}
+                                        className="flex-1 p-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                                        placeholder={`Option ${optIdx + 1}`}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Consigne de la question */}
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
+                                Consigne / Énoncé de la question :
+                              </label>
+                              <textarea
+                                value={ex.content}
+                                onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { content: e.target.value })}
+                                rows={3}
+                                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-normal focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                placeholder="Formulez la question claire pour l'élève..."
+                              />
+                            </div>
+
+                            {/* 🖼️ OEUVRE D'ART / PHOTO / ILLUSTRATION (POUR LES ARTS, SCIENCES, ETC.) */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[11px] font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                                  <ImageIcon size={14} className="text-purple-600" />
+                                  Oeuvre d'art / Photo / Schéma d'illustration (facultatif) :
+                                </label>
+                                {ex.imageUrl && (
+                                  <button
+                                    onClick={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: '', imageCaption: '' })}
+                                    className="text-[10px] font-bold text-rose-600 hover:text-rose-800"
+                                  >
+                                    Supprimer l'image
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                  <input
+                                    type="text"
+                                    value={ex.imageUrl || ''}
+                                    onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: e.target.value })}
+                                    placeholder="Lien URL de l'image ou photo (https://...)"
+                                    className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs"
+                                  />
+                                </div>
+                                <div>
+                                  <input
+                                    type="text"
+                                    value={ex.imageCaption || ''}
+                                    onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageCaption: e.target.value })}
+                                    placeholder="Légende (Titre, Artiste, Date, etc.)"
+                                    className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Boutons d'insertion rapide d'oeuvres d'art célèbres */}
+                              <div className="pt-1">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                                  Exemples d'oeuvres d'art célèbres (1-clic pour insérer) :
+                                </span>
+                                <div className="flex gap-1.5 flex-wrap">
+                                  {ARTWORK_PRESETS.map(art => (
+                                    <button
+                                      key={art.name}
+                                      type="button"
+                                      onClick={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: art.url, imageCaption: art.caption })}
+                                      className="px-2 py-1 bg-white hover:bg-purple-100 border border-slate-200 rounded text-[10px] font-semibold text-slate-700 transition"
+                                    >
+                                      🎨 {art.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Aperçu de l'image */}
+                              {ex.imageUrl && (
+                                <div className="p-2 bg-white rounded-lg border border-slate-200 text-center max-w-xs mx-auto">
+                                  <img
+                                    src={ex.imageUrl}
+                                    alt={ex.imageCaption || 'Aperçu'}
+                                    className="max-h-36 mx-auto object-contain rounded"
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                  />
+                                  {ex.imageCaption && (
+                                    <p className="text-[10px] text-slate-600 italic mt-1">{ex.imageCaption}</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Footer de sauvegarde */}
+              <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+                <span className="text-xs text-slate-500">
+                  Les modifications seront immédiatement visibles par les élèves lors de la passation et sur les fiches d'impression A4.
+                </span>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setEditingEvaluation(null)}
+                    className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-xl transition"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={handleSaveEditedEvaluation}
+                    disabled={isSavingEvalChanges}
+                    className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition disabled:opacity-60"
+                  >
+                    {isSavingEvalChanges ? 'Enregistrement…' : 'Enregistrer les modifications'}
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
         )}
 
       </div>

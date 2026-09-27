@@ -1,3 +1,17 @@
+export interface AssessmentExercise {
+  title: string;
+  content: string;
+  criterionReference: string; // e.g. "Critère A : i. ..."
+  strandIndex?: string; // "i", "ii", "iii", "iv"
+  strandText?: string; // Description de l'aspect spécifique
+  type?: 'open' | 'true_false' | 'multiple_choice';
+  options?: string[]; // Pour QCM: ["Option A", "Option B", "Option C", "Option D"]
+  correctAnswer?: string; // Pour QCM ou Vrai/Faux
+  workspaceNeeded?: boolean;
+  imageUrl?: string; // Photo / oeuvre d'art / figure géométrique
+  imageCaption?: string; // Légende de l'oeuvre (titre, artiste, date)
+}
+
 export interface AssessmentData {
   criterion: string; // e.g. "A"
   criterionName: string; // e.g. "Connaissances et compréhension"
@@ -7,12 +21,7 @@ export interface AssessmentData {
     level: string; // "1-2"
     descriptor: string; // "L'élève est capable de..."
   }[];
-  exercises: {
-    title: string;
-    content: string;
-    criterionReference: string; // "Critère A : i. ..."
-    workspaceNeeded?: boolean;
-  }[];
+  exercises: AssessmentExercise[];
 }
 
 // ===== NOUVELLES INTERFACES POUR LE PLAN D'UNITÉ DÉTAILLÉ =====
@@ -537,8 +546,12 @@ export interface StudentAnswer {
   exerciseIndex: number;
   exerciseTitle: string;
   criterionReference?: string;
+  strandIndex?: string; // "i", "ii", "iii", "iv"
+  strandText?: string;
+  questionType?: 'open' | 'true_false' | 'multiple_choice';
   questionContent: string;
   studentResponse: string;
+  drawingDataUrl?: string; // Tracé géométrique ou schéma dessiné par l'élève
   // Correction
   score?: number; // Niveau 1-8
   teacherComment?: string;
@@ -550,11 +563,12 @@ export interface StudentSubmission {
   id: string; // e.g. "sub_17112345678"
   evaluationId: string;
   accessCode: string;
-  studentNumber: string; // Numéro d'inscription / Matricule
+  studentNumber: string; // Numéro d'inscription / Matricule (unique et permanent)
   studentName: string; // Nom et prénom de l'élève
   submittedAt: string;
   timeSpentMinutes?: number;
   status: 'submitted' | 'graded';
+  isLocked?: boolean; // Copie verrouillée après soumission
   answers: StudentAnswer[];
   
   // Note globale et retour

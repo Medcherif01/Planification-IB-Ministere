@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Award, BookOpen, CheckCircle, Clock, FileText, HelpCircle, LogOut, Printer, Send, ShieldCheck, User, AlertCircle, ChevronRight, Save } from 'lucide-react';
-import { OnlineEvaluation, StudentSubmission, StudentAnswer } from '../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Award, CheckCircle, Clock, FileText, LogOut, Printer, Send, ShieldCheck, User, AlertCircle, ChevronRight, Save, Image as ImageIcon, Check, Lock, AlertTriangle } from 'lucide-react';
+import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise } from '../types';
 import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
+import GeometricDrawingModal from './GeometricDrawingModal';
 
 interface StudentEvaluationPortalProps {
   initialAccessCode?: string;
@@ -16,6 +17,59 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   D: { bg: 'bg-rose-50',    border: 'border-rose-300',   text: 'text-rose-800',    badge: 'bg-rose-600',    light: 'bg-rose-100' },
 };
 
+// Helper: déterminer précisément le sous-aspect individuel (i, ii, iii...)
+function resolveStrandForQuestion(
+  criterionLetter: string,
+  strands: string[] = [],
+  exercise: AssessmentExercise,
+  exerciseIndex: number
+): { roman: string; description: string; fullLabel: string } {
+  if (exercise.strandIndex && exercise.strandText) {
+    return {
+      roman: exercise.strandIndex,
+      description: exercise.strandText,
+      fullLabel: `Sous-aspect (${exercise.strandIndex}) : ${exercise.strandText}`,
+    };
+  }
+
+  const ref = exercise.criterionReference || '';
+  const match = ref.match(/(?:aspect|sous-aspect|strand)?\s*([ivx]+)\s*[\.\:\-\)]\s*(.*)/i);
+  if (match) {
+    const roman = match[1].toLowerCase();
+    const desc = match[2]?.trim() || '';
+    return {
+      roman,
+      description: desc,
+      fullLabel: `Sous-aspect (${roman})${desc ? ` : ${desc}` : ''}`,
+    };
+  }
+
+  const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+  const targetRoman = romanNumerals[exerciseIndex % romanNumerals.length] || 'i';
+
+  const matched = strands.find(s =>
+    s.toLowerCase().trim().startsWith(`${targetRoman}.`) ||
+    s.toLowerCase().trim().startsWith(`${targetRoman})`)
+  );
+
+  if (matched) {
+    const cleanDesc = matched.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+    return {
+      roman: targetRoman,
+      description: cleanDesc,
+      fullLabel: `Sous-aspect (${targetRoman}) : ${cleanDesc}`,
+    };
+  }
+
+  const fallback = strands[exerciseIndex % Math.max(1, strands.length)] || '';
+  const cleanFallback = fallback.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+  return {
+    roman: targetRoman,
+    description: cleanFallback,
+    fullLabel: `Sous-aspect (${targetRoman}) : ${cleanFallback || `Compétence ${criterionLetter}`}`,
+  };
+}
+
 const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initialAccessCode = '', onExit }) => {
   // Login fields
   const [accessCode, setAccessCode] = useState(initialAccessCode);
@@ -27,14 +81,22 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   // Active evaluation & session
   const [evaluation, setEvaluation] = useState<OnlineEvaluation | null>(null);
   const [existingSubmission, setExistingSubmission] = useState<StudentSubmission | null>(null);
+  const [isLockedAlready, setIsLockedAlready] = useState(false);
 
   // Taking evaluation state
   const [activeCriterionIdx, setActiveCriterionIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({}); // key: `${criterion}_${exerciseIndex}` -> response
+  const [drawings, setDrawings] = useState<Record<string, string>>({}); // key: `${criterion}_${exerciseIndex}` -> dataUrl
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
-  const [submittedSuccess, setSubmittedSuccess] = useState(false);
   const [lastAutoSave, setLastAutoSave] = useState<string | null>(null);
+
+  // Geometric drawing modal state
+  const [drawingModalTarget, setDrawingModalTarget] = useState<string | null>(null);
+
+  // 45 min timer
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(45 * 60);
+  const timerIntervalRef = useRef<any>(null);
 
   // Print view modal
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -42,28 +104,103 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   // Restaurer session élève depuis localStorage si existante
   useEffect(() => {
     try {
+      const permanentMatricule = localStorage.getItem('ib_permanent_matricule');
+      const permanentName = localStorage.getItem('ib_permanent_student_name');
+      if (permanentMatricule) setStudentNumber(permanentMatricule);
+      if (permanentName) setStudentName(permanentName);
+
       const savedStudent = localStorage.getItem('ib_student_session');
       if (savedStudent) {
         const parsed = JSON.parse(savedStudent);
-        if (parsed.studentNumber && parsed.studentName) {
-          setStudentNumber(parsed.studentNumber);
-          setStudentName(parsed.studentName);
-          if (parsed.accessCode && !initialAccessCode) {
-            setAccessCode(parsed.accessCode);
+        if (parsed.studentNumber) setStudentNumber(parsed.studentNumber);
+        if (parsed.studentName) setStudentName(parsed.studentName);
+        const code = (initialAccessCode || parsed.accessCode || '').trim().toUpperCase();
+        if (code) {
+          setAccessCode(code);
+          const studentNum = (parsed.studentNumber || permanentMatricule || '').trim();
+          if (studentNum) {
+            const lockKey = `ib_locked_${code}_${studentNum}`;
+            const isLocallyLocked = localStorage.getItem(lockKey) === 'true';
+
+            // Auto-check si copie déjà soumise
+            getEvaluationByAccessCode(code).then(ev => {
+              if (ev) {
+                setEvaluation(ev);
+                getStudentSubmission(code, studentNum).then(prevSub => {
+                  if (prevSub || isLocallyLocked) {
+                    setExistingSubmission(prevSub || {
+                      id: `locked_${studentNum}`,
+                      evaluationId: ev.id,
+                      accessCode: code,
+                      studentNumber: studentNum,
+                      studentName: parsed.studentName || permanentName || 'Élève',
+                      submittedAt: new Date().toISOString(),
+                      status: 'submitted',
+                      isLocked: true,
+                      answers: [],
+                    });
+                    setIsLockedAlready(true);
+                  }
+                });
+              }
+            });
           }
         }
       }
     } catch {}
   }, [initialAccessCode]);
 
+  // Gestion du chronomètre de 45 minutes
+  useEffect(() => {
+    if (!evaluation || existingSubmission || isLockedAlready) return;
+
+    const timerKey = `timer_${evaluation.accessCode}_${studentNumber}`;
+    const savedEndTime = localStorage.getItem(timerKey);
+    const durationSec = (evaluation.durationMinutes || 45) * 60;
+
+    let targetEndTime: number;
+    if (savedEndTime) {
+      targetEndTime = parseInt(savedEndTime);
+    } else {
+      targetEndTime = Date.now() + durationSec * 1000;
+      localStorage.setItem(timerKey, targetEndTime.toString());
+    }
+
+    const updateTimer = () => {
+      const diff = Math.max(0, Math.floor((targetEndTime - Date.now()) / 1000));
+      setSecondsRemaining(diff);
+
+      // Auto-submit si temps écoulé !
+      if (diff <= 0) {
+        clearInterval(timerIntervalRef.current);
+        alert('⏰ Temps écoulé (45 minutes) ! Votre copie va être soumise automatiquement.');
+        handleSubmitEvaluation(true);
+      }
+    };
+
+    updateTimer();
+    timerIntervalRef.current = setInterval(updateTimer, 1000);
+
+    return () => {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    };
+  }, [evaluation, existingSubmission, isLockedAlready, studentNumber]);
+
   // Sauvegarder les brouillons de réponse de l'élève en local
-  const autoSaveDraftAnswers = (newAnswers: Record<string, string>) => {
+  const autoSaveDraftAnswers = (newAnswers: Record<string, string>, newDrawings: Record<string, string>) => {
     if (!evaluation || !studentNumber) return;
     try {
       const draftKey = `draft_eval_${evaluation.accessCode}_${studentNumber}`;
-      localStorage.setItem(draftKey, JSON.stringify(newAnswers));
+      localStorage.setItem(draftKey, JSON.stringify({ answers: newAnswers, drawings: newDrawings }));
       setLastAutoSave(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch {}
+  };
+
+  // Format du temps restant (ex: 43:25)
+  const formatTimeRemaining = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   // ── Handler Connexion Élève ────────────────────────────────────────────────
@@ -80,7 +217,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       return;
     }
     if (!cleanNum) {
-      setLoginError('Veuillez saisir votre numéro d\'inscription (matricule).');
+      setLoginError('Veuillez saisir votre numéro d\'inscription (matricule permanent).');
       return;
     }
     if (!cleanName) {
@@ -103,17 +240,33 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         return;
       }
 
-      // Enregistrer la session élève
+      // Enregistrer la session élève et le matricule permanent
+      localStorage.setItem('ib_permanent_matricule', cleanNum);
+      localStorage.setItem('ib_permanent_student_name', cleanName);
       localStorage.setItem('ib_student_session', JSON.stringify({
         studentNumber: cleanNum,
         studentName: cleanName,
         accessCode: cleanCode,
       }));
 
-      // Vérifier si l'élève a déjà soumis une copie
+      // VÉRIFICATION DE VERROUILLAGE : Copie déjà soumise par cet élève ?
+      const lockKey = `ib_locked_${cleanCode}_${cleanNum}`;
+      const isLocallyLocked = localStorage.getItem(lockKey) === 'true';
+
       const prevSub = await getStudentSubmission(cleanCode, cleanNum);
-      if (prevSub) {
-        setExistingSubmission(prevSub);
+      if (prevSub || isLocallyLocked) {
+        setExistingSubmission(prevSub || {
+          id: `locked_${cleanNum}`,
+          evaluationId: evalData.id,
+          accessCode: cleanCode,
+          studentNumber: cleanNum,
+          studentName: cleanName,
+          submittedAt: new Date().toISOString(),
+          status: 'submitted',
+          isLocked: true,
+          answers: [],
+        });
+        setIsLockedAlready(true);
         setEvaluation(evalData);
         setIsValidating(false);
         return;
@@ -124,7 +277,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       const savedDraft = localStorage.getItem(draftKey);
       if (savedDraft) {
         try {
-          setAnswers(JSON.parse(savedDraft));
+          const parsed = JSON.parse(savedDraft);
+          if (parsed.answers) setAnswers(parsed.answers);
+          if (parsed.drawings) setDrawings(parsed.drawings);
         } catch {}
       }
 
@@ -138,21 +293,61 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
   // ── Mise à jour de réponse d'un exercice ──────────────────────────────────
   const handleResponseChange = (criterion: string, exerciseIdx: number, text: string) => {
+    if (isLockedAlready) return;
     const key = `${criterion}_${exerciseIdx}`;
     setAnswers(prev => {
       const next = { ...prev, [key]: text };
-      autoSaveDraftAnswers(next);
+      autoSaveDraftAnswers(next, drawings);
       return next;
     });
+  };
+
+  // Insertion de symboles mathématiques dans la réponse avec positionnement du curseur
+  const handleInsertMathSymbol = (criterion: string, exerciseIdx: number, symbol: string) => {
+    if (isLockedAlready) return;
+    const key = `${criterion}_${exerciseIdx}`;
+    const textarea = document.getElementById(`textarea_${key}`) as HTMLTextAreaElement | null;
+    const current = answers[key] || '';
+
+    let updated = current;
+    let newCursorPos = current.length + symbol.length;
+
+    if (textarea && typeof textarea.selectionStart === 'number' && typeof textarea.selectionEnd === 'number') {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      updated = current.substring(0, start) + symbol + current.substring(end);
+      newCursorPos = start + symbol.length;
+      setTimeout(() => {
+        try {
+          textarea.focus();
+          textarea.setSelectionRange(newCursorPos, newCursorPos);
+        } catch {}
+      }, 20);
+    } else {
+      updated = current + symbol;
+    }
+
+    handleResponseChange(criterion, exerciseIdx, updated);
+  };
+
+  // Sauvegarde d'un tracé géométrique
+  const handleSaveDrawing = (dataUrl: string) => {
+    if (!drawingModalTarget || isLockedAlready) return;
+    setDrawings(prev => {
+      const next = { ...prev, [drawingModalTarget]: dataUrl };
+      autoSaveDraftAnswers(answers, next);
+      return next;
+    });
+    setDrawingModalTarget(null);
   };
 
   // ── Calcul de l'avancement ────────────────────────────────────────────────
   const totalExercises = (evaluation?.assessments || []).reduce((acc, a) => acc + (a.exercises?.length || 0), 0);
   const completedExercises = Object.values(answers).filter(v => v && v.trim().length > 0).length;
 
-  // ── Soumission de la copie ────────────────────────────────────────────────
-  const handleSubmitEvaluation = async () => {
-    if (!evaluation) return;
+  // ── Soumission de la copie (avec verrouillage immédiat et définitif) ───────
+  const handleSubmitEvaluation = async (forceAutoSubmit = false) => {
+    if (!evaluation || isSubmitting || isLockedAlready) return;
 
     setIsSubmitting(true);
     try {
@@ -162,13 +357,20 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         (crit.exercises || []).forEach((ex, exIdx) => {
           const key = `${crit.criterion}_${exIdx}`;
           const responseText = answers[key] || '';
+          const drawingDataUrl = drawings[key];
+          const strand = resolveStrandForQuestion(crit.criterion, crit.strands, ex, exIdx);
+
           formattedAnswers.push({
             criterion: crit.criterion,
             exerciseIndex: exIdx,
             exerciseTitle: ex.title,
             criterionReference: ex.criterionReference,
+            strandIndex: strand.roman,
+            strandText: strand.description,
+            questionType: ex.type || 'open',
             questionContent: ex.content,
             studentResponse: responseText,
+            drawingDataUrl: drawingDataUrl,
           });
         });
       });
@@ -178,17 +380,26 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         accessCode: evaluation.accessCode,
         studentNumber: studentNumber.trim(),
         studentName: studentName.trim(),
+        isLocked: true,
         answers: formattedAnswers,
       });
 
-      // Supprimer le brouillon local
-      try {
-        localStorage.removeItem(`draft_eval_${evaluation.accessCode}_${studentNumber.trim()}`);
-      } catch {}
+      // VERROUILLAGE DÉFINITIF EN LOCAL : Même si l'élève rafraîchit la page, il ne peut plus rouvrir
+      const cleanNum = studentNumber.trim();
+      const lockKey = `ib_locked_${evaluation.accessCode}_${cleanNum}`;
+      localStorage.setItem(lockKey, 'true');
+      localStorage.removeItem(`draft_eval_${evaluation.accessCode}_${cleanNum}`);
+      localStorage.removeItem(`timer_${evaluation.accessCode}_${cleanNum}`);
+
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
 
       setExistingSubmission(submission);
-      setSubmittedSuccess(true);
+      setIsLockedAlready(true);
       setShowConfirmSubmit(false);
+
+      if (!forceAutoSubmit) {
+        alert('✅ Votre copie a été transmise avec succès à votre enseignant !\nElle est maintenant définitivement enregistrée et verrouillée.');
+      }
     } catch (err: any) {
       alert(`Erreur lors de la remise de votre copie : ${err.message || 'Veuillez réessayer'}`);
     } finally {
@@ -215,7 +426,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             </div>
             <div>
               <h2 className="text-white font-extrabold text-base tracking-wide">Écoles Al-Kawthar</h2>
-              <p className="text-purple-200 text-xs font-medium">Espace Évaluation des Élèves</p>
+              <p className="text-purple-200 text-xs font-medium">Espace Évaluation des Élèves (PEI IB)</p>
             </div>
           </div>
           <button
@@ -235,7 +446,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               </div>
               <h1 className="text-2xl font-black text-slate-800">Évaluation Électronique</h1>
               <p className="text-slate-500 text-xs mt-1">
-                Entrez vos identifiants d'élève et le code donné par votre professeur pour commencer.
+                Entrez votre numéro d'inscription permanent et le code d'évaluation pour commencer votre épreuve de 45 min.
               </p>
             </div>
 
@@ -268,7 +479,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">
-                  Numéro d'inscription / Matricule <span className="text-rose-500">*</span>
+                  Numéro d'inscription / Matricule (unique et permanent) <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <input
@@ -305,10 +516,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                 className="w-full mt-2 py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition flex items-center justify-center gap-2 text-sm disabled:opacity-60"
               >
                 {isValidating ? (
-                  <span>Recherche de l'évaluation…</span>
+                  <span>Vérification des identifiants…</span>
                 ) : (
                   <>
-                    <span>Accéder à l'évaluation</span>
+                    <span>Commencer l'évaluation (45 min)</span>
                     <ChevronRight size={18} />
                   </>
                 )}
@@ -317,7 +528,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
             <div className="mt-6 pt-4 border-t border-slate-100 text-center">
               <p className="text-[11px] text-slate-400 flex items-center justify-center gap-1">
-                <span>🔒</span> Vos réponses sont enregistrées et sécurisées sur le serveur.
+                <span>🔒</span> Une fois soumise, votre copie est définitivement verrouillée.
               </p>
             </div>
           </div>
@@ -331,10 +542,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VUE 2 : COPIE DÉJÀ REMISE (EN ATTENTE DE CORRECTION OU CORRIGÉE)
+  // VUE 2 : COPIE SOUMISE & VERROUILLÉE (L'ÉLÈVE NE PEUT PLUS MODIFIER OU REFAIRE)
   // ═══════════════════════════════════════════════════════════════════════════
-  if (existingSubmission) {
-    const isGraded = existingSubmission.status === 'graded';
+  if (existingSubmission || isLockedAlready) {
+    const isGraded = existingSubmission?.status === 'graded';
     const totalMax = (evaluation.assessments || []).reduce((acc, a) => acc + (a.maxPoints || 8), 0);
 
     return (
@@ -348,7 +559,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             <div>
               <h2 className="font-bold text-sm text-slate-800">{evaluation.title}</h2>
               <p className="text-xs text-slate-500">
-                Élève : <strong>{existingSubmission.studentName}</strong> (N° {existingSubmission.studentNumber})
+                Élève : <strong>{existingSubmission?.studentName || studentName}</strong> (Matricule {existingSubmission?.studentNumber || studentNumber})
               </p>
             </div>
           </div>
@@ -374,53 +585,41 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           </div>
         </header>
 
-        {/* Contenu copie élève */}
+        {/* Contenu copie verrouillée */}
         <main className="max-w-4xl mx-auto w-full p-4 sm:p-6 space-y-6 flex-1">
-          {/* Statut banner */}
-          <div className={`rounded-2xl p-6 border ${
-            isGraded ? 'bg-emerald-50 border-emerald-200 text-emerald-950' : 'bg-amber-50 border-amber-200 text-amber-950'
-          }`}>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
-                  isGraded ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
-                }`}>
-                  {isGraded ? <Award size={26} /> : <CheckCircle size={26} />}
-                </div>
-                <div>
-                  <h3 className="text-lg font-black">
-                    {isGraded ? '🎉 Évaluation corrigée !' : '✅ Copie remise avec succès'}
-                  </h3>
-                  <p className="text-xs mt-0.5 opacity-90">
-                    Remise le {new Date(existingSubmission.submittedAt).toLocaleString('fr-FR')}
-                  </p>
-                </div>
-              </div>
-
-              {isGraded && (
-                <div className="text-right bg-white px-4 py-2 rounded-xl shadow-xs border border-emerald-200">
-                  <span className="text-[10px] uppercase font-bold text-emerald-700 block">Note finale</span>
-                  <span className="text-2xl font-black text-emerald-800">
-                    {existingSubmission.totalScore ?? 0} <span className="text-sm font-semibold text-slate-400">/ {totalMax}</span>
-                  </span>
-                </div>
+          {/* Bannière de verrouillage stricte */}
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 text-amber-950 flex items-start gap-4">
+            <div className="w-12 h-12 bg-amber-500 text-white rounded-2xl flex items-center justify-center flex-shrink-0 shadow-md">
+              <Lock size={26} />
+            </div>
+            <div>
+              <h3 className="text-base font-black">
+                {isGraded ? '🎉 Évaluation corrigée par votre professeur' : '🔒 Copie définitivement transmise et verrouillée'}
+              </h3>
+              <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                Votre évaluation pour le code <strong>{evaluation.accessCode}</strong> a été soumise avec succès.
+                Conformément aux règles d'examen, vous ne pouvez plus modifier vos réponses ni recommencer l'épreuve.
+              </p>
+              {existingSubmission?.submittedAt && (
+                <span className="inline-block mt-2 text-[11px] font-semibold text-amber-700 bg-amber-100 px-2.5 py-0.5 rounded-full">
+                  Date de réception : {new Date(existingSubmission.submittedAt).toLocaleString('fr-FR')}
+                </span>
               )}
             </div>
-
-            {isGraded && existingSubmission.overallFeedback && (
-              <div className="mt-4 bg-white/80 rounded-xl p-3.5 border border-emerald-100 text-xs">
-                <span className="font-bold text-emerald-900 block mb-1">💬 Commentaire de l'enseignant :</span>
-                <p className="text-slate-700 italic">"{existingSubmission.overallFeedback}"</p>
-              </div>
-            )}
           </div>
 
           {/* Tableau des notes par critère si corrigé */}
           {isGraded && (
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs">
-              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">
-                📊 Résultats par critère IB PEI
-              </h4>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                  📊 Résultats de votre évaluation critériée
+                </h4>
+                <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-3 py-1 rounded-xl text-xs font-black">
+                  Total : {existingSubmission.totalScore ?? 0} / {totalMax}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {evaluation.assessments.map(a => {
                   const score = existingSubmission.criteriaScores?.[a.criterion];
@@ -441,62 +640,84 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                   );
                 })}
               </div>
+
+              {existingSubmission.overallFeedback && (
+                <div className="mt-4 bg-purple-50/80 rounded-xl p-3.5 border border-purple-200 text-xs">
+                  <span className="font-bold text-purple-900 block mb-1">💬 Commentaire de l'enseignant :</span>
+                  <p className="text-slate-700 italic">"{existingSubmission.overallFeedback}"</p>
+                </div>
+              )}
             </div>
           )}
 
           {/* Détail des réponses de l'élève */}
-          <div className="space-y-4">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide">
-              📝 Vos réponses détaillées
-            </h4>
-            {existingSubmission.answers.map((ans, idx) => {
-              const colors = CRITERION_COLORS[ans.criterion] || CRITERION_COLORS.A;
-              return (
-                <div key={idx} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-6 h-6 rounded-md ${colors.badge} text-white text-xs font-black flex items-center justify-center`}>
-                        {ans.criterion}
-                      </span>
-                      <span className="font-bold text-sm text-slate-800">{ans.exerciseTitle}</span>
-                      {ans.criterionReference && (
-                        <span className="text-xs text-slate-400 italic">({ans.criterionReference})</span>
+          {existingSubmission && existingSubmission.answers?.length > 0 && (
+            <div className="space-y-4">
+              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                📝 Vos réponses enregistrées
+              </h4>
+              {existingSubmission.answers.map((ans, idx) => {
+                const colors = CRITERION_COLORS[ans.criterion] || CRITERION_COLORS.A;
+                return (
+                  <div key={idx} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-6 h-6 rounded-md ${colors.badge} text-white text-xs font-black flex items-center justify-center`}>
+                          {ans.criterion}
+                        </span>
+                        <span className="font-bold text-sm text-slate-800">{ans.exerciseTitle}</span>
+                      </div>
+                      {isGraded && ans.score !== undefined && (
+                        <span className={`text-xs font-black ${colors.text} ${colors.light} px-2.5 py-1 rounded-lg`}>
+                          Niveau {ans.score} / 8
+                        </span>
                       )}
                     </div>
-                    {isGraded && ans.score !== undefined && (
-                      <span className={`text-xs font-black ${colors.text} ${colors.light} px-2.5 py-1 rounded-lg`}>
-                        Niveau {ans.score} / 8
+
+                    {/* Sous-aspect précis en rouge */}
+                    {ans.strandIndex && (
+                      <div className="text-red-600 font-bold text-xs bg-red-50/60 px-2.5 py-1 rounded border border-red-200">
+                        🔴 Sous-aspect ({ans.strandIndex}) : {ans.strandText}
+                      </div>
+                    )}
+
+                    <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
+                      {ans.questionContent}
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block mb-1">
+                        Votre réponse saisie :
                       </span>
+                      <p className="text-xs text-slate-800 whitespace-pre-wrap bg-purple-50/40 p-3 rounded-xl border border-purple-100 leading-relaxed font-mono">
+                        {ans.studentResponse || '(Aucune réponse)'}
+                      </p>
+
+                      {ans.drawingDataUrl && (
+                        <div className="mt-2 text-center">
+                          <span className="text-[10px] font-bold text-slate-500 block mb-1">Figure géométrique :</span>
+                          <img
+                            src={ans.drawingDataUrl}
+                            alt="Figure géométrique"
+                            className="max-h-48 max-w-full mx-auto border border-slate-200 rounded shadow-xs"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {isGraded && ans.teacherComment && (
+                      <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-xs text-emerald-900">
+                        <span className="font-bold block text-[10px] uppercase">Remarque du professeur :</span>
+                        {ans.teacherComment}
+                      </div>
                     )}
                   </div>
-
-                  <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
-                    {ans.questionContent}
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block mb-1">
-                      Votre réponse :
-                    </span>
-                    <p className="text-xs text-slate-800 whitespace-pre-wrap bg-purple-50/40 p-3 rounded-xl border border-purple-100 leading-relaxed font-mono">
-                      {ans.studentResponse || '(Aucune réponse)'}
-                    </p>
-                  </div>
-
-                  {/* Feedback enseignant par question */}
-                  {isGraded && ans.teacherComment && (
-                    <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-xs text-emerald-900">
-                      <span className="font-bold block text-[10px] uppercase">Remarque du professeur :</span>
-                      {ans.teacherComment}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </main>
 
-        {/* Modal d'impression A4 */}
         {showPrintModal && (
           <EvaluationPrintView
             evaluation={evaluation}
@@ -509,17 +730,19 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VUE 3 : PASSATION DE L'ÉVALUATION EN LIGNE (INTERACTIVE)
+  // VUE 3 : PASSATION EN LIGNE (INTERACTIVE - 45 MIN AVEC OUTILS MATHS & GÉOMÉTRIE)
   // ═══════════════════════════════════════════════════════════════════════════
   const activeAssessment = evaluation.assessments[activeCriterionIdx];
   const activeColors = activeAssessment
     ? (CRITERION_COLORS[activeAssessment.criterion] || CRITERION_COLORS.A)
     : CRITERION_COLORS.A;
 
+  const isTimeCritical = secondsRemaining <= 300; // < 5 minutes
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col">
-      {/* ── TOP BAR STICKY AVEC PROGRESSION ET AUTO-SAVE ── */}
-      <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 sticky top-0 z-30 shadow-xs">
+      {/* ── TOP BAR STICKY AVEC CHRONO 45 MIN & AUTO-SAVE ── */}
+      <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-indigo-600 text-white rounded-xl flex items-center justify-center font-black flex-shrink-0 shadow">
@@ -528,20 +751,24 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             <div className="min-w-0">
               <h2 className="font-black text-sm text-slate-800 truncate">{evaluation.title}</h2>
               <p className="text-xs text-slate-500 truncate">
-                Élève : <span className="font-semibold text-slate-700">{studentName}</span> ({studentNumber}) · {evaluation.subject} ({evaluation.grade})
+                Élève : <span className="font-semibold text-slate-700">{studentName}</span> (Matricule {studentNumber}) · {evaluation.subject}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 flex-shrink-0">
-            {lastAutoSave && (
-              <span className="hidden md:flex items-center gap-1 text-[11px] text-slate-400">
-                <Save size={12} className="text-green-500" /> Sauvegardé ({lastAutoSave})
-              </span>
-            )}
+            {/* ⏱️ CHRONOMÈTRE 45 MINUTES */}
+            <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black shadow-inner transition ${
+              isTimeCritical
+                ? 'bg-rose-100 text-rose-700 border border-rose-300 animate-pulse'
+                : 'bg-purple-100 text-purple-900 border border-purple-200'
+            }`}>
+              <Clock size={15} className={isTimeCritical ? 'text-rose-600' : 'text-purple-600'} />
+              <span>Temps restant : {formatTimeRemaining(secondsRemaining)}</span>
+            </div>
 
-            {/* Compteur de progression */}
-            <div className="hidden sm:flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700">
+            {/* Progression */}
+            <div className="hidden md:flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700">
               <CheckCircle size={14} className={completedExercises === totalExercises ? 'text-green-600' : 'text-purple-600'} />
               <span>{completedExercises} / {totalExercises} réponses</span>
             </div>
@@ -550,15 +777,15 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               onClick={() => setShowConfirmSubmit(true)}
               className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
             >
-              <Send size={14} /> Vérifier & Soumettre
+              <Send size={14} /> Soumettre ma copie
             </button>
           </div>
         </div>
       </header>
 
-      {/* ── CADRE DE RECHERCHE PEI DÉPLIABLE ── */}
+      {/* ── CADRE DE RECHERCHE PEI ── */}
       {evaluation.statementOfInquiry && (
-        <div className="bg-gradient-to-r from-purple-900 to-indigo-900 text-white px-4 py-3 shadow-inner">
+        <div className="bg-gradient-to-r from-purple-900 to-indigo-900 text-white px-4 py-2.5 shadow-inner">
           <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs">
             <div className="flex items-start gap-2">
               <span className="font-black uppercase tracking-wider text-purple-300 text-[10px] bg-purple-800/80 px-2 py-0.5 rounded">
@@ -630,62 +857,22 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                   <h3 className="text-lg font-black text-slate-800 mt-1">
                     {activeAssessment.criterionName}
                   </h3>
-                  {activeAssessment.strands && activeAssessment.strands.length > 0 && (
-                    <div className="mt-2 text-xs text-slate-600 space-y-0.5">
-                      <span className="font-semibold text-slate-700">Sous-aspects évalués :</span>
-                      <ul className="list-disc list-inside space-y-0.5 text-slate-600 text-[11px]">
-                        {activeAssessment.strands.map((s, i) => (
-                          <li key={i}>{s}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                 </div>
 
                 <span className={`text-xs font-black px-3 py-1 rounded-xl ${activeColors.light} ${activeColors.text}`}>
                   Max : {activeAssessment.maxPoints || 8} pts
                 </span>
               </div>
-
-              {/* Rubrique / Grille de descripteurs (dépliable pour guider l'élève) */}
-              {activeAssessment.rubricRows && activeAssessment.rubricRows.length > 0 && (
-                <details className="mt-3 text-xs bg-white rounded-xl border border-slate-200 overflow-hidden">
-                  <summary className="px-3.5 py-2 cursor-pointer font-bold text-slate-700 hover:text-purple-700 select-none flex items-center justify-between">
-                    <span>📖 Voir la grille des niveaux de réalisation (Descripteurs PEI 1-8)</span>
-                    <span className="text-[10px] text-slate-400 font-normal">Cliquer pour afficher</span>
-                  </summary>
-                  <div className="p-3 border-t border-slate-100 overflow-x-auto">
-                    <table className="w-full text-[11px] border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 text-slate-600 font-bold">
-                          <th className="border border-slate-200 px-2.5 py-1 text-center w-16">Niveau</th>
-                          <th className="border border-slate-200 px-2.5 py-1 text-left">Descripteur d'évaluation</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {activeAssessment.rubricRows.map((r, ri) => (
-                          <tr key={ri}>
-                            <td className="border border-slate-200 px-2.5 py-1 text-center font-bold text-slate-800">
-                              {r.level}
-                            </td>
-                            <td className="border border-slate-200 px-2.5 py-1 text-slate-600">
-                              {r.descriptor}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-              )}
             </div>
 
-            {/* Questions / Tâches de ce critère */}
+            {/* Questions / Tâches du critère */}
             <div className="space-y-5">
               {(activeAssessment.exercises || []).map((ex, exIdx) => {
                 const answerKey = `${activeAssessment.criterion}_${exIdx}`;
                 const currentAnswer = answers[answerKey] || '';
-                const wordCount = currentAnswer.trim() ? currentAnswer.trim().split(/\s+/).length : 0;
+                const currentDrawing = drawings[answerKey];
+                const strand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx);
+                const qType = ex.type || 'open';
 
                 return (
                   <div
@@ -699,43 +886,208 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                         </span>
                         <h4 className="font-bold text-base text-slate-900">{ex.title}</h4>
                       </div>
-                      {ex.criterionReference && (
-                        <span className="text-xs font-semibold text-slate-400 italic">
-                          {ex.criterionReference}
-                        </span>
-                      )}
+                      <span className="text-xs font-semibold text-slate-400">
+                        {qType === 'true_false' ? 'Vrai ou Faux' : qType === 'multiple_choice' ? 'QCM' : 'Rédaction'}
+                      </span>
                     </div>
+
+                    {/* 🔴 SOUS-ASPECT INDIVIDUEL EN ROUGE SOUS LA QUESTION (EXIGENCE FORMELLE DU BRIEF) */}
+                    <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50/70 px-3 py-1.5 rounded-xl border border-red-200">
+                      <span className="text-red-700 font-black">● {strand.fullLabel}</span>
+                    </div>
+
+                    {/* OEUVRE D'ART / PHOTO / SCHÉMA SI PRÉSENT */}
+                    {ex.imageUrl && (
+                      <div className="my-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+                        <img
+                          src={ex.imageUrl}
+                          alt={ex.imageCaption || 'Illustration oeuvre d\'art'}
+                          className="max-h-64 max-w-full mx-auto object-contain rounded-xl shadow-xs"
+                        />
+                        {ex.imageCaption && (
+                          <p className="text-xs text-slate-600 italic mt-2 font-medium">
+                            🖼️ {ex.imageCaption}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Énoncé de la question */}
                     <div className="bg-slate-50 p-4 rounded-xl text-sm text-slate-800 whitespace-pre-wrap leading-relaxed border border-slate-100 font-normal">
                       {ex.content}
                     </div>
 
-                    {/* Zone de saisie élève */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
-                          <span>✏️</span> Votre réponse rédigée :
-                        </label>
-                        <span className="text-[11px] text-slate-400">
-                          {wordCount} mot{wordCount > 1 ? 's' : ''}
-                        </span>
-                      </div>
+                    {/* ── ZONE DE RÉPONSE INTERACTIVE SELON LE TYPE DE QUESTION ── */}
 
-                      <textarea
-                        value={currentAnswer}
-                        onChange={e => handleResponseChange(activeAssessment.criterion, exIdx, e.target.value)}
-                        placeholder="Rédigez ici votre réponse claire, argumentée et détaillée en respectant les critères d'évaluation..."
-                        rows={6}
-                        className="w-full p-4 border border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition leading-relaxed resize-y font-sans"
-                      />
-                    </div>
+                    {/* 1. TYPE VRAI OU FAUX */}
+                    {qType === 'true_false' && (
+                      <div className="space-y-3 pt-1">
+                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                          Indiquez votre réponse :
+                        </label>
+                        <div className="grid grid-cols-2 gap-3 max-w-md">
+                          {['Vrai', 'Faux'].map(option => {
+                            const isSelected = currentAnswer.startsWith(option);
+                            return (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() => handleResponseChange(activeAssessment.criterion, exIdx, option)}
+                                className={`py-3 px-4 rounded-xl font-bold text-sm border-2 transition flex items-center justify-center gap-2 ${
+                                  isSelected
+                                    ? 'bg-purple-600 border-purple-600 text-white shadow-md'
+                                    : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
+                                }`}
+                              >
+                                {isSelected && <Check size={16} />}
+                                <span>{option}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-500 block mb-1">
+                            Justification ou explication (facultative) :
+                          </label>
+                          <textarea
+                            value={currentAnswer.replace(/^(Vrai|Faux)\s*:\s*/, '')}
+                            onChange={e => {
+                              const prefix = currentAnswer.startsWith('Vrai') ? 'Vrai : ' : currentAnswer.startsWith('Faux') ? 'Faux : ' : '';
+                              handleResponseChange(activeAssessment.criterion, exIdx, prefix + e.target.value);
+                            }}
+                            rows={2}
+                            placeholder="Rédigez votre justification ici..."
+                            className="w-full p-3 border border-slate-300 focus:border-purple-600 rounded-xl text-xs outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 2. TYPE CHOIX MULTIPLES (QCM) */}
+                    {qType === 'multiple_choice' && (
+                      <div className="space-y-2.5 pt-1">
+                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                          Cochez la bonne réponse :
+                        </label>
+                        <div className="space-y-2">
+                          {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => {
+                            const isSelected = currentAnswer === opt;
+                            return (
+                              <div
+                                key={optIdx}
+                                onClick={() => handleResponseChange(activeAssessment.criterion, exIdx, opt)}
+                                className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
+                                  isSelected
+                                    ? 'bg-purple-50 border-purple-600 text-purple-950 font-bold shadow-xs'
+                                    : 'bg-white border-slate-200 hover:border-purple-200 text-slate-700'
+                                }`}
+                              >
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                  isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-300'
+                                }`}>
+                                  {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                </div>
+                                <span className="text-sm">{opt}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3. TYPE OUVERT / RÉDACTION AVEC BARRE D'OUTILS MATHS & GÉOMÉTRIE */}
+                    {qType === 'open' && (
+                      <div className="space-y-2">
+                        {/* 📐 BARRE D'OUTILS MATHÉMATIQUES & GÉOMÉTRIE */}
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 flex items-center justify-between flex-wrap gap-1.5 text-xs">
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="text-[11px] font-bold text-slate-500 uppercase mr-1">Maths :</span>
+                            {[
+                              { label: 'x²', val: '²' },
+                              { label: 'x³', val: '³' },
+                              { label: 'xⁿ', val: '^()' },
+                              { label: '√x', val: '√()' },
+                              { label: '∛x', val: '∛()' },
+                              { label: 'a/b', val: ' / ' },
+                              { label: 'π', val: 'π' },
+                              { label: '°', val: '°' },
+                              { label: '±', val: '±' },
+                              { label: '×', val: '×' },
+                              { label: '÷', val: '÷' },
+                              { label: '≠', val: '≠' },
+                              { label: '≤', val: '≤' },
+                              { label: '≥', val: '≥' },
+                              { label: '∠', val: '∠' },
+                              { label: '△', val: '△' },
+                              { label: '⊥', val: '⊥' },
+                              { label: '∥', val: '∥' },
+                              { label: '[AB]', val: '[AB]' },
+                            ].map(item => (
+                              <button
+                                key={item.label}
+                                type="button"
+                                onClick={() => handleInsertMathSymbol(activeAssessment.criterion, exIdx, item.val)}
+                                className="px-2 py-1 bg-white hover:bg-purple-100 text-slate-700 hover:text-purple-800 border border-slate-200 rounded font-bold text-xs transition shadow-2xs"
+                                title={`Insérer ${item.label}`}
+                              >
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Bouton outil géométrique */}
+                          <button
+                            type="button"
+                            onClick={() => setDrawingModalTarget(answerKey)}
+                            className="flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
+                            title="Ouvrir l'outil de dessin géométrique"
+                          >
+                            <span>📐</span> Tracer une figure
+                          </button>
+                        </div>
+
+                        {/* Zone de saisie directe (sans espace pointillé) */}
+                        <textarea
+                          id={`textarea_${answerKey}`}
+                          value={currentAnswer}
+                          onChange={e => handleResponseChange(activeAssessment.criterion, exIdx, e.target.value)}
+                          placeholder="Écrivez directement ici votre réponse rédigée et détaillée..."
+                          rows={6}
+                          className="w-full p-4 border border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition leading-relaxed resize-y font-sans"
+                        />
+
+                        {/* Aperçu de la figure géométrique insérée */}
+                        {currentDrawing && (
+                          <div className="relative inline-block bg-slate-50 border border-slate-300 rounded-xl p-2 text-center mt-2">
+                            <span className="text-[10px] font-bold text-slate-600 block mb-1">
+                              📐 Figure géométrique rattachée à cette question :
+                            </span>
+                            <img
+                              src={currentDrawing}
+                              alt="Figure géométrique élève"
+                              className="max-h-48 max-w-full mx-auto border border-slate-200 rounded bg-white shadow-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = { ...drawings };
+                                delete next[answerKey];
+                                setDrawings(next);
+                              }}
+                              className="mt-1 text-[11px] text-rose-600 hover:text-rose-800 font-bold"
+                            >
+                              Supprimer la figure
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
 
-            {/* Navigation bas de page vers critère suivant/précédent */}
+            {/* Navigation bas de page */}
             <div className="flex items-center justify-between pt-4 border-t border-slate-200">
               <button
                 onClick={() => setActiveCriterionIdx(i => Math.max(0, i - 1))}
@@ -765,6 +1117,16 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         )}
       </main>
 
+      {/* ── MODALE GÉOMÉTRIQUE TRACÉ DE FIGURE ── */}
+      {drawingModalTarget && (
+        <GeometricDrawingModal
+          isOpen={true}
+          onClose={() => setDrawingModalTarget(null)}
+          onSaveDrawing={handleSaveDrawing}
+          initialDrawing={drawings[drawingModalTarget]}
+        />
+      )}
+
       {/* ── MODALE DE CONFIRMATION DE SOUMISSION ── */}
       {showConfirmSubmit && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -773,9 +1135,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-2">
                 <Send size={28} />
               </div>
-              <h3 className="text-xl font-black">Confirmer la remise de votre copie ?</h3>
+              <h3 className="text-xl font-black">Confirmer la remise définitive ?</h3>
               <p className="text-purple-100 text-xs mt-1">
-                Une fois remise, vous ne pourrez plus modifier vos réponses.
+                ⚠️ Une fois remise, votre copie sera verrouillée et vous ne pourrez plus la modifier.
               </p>
             </div>
 
@@ -783,7 +1145,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2">
                 <div className="flex justify-between">
                   <span className="text-slate-500 font-semibold">Élève :</span>
-                  <span className="font-bold text-slate-800">{studentName} ({studentNumber})</span>
+                  <span className="font-bold text-slate-800">{studentName} (Matricule {studentNumber})</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500 font-semibold">Évaluation :</span>
@@ -799,9 +1161,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
               {completedExercises < totalExercises && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 flex items-start gap-2">
-                  <AlertCircle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                  <AlertTriangle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
                   <span>
-                    Attention : Vous avez laissé <strong>{totalExercises - completedExercises}</strong> question(s) sans réponse. Vous pouvez encore revenir en arrière pour compléter.
+                    Attention : Vous avez laissé <strong>{totalExercises - completedExercises}</strong> question(s) sans réponse.
                   </span>
                 </div>
               )}
@@ -812,14 +1174,14 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                   disabled={isSubmitting}
                   className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition"
                 >
-                  Continuer à relire
+                  Continuer à composer
                 </button>
                 <button
-                  onClick={handleSubmitEvaluation}
+                  onClick={() => handleSubmitEvaluation(false)}
                   disabled={isSubmitting}
                   className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-xs shadow-lg transition flex items-center justify-center gap-2"
                 >
-                  {isSubmitting ? 'Envoi en cours…' : 'Oui, soumettre ma copie'}
+                  {isSubmitting ? 'Envoi en cours…' : 'Oui, soumettre définitivement'}
                 </button>
               </div>
             </div>
