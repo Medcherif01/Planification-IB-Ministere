@@ -9,6 +9,7 @@ import ibCriteriaHandler from './api/ib-criteria';
 import modRequestsHandler from './api/modification-requests';
 import templateHandler from './api/template';
 import usersHandler from './api/users';
+import onlineEvaluationsHandler from './api/online-evaluations';
 
 async function startServer() {
   const app = express();
@@ -26,6 +27,7 @@ async function startServer() {
   app.all('/api/modification-requests', (req, res) => modRequestsHandler(req as any, res as any));
   app.all('/api/template', (req, res) => templateHandler(req as any, res as any));
   app.all('/api/users', (req, res) => usersHandler(req as any, res as any));
+  app.all('/api/online-evaluations', (req, res) => onlineEvaluationsHandler(req as any, res as any));
 
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });

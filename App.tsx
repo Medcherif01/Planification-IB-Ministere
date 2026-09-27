@@ -6,6 +6,8 @@ import AuthenticationScreen from './components/AuthenticationScreen';
 import HomeScreen from './components/HomeScreen';
 import ExamsWizard from './components/ExamsWizard';
 import ErrorBoundary from './components/ErrorBoundary';
+import StudentEvaluationPortal from './components/StudentEvaluationPortal';
+import TeacherEvaluationsManager from './components/TeacherEvaluationsManager';
 import { sanitizeUnitPlan } from './services/geminiService';
 import { loadPlansFromDatabase, savePlansToDatabase, migrateLocalStorageToMongoDB, needsMigration, cleanupInvalidLocalStorageKeys } from './services/databaseService';
 import { mergePlansWithReplacement, deduplicatePlans } from './services/excelBackupService';
@@ -29,6 +31,14 @@ function getInitialView(
   authenticated: boolean,
   session: { subject: string; grade: string; mode?: AppMode } | null
 ): AppView {
+  try {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('mode') === 'student' || urlParams.get('code') || urlParams.get('eval')) {
+        return AppView.STUDENT_PORTAL;
+      }
+    }
+  } catch {}
   if (!authenticated) return AppView.LOGIN;
   try {
     const savedView = localStorage.getItem('currentView') as AppView | null;
@@ -53,6 +63,15 @@ const App: React.FC = () => {
   const [session, setSession] = useState<{ subject: string; grade: string; mode?: AppMode } | null>(
     () => (getInitialAuthState() ? getInitialSession() : null)
   );
+  const [initialStudentCode, setInitialStudentCode] = useState<string>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const p = new URLSearchParams(window.location.search);
+        return p.get('code') || p.get('eval') || '';
+      }
+    } catch {}
+    return '';
+  });
   const [view, setView] = useState<AppView>(() => {
     const auth = getInitialAuthState();
     const sess = auth ? getInitialSession() : null;
@@ -289,8 +308,49 @@ const App: React.FC = () => {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  // Espace Élève autonome (accessible avec code d'évaluation même sans compte prof)
+  if (view === AppView.STUDENT_PORTAL) {
+    return (
+      <StudentEvaluationPortal
+        initialAccessCode={initialStudentCode}
+        onExit={() => {
+          setView(isAuthenticated ? AppView.HOME : AppView.LOGIN);
+          localStorage.setItem('currentView', isAuthenticated ? AppView.HOME : AppView.LOGIN);
+        }}
+      />
+    );
+  }
+
   if (!isAuthenticated) {
-    return <AuthenticationScreen onAuthenticated={handleAuthenticated} />;
+    return (
+      <AuthenticationScreen
+        onAuthenticated={handleAuthenticated}
+        onGoToStudentPortal={() => {
+          setView(AppView.STUDENT_PORTAL);
+          localStorage.setItem('currentView', AppView.STUDENT_PORTAL);
+        }}
+      />
+    );
+  }
+
+  if (view === AppView.TEACHER_EVALUATIONS) {
+    return (
+      <TeacherEvaluationsManager
+        currentSubject={session?.subject}
+        currentGrade={session?.grade}
+        allUnitPlans={currentPlans}
+        currentUser={currentUser}
+        onClose={() => {
+          const nextView = session ? AppView.DASHBOARD : AppView.HOME;
+          setView(nextView);
+          localStorage.setItem('currentView', nextView);
+        }}
+        onOpenStudentPortal={(code) => {
+          setInitialStudentCode(code);
+          setView(AppView.STUDENT_PORTAL);
+        }}
+      />
+    );
   }
 
   if (view === AppView.HOME) {
@@ -299,6 +359,14 @@ const App: React.FC = () => {
         onSelectSubjectGrade={handleSelectSubjectGrade}
         onLogout={handleLogout}
         onGoToExams={handleGoToExams}
+        onOpenEvaluationsManager={() => {
+          setView(AppView.TEACHER_EVALUATIONS);
+          localStorage.setItem('currentView', AppView.TEACHER_EVALUATIONS);
+        }}
+        onGoToStudentPortal={() => {
+          setView(AppView.STUDENT_PORTAL);
+          localStorage.setItem('currentView', AppView.STUDENT_PORTAL);
+        }}
         currentUser={currentUser}
       />
     );

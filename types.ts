@@ -314,7 +314,9 @@ export enum AppView {
   DASHBOARD = 'DASHBOARD',
   EDITOR = 'EDITOR',
   EXAMS_DASHBOARD = 'EXAMS_DASHBOARD',
-  EXAMS_WIZARD = 'EXAMS_WIZARD'
+  EXAMS_WIZARD = 'EXAMS_WIZARD',
+  STUDENT_PORTAL = 'STUDENT_PORTAL',
+  TEACHER_EVALUATIONS = 'TEACHER_EVALUATIONS',
 }
 
 export enum GlobalContext {
@@ -505,3 +507,63 @@ export interface UnitGroupingPreference {
   chapters: string;
   targetCriteria?: ('A' | 'B' | 'C' | 'D')[];
 }
+
+// ===== ÉVALUATION CRITÉRIÉE ÉLECTRONIQUE (PORTAIL ÉLÈVE & ENSEIGNANT) =====
+
+export interface OnlineEvaluation {
+  id: string; // e.g. "eval_17112345678"
+  accessCode: string; // e.g. "EVAL-8492"
+  title: string;
+  subject: string;
+  grade: string;
+  unitId?: string;
+  unitTitle?: string;
+  teacherName: string;
+  teacherUsername?: string;
+  createdAt: string;
+  status: 'active' | 'closed';
+  durationMinutes?: number; // 0 ou undefined = sans limite
+  instructions?: string;
+  statementOfInquiry?: string;
+  globalContext?: string;
+  keyConcept?: string;
+  relatedConcepts?: string[];
+  assessments: AssessmentData[];
+  allowStudentFeedbackView?: boolean;
+}
+
+export interface StudentAnswer {
+  criterion: string; // "A", "B", "C", "D"
+  exerciseIndex: number;
+  exerciseTitle: string;
+  criterionReference?: string;
+  questionContent: string;
+  studentResponse: string;
+  // Correction
+  score?: number; // Niveau 1-8
+  teacherComment?: string;
+  aiFeedback?: string;
+  aiSuggestedScore?: number;
+}
+
+export interface StudentSubmission {
+  id: string; // e.g. "sub_17112345678"
+  evaluationId: string;
+  accessCode: string;
+  studentNumber: string; // Numéro d'inscription / Matricule
+  studentName: string; // Nom et prénom de l'élève
+  submittedAt: string;
+  timeSpentMinutes?: number;
+  status: 'submitted' | 'graded';
+  answers: StudentAnswer[];
+  
+  // Note globale et retour
+  criteriaScores?: Record<string, number>; // e.g. { A: 6, B: 7 }
+  totalScore?: number; // Somme des niveaux
+  maxTotalScore?: number; // e.g. 16, 24, 32
+  overallFeedback?: string;
+  aiOverallFeedback?: string;
+  gradedAt?: string;
+  gradedBy?: string;
+}
+

@@ -16,8 +16,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 //   gemini-2.0-flash-lite → stable, quota plus généreux, shutdown juin 2026
 // ─────────────────────────────────────────────────────────────────────────────
 const GEMINI_MODELS = [
-  'gemini-2.5-flash',
   'gemini-2.0-flash',
+  'gemini-2.5-flash',
   'gemini-2.0-flash-lite',
   'gemini-2.5-flash-lite',
   'gemini-flash-latest',
@@ -39,12 +39,12 @@ const MAX_RETRY_DURATION_MS = 30 * 60_000; // 30 minutes maximum d'attente total
 // ─────────────────────────────────────────────────────────────────────────────
 function getGeminiKeys(): string[] {
   const keys: string[] = [];
+  const generic = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
+  if (generic) keys.push(generic);
   for (let i = 1; i <= 8; i++) {
     const k = (process.env[`GEMINI_API_KEY_${i}`] || '').trim();
-    if (k) keys.push(k);
+    if (k && !keys.includes(k)) keys.push(k);
   }
-  const generic = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
-  if (generic && !keys.includes(generic)) keys.push(generic);
   return keys;
 }
 

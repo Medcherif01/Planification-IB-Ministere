@@ -15,6 +15,7 @@ import HoursCalculatorModal from './HoursCalculatorModal';
 import AssessmentViewerModal from './AssessmentViewerModal';
 import UnitPlanFormImport from './UnitPlanForm';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
+import TeacherEvaluationsManager from './TeacherEvaluationsManager';
 
 interface DashboardProps {
   currentSubject: string;
@@ -278,6 +279,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   // Permissions basées sur le rôle
   const isAdmin = currentUser?.role === 'admin' || !currentUser || localStorage.getItem('userRole') === 'admin';
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [isOnlineEvaluationsOpen, setIsOnlineEvaluationsOpen] = useState(false);
+  const [onlineEvalTargetPlan, setOnlineEvalTargetPlan] = useState<UnitPlan | null>(null);
   // Pre-fill subject and grade from session
   const [bulkSubject, setBulkSubject] = useState(currentSubject);
   const [bulkGrade, setBulkGrade] = useState(currentGrade);
@@ -1895,6 +1898,16 @@ Chapitre 4 : Algèbre et équations
                  Imprimer Descriptifs
                </button>
              )}
+             <button
+               onClick={() => {
+                 setOnlineEvalTargetPlan(filteredPlans.length > 0 ? filteredPlans[0] : null);
+                 setIsOnlineEvaluationsOpen(true);
+               }}
+               className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white border border-purple-400/40 px-5 py-3 rounded-xl font-semibold shadow-lg transition hover:-translate-y-0.5"
+               title="Gérer les évaluations électroniques et les copies des élèves"
+             >
+               💻 Évals Électroniques
+             </button>
              <button 
                onClick={handleExportConsolidated}
                disabled={exportingId === 'consolidated'}
@@ -2354,6 +2367,18 @@ Chapitre 4 : Algèbre et équations
                                   >
                                     <Eye size={14}/>
                                     Voir Évals
+                                  </button>
+                                )}
+                                {plan.assessments && plan.assessments.length > 0 && (
+                                  <button
+                                    onClick={() => {
+                                      setOnlineEvalTargetPlan(plan);
+                                      setIsOnlineEvaluationsOpen(true);
+                                    }}
+                                    className="flex items-center gap-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-2 py-1 rounded transition text-xs font-semibold"
+                                    title="Lancer cette évaluation en ligne pour les élèves ou corriger les copies"
+                                  >
+                                    💻 Éval En Ligne
                                   </button>
                                 )}
                                 {/* ── Boutons admin uniquement : Mise à jour Évals + Ajouter Détails ── */}
@@ -3782,7 +3807,29 @@ Chapitre 4 : Algèbre et équations
         else onAddPlans(plans.map(p => p.id === plan.id ? plan : p));
         setViewerPlan(plan);
       }}
+      onOpenOnlineManager={plan => {
+        setOnlineEvalTargetPlan(plan);
+        setIsOnlineEvaluationsOpen(true);
+        setViewerPlan(null);
+      }}
     />
+
+    {/* ═══════════════════════════════════════════════════════════════════
+        MODAL : GESTION DES ÉVALUATIONS ÉLECTRONIQUES & COPIES ÉLÈVES
+        ═══════════════════════════════════════════════════════════════════ */}
+    {isOnlineEvaluationsOpen && (
+      <TeacherEvaluationsManager
+        currentSubject={currentSubject}
+        currentGrade={currentGrade}
+        currentUnitPlan={onlineEvalTargetPlan}
+        allUnitPlans={plans}
+        currentUser={currentUser}
+        onClose={() => {
+          setIsOnlineEvaluationsOpen(false);
+          setOnlineEvalTargetPlan(null);
+        }}
+      />
+    )}
 
     {/* ═══════════════════════════════════════════════════════════════════
         MODAL : ÉDITEUR CRITÈRES IB INTERDISCIPLINAIRE

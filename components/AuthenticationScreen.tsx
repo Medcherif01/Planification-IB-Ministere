@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { Lock, User, AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Lock, User, AlertCircle, Eye, EyeOff, Loader2, GraduationCap, ChevronRight } from 'lucide-react';
 import { loginUser, setCurrentUser } from '../services/authService';
 
 interface AuthenticationScreenProps {
   onAuthenticated: () => void;
+  onGoToStudentPortal?: () => void;
 }
 
-const AuthenticationScreen: React.FC<AuthenticationScreenProps> = ({ onAuthenticated }) => {
+const AuthenticationScreen: React.FC<AuthenticationScreenProps> = ({ onAuthenticated, onGoToStudentPortal }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -129,7 +130,29 @@ const AuthenticationScreen: React.FC<AuthenticationScreenProps> = ({ onAuthentic
             </button>
           </form>
 
-          <div className="mt-5 text-center space-y-2">
+          {/* Accès Espace Élève */}
+          {onGoToStudentPortal && (
+            <div className="mt-5 pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={onGoToStudentPortal}
+                className="w-full flex items-center justify-between p-3.5 bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 border border-purple-200 rounded-xl text-purple-900 font-bold text-xs transition shadow-xs group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold">
+                    <GraduationCap size={16} />
+                  </div>
+                  <div className="text-left">
+                    <span className="block font-black text-slate-800 text-xs">🎓 Vous êtes élève ?</span>
+                    <span className="text-[11px] text-purple-700 font-medium">Passer une évaluation avec votre code</span>
+                  </div>
+                </div>
+                <ChevronRight size={16} className="text-purple-600 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+            </div>
+          )}
+
+          <div className="mt-4 text-center space-y-2">
             <p className="text-xs text-slate-400">
               🔒 Session sécurisée · Contactez l'administrateur pour accéder à votre compte
             </p>

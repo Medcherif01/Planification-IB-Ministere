@@ -32,6 +32,8 @@ interface HomeScreenProps {
   onSelectSubjectGrade: (subject: string, grade: string, mode: AppMode) => void;
   onLogout: () => void;
   onGoToExams: () => void;
+  onOpenEvaluationsManager?: () => void;
+  onGoToStudentPortal?: () => void;
   currentUser?: AppUser | null;
 }
 
@@ -131,7 +133,14 @@ const GRADE_CONFIG: Record<string, { emoji: string; color: string; textColor: st
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout, onGoToExams, currentUser }) => {
+const HomeScreen: React.FC<HomeScreenProps> = ({
+  onSelectSubjectGrade,
+  onLogout,
+  onGoToExams,
+  onOpenEvaluationsManager,
+  onGoToStudentPortal,
+  currentUser,
+}) => {
 
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -564,6 +573,24 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onSelectSubjectGrade, onLogout,
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-semibold transition border border-white/20"
               >
                 📝 Examens
+              </button>
+            )}
+            {onOpenEvaluationsManager && (
+              <button
+                onClick={onOpenEvaluationsManager}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/80 hover:bg-purple-400 text-white rounded-lg text-xs font-semibold transition border border-purple-300/40 shadow-sm"
+                title="Gérer les évaluations électroniques et corriger les copies d'élèves"
+              >
+                💻 Évals en ligne
+              </button>
+            )}
+            {onGoToStudentPortal && (
+              <button
+                onClick={onGoToStudentPortal}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/80 hover:bg-indigo-400 text-white rounded-lg text-xs font-semibold transition border border-indigo-300/40 shadow-sm"
+                title="Accéder à l'espace élève pour passer une évaluation"
+              >
+                🎓 Espace Élève
               </button>
             )}
             <button

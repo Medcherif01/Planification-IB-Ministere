@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { X, Eye, Edit3, Save, CheckCircle, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
-import { UnitPlan, AssessmentData } from '../types';
+import { X, Eye, Edit3, Save, CheckCircle, AlertTriangle, ChevronLeft, ChevronRight, Printer, Send, Copy, Check } from 'lucide-react';
+import { UnitPlan, AssessmentData, OnlineEvaluation } from '../types';
+import EvaluationPrintView from './EvaluationPrintView';
+import { createOrUpdateEvaluation } from '../services/onlineEvaluationService';
 
 interface AssessmentViewerModalProps {
   isOpen: boolean;
   onClose: () => void;
   plan: UnitPlan | null;
   onUpdateUnit?: (plan: UnitPlan) => void;
+  onOpenOnlineManager?: (plan: UnitPlan) => void;
 }
 
 const CRITERION_COLORS: Record<string, { bg: string; border: string; text: string; badge: string; light: string }> = {
@@ -17,12 +20,16 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
 };
 
 const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
-  isOpen, onClose, plan, onUpdateUnit,
+  isOpen, onClose, plan, onUpdateUnit, onOpenOnlineManager,
 }) => {
   const [assessments, setAssessments] = useState<AssessmentData[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [publishedCode, setPublishedCode] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !plan) return;
@@ -30,9 +37,57 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
     setActiveIdx(0);
     setEditMode(false);
     setSaveStatus('idle');
+    setPublishedCode(null);
   }, [isOpen, plan]);
 
   if (!isOpen || !plan) return null;
+
+  const handlePublishOnline = async () => {
+    if (!plan || assessments.length === 0) return;
+    setIsPublishing(true);
+    try {
+      const accessCode = `EVAL-${Math.floor(1000 + Math.random() * 9000)}`;
+      const newEval = await createOrUpdateEvaluation({
+        accessCode,
+        title: `Évaluation : ${plan.title}`,
+        subject: plan.subject || '',
+        grade: plan.gradeLevel || '',
+        unitId: plan.id,
+        unitTitle: plan.title,
+        teacherName: plan.teacherName || 'Enseignant',
+        statementOfInquiry: plan.statementOfInquiry,
+        globalContext: plan.globalContext,
+        keyConcept: plan.keyConcept,
+        relatedConcepts: plan.relatedConcepts,
+        assessments: assessments,
+        durationMinutes: 45,
+        status: 'active',
+      });
+      setPublishedCode(newEval.accessCode);
+    } catch (err: any) {
+      alert(`Erreur activation en ligne : ${err.message || 'Veuillez réessayer'}`);
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  const getEvaluationForPrint = (): OnlineEvaluation => ({
+    id: plan.id,
+    accessCode: publishedCode || 'EVAL-0000',
+    title: `Évaluation critériée — ${plan.title}`,
+    subject: plan.subject || '',
+    grade: plan.gradeLevel || '',
+    unitId: plan.id,
+    unitTitle: plan.title,
+    teacherName: plan.teacherName || 'Enseignant',
+    createdAt: new Date().toISOString(),
+    status: 'active',
+    statementOfInquiry: plan.statementOfInquiry,
+    globalContext: plan.globalContext,
+    keyConcept: plan.keyConcept,
+    relatedConcepts: plan.relatedConcepts,
+    assessments: assessments,
+  });
 
   const active = assessments[activeIdx];
 
@@ -90,6 +145,21 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => setShowPrintModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/20 text-white hover:bg-white/30 transition"
+              title="Imprimer le sujet en version HTML A4 avec marges de 1 cm"
+            >
+              <Printer size={13} /> Imprimer A4
+            </button>
+            <button
+              onClick={handlePublishOnline}
+              disabled={isPublishing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-yellow-400 hover:bg-yellow-300 text-yellow-950 transition shadow"
+              title="Activer cette évaluation sous forme électronique pour les élèves"
+            >
+              <Send size={13} /> {isPublishing ? 'Activation…' : 'Activer en ligne'}
+            </button>
             {onUpdateUnit && (
               <button
                 onClick={() => setEditMode(v => !v)}
@@ -105,6 +175,44 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Bannière de publication en ligne si activée */}
+        {publishedCode && (
+          <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-3 flex items-center justify-between gap-3 text-xs text-emerald-900">
+            <div className="flex items-center gap-2">
+              <CheckCircle size={16} className="text-emerald-600 flex-shrink-0" />
+              <span>
+                Évaluation disponible en ligne pour les élèves ! Code d'accès :{' '}
+                <strong className="font-mono bg-white px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 text-sm">
+                  {publishedCode}
+                </strong>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(publishedCode);
+                  setCopiedCode(true);
+                  setTimeout(() => setCopiedCode(false), 2000);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-emerald-100 text-emerald-800 rounded border border-emerald-300 font-semibold"
+              >
+                {copiedCode ? <Check size={12} /> : <Copy size={12} />}
+                {copiedCode ? 'Copié !' : 'Copier code'}
+              </button>
+              {onOpenOnlineManager && (
+                <button
+                  onClick={() => {
+                    if (plan) onOpenOnlineManager(plan);
+                  }}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-semibold"
+                >
+                  Voir les copies
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {assessments.length === 0 ? (
           <div className="p-12 text-center text-slate-400">
@@ -332,6 +440,14 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
           </>
         )}
       </div>
+
+      {/* Impression A4 */}
+      {showPrintModal && plan && (
+        <EvaluationPrintView
+          evaluation={getEvaluationForPrint()}
+          onClose={() => setShowPrintModal(false)}
+        />
+      )}
     </div>
   );
 };
