@@ -199,6 +199,12 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   // Print view modal
   const [showPrintModal, setShowPrintModal] = useState(false);
 
+  // Sécurité plein écran & surveillance anti-fraude
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [terminatedReason, setTerminatedReason] = useState<string | null>(null);
+  const hasTriggeredViolationRef = useRef(false);
+  const handleSubmitRef = useRef<((forceAutoSubmit?: boolean, reason?: string) => Promise<void>) | null>(null);
+
   // Synchroniser le code d'accès si fourni par l'URL (ex: ?code=EVAL-1234)
   useEffect(() => {
     if (initialAccessCode) {
@@ -206,17 +212,23 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     }
   }, [initialAccessCode]);
 
-  // Déconnexion manuelle pour permettre à un autre élève de s'identifier
-  const handleLogoutStudent = () => {
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    setEvaluation(null);
-    setExistingSubmission(null);
-    setIsLockedAlready(false);
-    setStudentNumber('');
-    setStudentName('');
-    setAnswers({});
-    setDrawings({});
-    setLoginError('');
+  // Demander le mode plein écran au navigateur
+  const enterFullscreen = async () => {
+    try {
+      const el = document.documentElement;
+      if (el.requestFullscreen) {
+        await el.requestFullscreen();
+      } else if ((el as any).webkitRequestFullscreen) {
+        await (el as any).webkitRequestFullscreen();
+      } else if ((el as any).mozRequestFullscreen) {
+        await (el as any).mozRequestFullscreen();
+      } else if ((el as any).msRequestFullscreen) {
+        await (el as any).msRequestFullscreen();
+      }
+      setIsFullscreen(true);
+    } catch (err) {
+      console.warn('Mode plein écran :', err);
+    }
   };
 
   // Gestion du chronomètre 45 minutes
@@ -344,6 +356,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           if (parsed.drawings) setDrawings(parsed.drawings);
         } catch {}
       }
+
+      // 5. Réinitialiser la surveillance et activer le mode plein écran obligatoire (Exigence brief)
+      hasTriggeredViolationRef.current = false;
+      await enterFullscreen();
     } catch (err: any) {
       setLoginError(err.message || 'Erreur lors de la validation du code.');
     } finally {
@@ -429,9 +445,120 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     });
   }
 
+  // ── SÉCURITÉ ANTI-FRAUDE : PLEIN ÉCRAN OBLIGATOIRE & INTERDICTION DE QUITTER OU CHANGER D'ONGLET ──
+  const isTakingExam = Boolean(evaluation && !existingSubmission && !isLockedAlready);
+
+  useEffect(() => {
+    handleSubmitRef.current = handleSubmitEvaluation;
+  });
+
+  useEffect(() => {
+    if (!isTakingExam) return;
+
+    let blurTimer: any = null;
+
+    const triggerAutoTermination = (reason: string) => {
+      if (hasTriggeredViolationRef.current) return;
+      hasTriggeredViolationRef.current = true;
+      setTerminatedReason(reason);
+
+      // Quitter le plein écran si actif
+      try {
+        if (document.fullscreenElement) {
+          document.exitFullscreen?.().catch(() => {});
+        }
+      } catch {}
+
+      if (handleSubmitRef.current) {
+        handleSubmitRef.current(true, reason);
+      }
+    };
+
+    // 1. Détection de sortie du plein écran
+    const handleFullscreenChange = () => {
+      const activeFs = Boolean(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      setIsFullscreen(activeFs);
+
+      if (!activeFs && !hasTriggeredViolationRef.current) {
+        triggerAutoTermination("Sortie du mode plein écran détectée. Il est strictement interdit de quitter le plein écran durant l'évaluation.");
+      }
+    };
+
+    // 2. Détection de changement d'onglet ou masquage de la page (visibilitychange)
+    const handleVisibilityChange = () => {
+      if (document.hidden && !hasTriggeredViolationRef.current) {
+        triggerAutoTermination("Changement d'onglet ou minimisation de la fenêtre détecté. L'évaluation a été automatiquement clôturée.");
+      }
+    };
+
+    // 3. Détection de perte de focus (ouverture d'une autre application ou onglet)
+    const handleWindowBlur = () => {
+      blurTimer = setTimeout(() => {
+        if ((document.hidden || !document.hasFocus()) && !hasTriggeredViolationRef.current) {
+          triggerAutoTermination("Perte de focus de la fenêtre d'examen détectée (tentative d'ouverture d'un autre programme ou onglet).");
+        }
+      }, 250);
+    };
+
+    // 4. Bloquer le clic droit (menu contextuel)
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      return false;
+    };
+
+    // 5. Bloquer les raccourcis clavier de navigation et d'inspection
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === 'F11' ||
+        e.key === 'F12' ||
+        (e.altKey && (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) ||
+        (e.ctrlKey && (e.key === 't' || e.key === 'T' || e.key === 'n' || e.key === 'N' || e.key === 'w' || e.key === 'W' || e.key === 'r' || e.key === 'R')) ||
+        (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'C' || e.key === 'c' || e.key === 'J' || e.key === 'j'))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    // 6. Alerte en cas de tentative de rechargement ou de fermeture de la page
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "L'évaluation est en cours. Toute sortie clôturera automatiquement votre copie.";
+      return e.returnValue;
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      if (blurTimer) clearTimeout(blurTimer);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isTakingExam]);
+
   // ── Soumission de la copie (avec verrouillage immédiat et définitif) ───────
-  const handleSubmitEvaluation = async (forceAutoSubmit = false) => {
+  const handleSubmitEvaluation = async (forceAutoSubmit = false, reason = '') => {
     if (!evaluation || isSubmitting || isLockedAlready) return;
+
+    if (reason) {
+      setTerminatedReason(reason);
+    }
 
     setIsSubmitting(true);
     try {
@@ -498,12 +625,21 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
 
+      // Quitter le plein écran dès la remise
+      try {
+        if (document.fullscreenElement) {
+          document.exitFullscreen?.().catch(() => {});
+        }
+      } catch {}
+
       setExistingSubmission(submission);
       setIsLockedAlready(true);
       setShowConfirmSubmit(false);
 
       if (!forceAutoSubmit) {
         alert('🎉 Votre copie a été remise avec succès et est maintenant verrouillée.');
+      } else if (reason) {
+        alert(`⚠️ ÉVALUATION CLÔTURÉE AUTOMATIQUEMENT :\n\n${reason}\n\nVos réponses saisies ont été enregistrées et verrouillées.`);
       }
     } catch (err: any) {
       alert(`Erreur lors de la remise : ${err.message || 'Impossible de soumettre la copie'}`);
@@ -555,11 +691,16 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               </div>
             )}
 
-            <div className="mb-4 bg-amber-50/90 border border-amber-200 text-amber-900 p-3 rounded-xl text-xs flex items-start gap-2">
-              <ShieldCheck size={16} className="text-amber-700 flex-shrink-0 mt-0.5" />
-              <div className="leading-relaxed">
-                <span className="font-bold text-amber-950 block">Identification obligatoire</span>
-                Chaque élève doit impérativement renseigner son nom, prénom et numéro d'inscription pour accéder à l'épreuve.
+            <div className="mb-4 bg-amber-50/90 border-2 border-amber-300 text-amber-950 p-4 rounded-2xl text-xs space-y-2 shadow-xs">
+              <div className="flex items-center gap-2 font-black text-amber-900 text-sm">
+                <ShieldCheck size={18} className="text-amber-700 flex-shrink-0" />
+                <span>Mode Examen Sécurisé & Plein Écran Obligatoire</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-900 font-medium">
+                Dès que vous cliquerez sur <strong>« Commencer l'évaluation »</strong>, votre navigateur passera obligatoirement en <strong>plein écran</strong>.
+              </p>
+              <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200 text-[11px] text-rose-700 font-bold">
+                ⚠️ Il est formellement interdit de quitter le plein écran ou d'ouvrir un autre onglet. Si vous le faites, votre examen sera <u>automatiquement terminé et remis</u>.
               </div>
             </div>
 
@@ -672,13 +813,6 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               <Printer size={15} /> Imprimer ma copie (A4)
             </button>
             <button
-              onClick={handleLogoutStudent}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold rounded-lg transition border border-purple-200"
-              title="Se déconnecter pour permettre à un autre élève de s'identifier"
-            >
-              <User size={14} /> Changer d'élève
-            </button>
-            <button
               onClick={() => {
                 setEvaluation(null);
                 setExistingSubmission(null);
@@ -694,6 +828,26 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
         {/* Contenu copie verrouillée */}
         <main className="max-w-4xl mx-auto w-full p-4 sm:p-6 space-y-6 flex-1">
+          {/* Notification si l'épreuve a été clôturée pour sortie d'écran / changement d'onglet */}
+          {terminatedReason && (
+            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-5 text-rose-950 flex items-start gap-4">
+              <div className="w-12 h-12 bg-rose-600 text-white rounded-2xl flex items-center justify-center flex-shrink-0 shadow-md">
+                <AlertCircle size={26} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-rose-900">
+                  ⚠️ Évaluation terminée et clôturée automatiquement
+                </h3>
+                <p className="text-xs text-rose-800 mt-1 leading-relaxed font-medium">
+                  {terminatedReason}
+                </p>
+                <p className="text-[11px] text-rose-700 mt-1">
+                  Toutes les réponses saisies jusqu'à cet instant ont été sauvegardées et transmises à l'enseignant.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 text-amber-950 flex items-start gap-4">
             <div className="w-12 h-12 bg-amber-500 text-white rounded-2xl flex items-center justify-center flex-shrink-0 shadow-md">
               <Lock size={26} />
@@ -900,7 +1054,32 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   ];
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col">
+    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col select-none">
+      {/* ⚠️ MODALE DE FORÇAGE PLEIN ÉCRAN SI DÉSACTIVÉ */}
+      {!isFullscreen && isTakingExam && (
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full text-center space-y-4 shadow-2xl border border-purple-200">
+            <div className="w-16 h-16 bg-purple-100 text-purple-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+              <ShieldCheck size={36} />
+            </div>
+            <h3 className="text-lg font-black text-slate-900">Mode Plein Écran Obligatoire</h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Pour des raisons d'intégrité académique, cette épreuve doit impérativement être passée en <strong>plein écran</strong>.
+              <br /><br />
+              <strong className="text-rose-600">Attention :</strong> Si vous quittez le plein écran ou ouvrez un autre onglet, l'examen sera <strong>immédiatement clôturé</strong> pour vous.
+            </p>
+            <button
+              type="button"
+              onClick={enterFullscreen}
+              className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-lg flex items-center justify-center gap-2"
+            >
+              <span>Activer le plein écran pour composer</span>
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── TOP BAR STICKY AVEC CHRONO 45 MIN & AUTO-SAVE ── */}
       <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
@@ -933,25 +1112,17 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               <span>{answeredQuestionsCount} / {totalQuestionsCount} répondues</span>
             </div>
 
+            {/* 🔒 Indicateur plein écran & surveillance */}
+            <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Plein écran actif · Surveillance anti-fraude</span>
+            </div>
+
             <button
               onClick={() => setShowConfirmSubmit(true)}
               className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
             >
               <Send size={14} /> Soumettre ma copie
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (confirm('Voulez-vous vous déconnecter pour changer d\'élève ? Vos réponses saisies sont conservées en brouillon sur cet appareil.')) {
-                  handleLogoutStudent();
-                }
-              }}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold rounded-xl transition border border-slate-200"
-              title="Changer d'élève / Déconnexion"
-            >
-              <LogOut size={13} />
-              <span>Changer d'élève</span>
             </button>
           </div>
         </div>
