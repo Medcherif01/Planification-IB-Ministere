@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { X, Printer, Award, Clock, Download } from 'lucide-react';
-import { OnlineEvaluation, StudentSubmission } from '../types';
+import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../types';
 
 interface EvaluationPrintViewProps {
   evaluation: OnlineEvaluation;
@@ -22,7 +22,6 @@ function getQuestionStrandLabel(
   exercise: { criterionReference?: string; strandIndex?: string; strandText?: string; title?: string },
   exerciseIndex: number
 ): { roman: string; description: string; fullText: string } {
-  // Si le sous-aspect est déjà spécifié
   if (exercise.strandIndex && exercise.strandText) {
     return {
       roman: exercise.strandIndex,
@@ -31,7 +30,6 @@ function getQuestionStrandLabel(
     };
   }
 
-  // Vérifier criterionReference (ex: "Critère A : ii. appliquer...")
   const ref = exercise.criterionReference || '';
   const match = ref.match(/(?:aspect|sous-aspect|strand)?\s*([ivx]+)\s*[\.\:\-\)]\s*(.*)/i);
   if (match) {
@@ -44,11 +42,9 @@ function getQuestionStrandLabel(
     };
   }
 
-  // Attribution par index : Question 1 -> i, Question 2 -> ii, Question 3 -> iii...
   const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
   const targetRoman = romanNumerals[exerciseIndex % romanNumerals.length] || 'i';
 
-  // Recherche dans les strands du critère
   const matched = strands.find(s =>
     s.toLowerCase().trim().startsWith(`${targetRoman}.`) ||
     s.toLowerCase().trim().startsWith(`${targetRoman})`)
@@ -70,6 +66,92 @@ function getQuestionStrandLabel(
     description: cleanFallback,
     fullText: `Sous-aspect (${targetRoman}) : ${cleanFallback || `Compétence ${criterionLetter}`}`,
   };
+}
+
+// Helper: résoudre le sous-aspect d'une sous-question spécifique
+function getSubQuestionStrandLabel(
+  criterionLetter: string,
+  strands: string[] = [],
+  sub: AssessmentSubQuestion,
+  subIndex: number
+): { roman: string; description: string; fullText: string } {
+  if (sub.strandIndex && sub.strandText) {
+    return {
+      roman: sub.strandIndex,
+      description: sub.strandText,
+      fullText: `Sous-aspect (${sub.strandIndex}) : ${sub.strandText}`,
+    };
+  }
+
+  const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+  const targetRoman = (sub.strandIndex || romanNumerals[subIndex % romanNumerals.length] || 'i').toLowerCase();
+
+  const matched = strands.find(s =>
+    s.toLowerCase().trim().startsWith(`${targetRoman}.`) ||
+    s.toLowerCase().trim().startsWith(`${targetRoman})`)
+  );
+
+  if (matched) {
+    const cleanDesc = matched.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+    return {
+      roman: targetRoman,
+      description: cleanDesc,
+      fullText: `Sous-aspect (${targetRoman}) : ${cleanDesc}`,
+    };
+  }
+
+  const fallback = strands[subIndex % Math.max(1, strands.length)] || '';
+  const cleanFallback = fallback.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+  return {
+    roman: targetRoman,
+    description: cleanFallback,
+    fullText: `Sous-aspect (${targetRoman}) : ${cleanFallback || `Compétence ${criterionLetter}`}`,
+  };
+}
+
+// Helper: Extraire les sous-questions d'un exercice (soit explicites, soit par détection 1) ... 2) ...)
+function getExerciseSubQuestions(
+  exercise: any,
+  criterionLetter: string,
+  strands: string[] = []
+): AssessmentSubQuestion[] {
+  if (exercise.subQuestions && exercise.subQuestions.length > 0) {
+    return exercise.subQuestions;
+  }
+
+  const content = exercise.content || '';
+  const pattern = /(?:^|\n)\s*(?:([0-9]+|[a-d])\s*[\)\.]\s+)/gi;
+  const matches = Array.from(content.matchAll(pattern)) as RegExpExecArray[];
+
+  if (matches.length >= 2) {
+    const subQuestions: AssessmentSubQuestion[] = [];
+    const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+
+    for (let i = 0; i < matches.length; i++) {
+      const match = matches[i];
+      const nextMatch = matches[i + 1];
+      const startPos = (match.index || 0) + match[0].length;
+      const endPos = nextMatch ? nextMatch.index : content.length;
+      const subText = content.substring(startPos, endPos).trim();
+      const label = match[1] + ')';
+      const roman = romanNumerals[i % romanNumerals.length];
+      const matchedStrand = strands.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+
+      subQuestions.push({
+        id: `sub_${i + 1}`,
+        label,
+        content: subText,
+        strandIndex: roman,
+        strandText: matchedStrand || '',
+        type: exercise.type || 'open',
+        options: exercise.options,
+        correctAnswer: exercise.correctAnswer,
+      });
+    }
+    return subQuestions;
+  }
+
+  return [];
 }
 
 const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, submission, onClose }) => {
@@ -461,7 +543,8 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                     ans => ans.criterion === crit.criterion && ans.exerciseIndex === exIdx
                   );
 
-                  // Calcul du sous-aspect individuel (ex: "Aspect i", "Aspect ii")
+                  const subQuestions = getExerciseSubQuestions(ex, crit.criterion, crit.strands);
+                  const hasSubQuestions = subQuestions.length > 0;
                   const strandInfo = getQuestionStrandLabel(crit.criterion, crit.strands, ex, exIdx);
 
                   return (
@@ -485,11 +568,6 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         )}
                       </div>
 
-                      {/* 🔴 SOUS-ASPECT SPÉCIFIQUE EN ROUGE SOUS CHAQUE QUESTION (EXIGENCE EXPLICITE) */}
-                      <div className="text-red-600 font-bold text-[11px] flex items-center gap-1.5 bg-red-50/60 px-2 py-1 rounded border border-red-200">
-                        <span className="text-red-700 font-black">● {strandInfo.fullText}</span>
-                      </div>
-
                       {/* OEUVRE D'ART / PHOTO / ILLUSTRATION (SI PRÉSENTE) */}
                       {ex.imageUrl && (
                         <div className="my-2 p-2 bg-slate-50 border border-slate-200 rounded-lg text-center avoid-break">
@@ -506,55 +584,163 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         </div>
                       )}
 
-                      {/* Énoncé de la question */}
-                      <div className="text-slate-800 whitespace-pre-wrap leading-relaxed font-normal bg-slate-50/60 p-2.5 rounded border border-slate-100">
-                        {ex.content}
-                      </div>
+                      {/* Énoncé global de la question */}
+                      {ex.content && (
+                        <div className="text-slate-800 whitespace-pre-wrap leading-relaxed font-normal bg-slate-50/60 p-2.5 rounded border border-slate-100">
+                          {ex.content}
+                        </div>
+                      )}
 
-                      {/* SECTION RÉPONSE */}
-                      {isCorrectedCopy ? (
-                        <div className="mt-2 space-y-2">
-                          <div className="bg-slate-50 border border-slate-200 rounded p-2.5">
-                            <span className="text-[10px] font-bold text-slate-600 block uppercase mb-1">
-                              Réponse rédigée par l'élève :
-                            </span>
-                            <p className="text-slate-900 whitespace-pre-wrap leading-relaxed font-mono text-[11px]">
-                              {studentAns?.studentResponse || '(Aucune réponse saisie)'}
-                            </p>
+                      {/* ═══════════════════════════════════════════════════════════
+                          CAS 1 : SOUS-QUESTIONS 1), 2), 3)...
+                          Chaque sous-question a son sous-aspect en rouge et sa réponse
+                          ═══════════════════════════════════════════════════════════ */}
+                      {hasSubQuestions ? (
+                        <div className="space-y-3 pt-1">
+                          {subQuestions.map((sub, sIdx) => {
+                            const subStrand = getSubQuestionStrandLabel(crit.criterion, crit.strands, sub, sIdx);
+                            const subId = sub.id || `sub_${sIdx + 1}`;
+                            const subAnswerData = studentAns?.subAnswers?.[subId];
+                            const subResponseText = subAnswerData?.response;
+                            const subDrawing = subAnswerData?.drawingDataUrl;
 
-                            {/* Figure géométrique / dessin inséré par l'élève */}
-                            {studentAns?.drawingDataUrl && (
-                              <div className="mt-2 pt-2 border-t border-slate-200 text-center">
-                                <span className="text-[10px] font-bold text-slate-500 block mb-1">
-                                  📐 Figure géométrique / tracé de l'élève :
-                                </span>
-                                <img
-                                  src={studentAns.drawingDataUrl}
-                                  alt="Figure géométrique élève"
-                                  className="max-h-48 max-w-full mx-auto border border-slate-300 rounded shadow-xs bg-white"
-                                />
+                            return (
+                              <div key={subId} className="border border-purple-200 rounded-lg p-2.5 bg-purple-50/20 space-y-2 avoid-break">
+                                <div className="flex items-baseline gap-2">
+                                  <span className="font-bold text-xs text-purple-800 bg-purple-100 px-1.5 py-0.5 rounded">
+                                    {sub.label}
+                                  </span>
+                                  <span className="font-bold text-slate-900 text-xs">{sub.content}</span>
+                                </div>
+
+                                {/* 🔴 SOUS-ASPECT EN ROUGE SOUS LA SOUS-QUESTION */}
+                                <div className="text-red-600 font-bold text-[11px] flex items-center gap-1.5 bg-red-50/70 px-2 py-0.5 rounded border border-red-200">
+                                  <span className="text-red-700 font-black">● {subStrand.fullText}</span>
+                                </div>
+
+                                {/* Si QCM pour cette sous-question */}
+                                {sub.type === 'multiple_choice' && (
+                                  <div className="space-y-1 pt-1">
+                                    {(sub.options || ex.options || ['Proposition A', 'Proposition B', 'Proposition C']).map((opt, oIdx) => {
+                                      const isChosen = subResponseText === opt;
+                                      return (
+                                        <div key={oIdx} className="flex items-center gap-2 text-xs">
+                                          <span className={`w-4 h-4 rounded border flex items-center justify-center font-bold text-[10px] ${
+                                            isChosen ? 'bg-purple-600 text-white border-purple-600' : 'border-slate-400 bg-white'
+                                          }`}>
+                                            {isChosen ? '✓' : ''}
+                                          </span>
+                                          <span className={isChosen ? 'font-bold text-purple-950' : 'text-slate-700'}>{opt}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                {/* Si Rédaction libre */}
+                                {sub.type !== 'multiple_choice' && (
+                                  isCorrectedCopy ? (
+                                    <div className="bg-white border border-slate-200 rounded p-2 text-xs">
+                                      <span className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                                        Réponse de l'élève ({sub.label}) :
+                                      </span>
+                                      <p className="text-slate-900 font-mono text-[11px] whitespace-pre-wrap">
+                                        {subResponseText || '(Aucune réponse saisie)'}
+                                      </p>
+                                      {subDrawing && (
+                                        <div className="mt-2 pt-1 border-t border-slate-200 text-center">
+                                          <span className="text-[10px] font-bold text-slate-500 block mb-0.5">Tracé / Dessin rattaché :</span>
+                                          <img src={subDrawing} alt="Figure élève" className="max-h-36 max-w-full mx-auto border rounded bg-white" />
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="p-2 border border-slate-300 rounded min-h-[50px] bg-white">
+                                      <span className="text-[9px] font-semibold text-slate-400 block uppercase">
+                                        [ Espace réponse pour {sub.label} ]
+                                      </span>
+                                    </div>
+                                  )
+                                )}
                               </div>
-                            )}
-                          </div>
-
-                          {/* Commentaire enseignant / IA */}
-                          {(studentAns?.teacherComment || studentAns?.aiFeedback) && (
-                            <div className="bg-purple-50/70 border border-purple-200 rounded p-2 text-[11px]">
-                              <span className="text-[10px] font-bold text-purple-900 block uppercase">
-                                Feedback / Commentaire de l'enseignant :
-                              </span>
-                              <p className="text-purple-950 italic">
-                                {studentAns.teacherComment || studentAns.aiFeedback}
-                              </p>
-                            </div>
-                          )}
+                            );
+                          })}
                         </div>
                       ) : (
-                        /* Pour sujet vierge imprimé : bloc propre sans espace pointillé */
-                        <div className="mt-2 p-3 border border-slate-300 rounded-lg min-h-[90px] bg-white">
-                          <span className="text-[10px] font-semibold text-slate-400 block uppercase">
-                            [ Espace réservé pour la réponse rédigée de l'élève ]
-                          </span>
+                        /* ═══════════════════════════════════════════════════════════
+                            CAS 2 : QUESTION UNIQUE SANS SOUS-QUESTIONS
+                            ═══════════════════════════════════════════════════════════ */
+                        <div className="space-y-2">
+                          {/* 🔴 SOUS-ASPECT SPÉCIFIQUE EN ROUGE SOUS LA QUESTION */}
+                          <div className="text-red-600 font-bold text-[11px] flex items-center gap-1.5 bg-red-50/60 px-2 py-1 rounded border border-red-200">
+                            <span className="text-red-700 font-black">● {strandInfo.fullText}</span>
+                          </div>
+
+                          {/* Si QCM simple */}
+                          {ex.type === 'multiple_choice' && (
+                            <div className="space-y-1.5 pt-1">
+                              {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, oIdx) => {
+                                const isChosen = studentAns?.studentResponse === opt;
+                                return (
+                                  <div key={oIdx} className="flex items-center gap-2 text-xs">
+                                    <span className={`w-4 h-4 rounded border flex items-center justify-center font-bold text-[10px] ${
+                                      isChosen ? 'bg-purple-600 text-white border-purple-600' : 'border-slate-400 bg-white'
+                                    }`}>
+                                      {isChosen ? '✓' : ''}
+                                    </span>
+                                    <span className={isChosen ? 'font-bold text-purple-950' : 'text-slate-700'}>{opt}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* SECTION RÉPONSE */}
+                          {ex.type !== 'multiple_choice' && (
+                            isCorrectedCopy ? (
+                              <div className="mt-2 space-y-2">
+                                <div className="bg-slate-50 border border-slate-200 rounded p-2.5">
+                                  <span className="text-[10px] font-bold text-slate-600 block uppercase mb-1">
+                                    Réponse rédigée par l'élève :
+                                  </span>
+                                  <p className="text-slate-900 whitespace-pre-wrap leading-relaxed font-mono text-[11px]">
+                                    {studentAns?.studentResponse || '(Aucune réponse saisie)'}
+                                  </p>
+
+                                  {studentAns?.drawingDataUrl && (
+                                    <div className="mt-2 pt-2 border-t border-slate-200 text-center">
+                                      <span className="text-[10px] font-bold text-slate-500 block mb-1">
+                                        📐 Figure géométrique / tracé de l'élève :
+                                      </span>
+                                      <img
+                                        src={studentAns.drawingDataUrl}
+                                        alt="Figure géométrique élève"
+                                        className="max-h-48 max-w-full mx-auto border border-slate-300 rounded shadow-xs bg-white"
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Commentaire enseignant / IA */}
+                                {(studentAns?.teacherComment || studentAns?.aiFeedback) && (
+                                  <div className="bg-purple-50/70 border border-purple-200 rounded p-2 text-[11px]">
+                                    <span className="text-[10px] font-bold text-purple-900 block uppercase">
+                                      Feedback / Commentaire de l'enseignant :
+                                    </span>
+                                    <p className="text-purple-950 italic">
+                                      {studentAns.teacherComment || studentAns.aiFeedback}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="mt-2 p-3 border border-slate-300 rounded-lg min-h-[90px] bg-white">
+                                <span className="text-[10px] font-semibold text-slate-400 block uppercase">
+                                  [ Espace réservé pour la réponse rédigée de l'élève ]
+                                </span>
+                              </div>
+                            )
+                          )}
                         </div>
                       )}
                     </div>

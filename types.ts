@@ -1,3 +1,15 @@
+export interface AssessmentSubQuestion {
+  id: string; // e.g. "sub_1", "sub_2"
+  label: string; // e.g. "1)", "2)", "3)" or "a)", "b)", "c)"
+  content: string; // Consigne de la sous-question
+  strandIndex?: string; // "i", "ii", "iii", "iv", etc.
+  strandText?: string; // Description de l'aspect spécifique
+  type?: 'open' | 'true_false' | 'multiple_choice';
+  options?: string[]; // Pour QCM: ["Option A", "Option B", "Option C", "Option D"]
+  correctAnswer?: string;
+  points?: number;
+}
+
 export interface AssessmentExercise {
   title: string;
   content: string;
@@ -10,6 +22,7 @@ export interface AssessmentExercise {
   workspaceNeeded?: boolean;
   imageUrl?: string; // Photo / oeuvre d'art / figure géométrique
   imageCaption?: string; // Légende de l'oeuvre (titre, artiste, date)
+  subQuestions?: AssessmentSubQuestion[]; // Sous-questions 1), 2), 3)... avec chacune son sous-aspect individuel
 }
 
 export interface AssessmentData {
@@ -552,6 +565,7 @@ export interface StudentAnswer {
   questionContent: string;
   studentResponse: string;
   drawingDataUrl?: string; // Tracé géométrique ou schéma dessiné par l'élève
+  subAnswers?: Record<string, { response: string; drawingDataUrl?: string }>; // Réponses spécifiques par sous-question (sub_1, sub_2...)
   // Correction
   score?: number; // Niveau 1-8
   teacherComment?: string;

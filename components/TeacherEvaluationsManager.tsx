@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon } from 'lucide-react';
-import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise } from '../types';
+import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
 
@@ -201,8 +201,11 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     }
   };
 
-  // Ajouter une nouvelle question dans le critère sélectionné
-  const handleAddQuestionToEditingEval = (critIndex: number) => {
+  // Ajouter une nouvelle question selon la manière choisie par l'enseignant
+  const handleAddQuestionWithType = (
+    critIndex: number,
+    questionKind: 'open' | 'multiple_choice' | 'subquestions' | 'true_false' | 'geometry' | 'art'
+  ) => {
     if (!editingEvaluation) return;
     const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
     const targetCrit = newEval.assessments[critIndex];
@@ -213,16 +216,102 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const roman = romanNumerals[(count - 1) % romanNumerals.length];
     const defaultStrandText = targetCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || `Compétence ${targetCrit.criterion}`;
 
-    const newExercise: AssessmentExercise = {
-      title: `Tâche ${count} : Question d'évaluation`,
-      content: 'Consigne détaillée de la question...',
-      criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
-      strandIndex: roman,
-      strandText: defaultStrandText,
-      type: 'open',
-      options: ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'],
-      correctAnswer: 'Proposition A',
-    };
+    let newExercise: AssessmentExercise;
+
+    if (questionKind === 'multiple_choice') {
+      newExercise = {
+        title: `Tâche ${count} : Question QCM (Choix multiples)`,
+        content: 'Lisez attentivement l\'énoncé et cochez la bonne réponse parmi les propositions ci-dessous :',
+        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        strandIndex: roman,
+        strandText: defaultStrandText,
+        type: 'multiple_choice',
+        options: ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'],
+        correctAnswer: 'Proposition A',
+      };
+    } else if (questionKind === 'subquestions') {
+      const sub1Strand = targetCrit.strands?.find(s => s.toLowerCase().startsWith('i.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Sélectionner et appliquer la méthode';
+      const sub2Strand = targetCrit.strands?.find(s => s.toLowerCase().startsWith('ii.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Résoudre le problème avec démarche';
+      const sub3Strand = targetCrit.strands?.find(s => s.toLowerCase().startsWith('iii.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Justifier et vérifier la solution';
+
+      newExercise = {
+        title: `Tâche ${count} : Problème à sous-questions multiples`,
+        content: 'Mise en situation globale / Énoncé principal du problème...',
+        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        strandIndex: roman,
+        strandText: defaultStrandText,
+        type: 'open',
+        subQuestions: [
+          {
+            id: 'sub_1',
+            label: '1)',
+            content: 'Première sous-question : identifier et énoncer...',
+            strandIndex: 'i',
+            strandText: sub1Strand,
+            type: 'open',
+          },
+          {
+            id: 'sub_2',
+            label: '2)',
+            content: 'Deuxième sous-question : calculer et résoudre avec démarche...',
+            strandIndex: 'ii',
+            strandText: sub2Strand,
+            type: 'open',
+          },
+          {
+            id: 'sub_3',
+            label: '3)',
+            content: 'Troisième sous-question : vérifier la réponse (QCM de validation)...',
+            strandIndex: 'iii',
+            strandText: sub3Strand,
+            type: 'multiple_choice',
+            options: ['Solution A (conforme)', 'Solution B (incorrecte)', 'Solution C (partielle)'],
+            correctAnswer: 'Solution A (conforme)',
+          },
+        ],
+      };
+    } else if (questionKind === 'geometry') {
+      newExercise = {
+        title: `Tâche ${count} : Construction Géométrique (Équerre, Compas)`,
+        content: 'À l\'aide des outils de géométrie (équerre, compas, rapporteur, règle graduée), réalisez la construction demandée et justifiez votre démarche :',
+        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        strandIndex: roman,
+        strandText: defaultStrandText,
+        type: 'open',
+        workspaceNeeded: true,
+      };
+    } else if (questionKind === 'art') {
+      newExercise = {
+        title: `Tâche ${count} : Analyse Visuelle & Création Artistique`,
+        content: 'Observez l\'oeuvre ci-dessous. Analysez les contrastes de couleurs, la composition et les textures, puis réalisez votre proposition plastique dans le studio d\'art :',
+        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        strandIndex: roman,
+        strandText: defaultStrandText,
+        type: 'open',
+        imageUrl: ARTWORK_PRESETS[0].url,
+        imageCaption: ARTWORK_PRESETS[0].caption,
+        workspaceNeeded: true,
+      };
+    } else if (questionKind === 'true_false') {
+      newExercise = {
+        title: `Tâche ${count} : Affirmation Vrai ou Faux`,
+        content: 'Indiquez si l\'affirmation suivante est Vraie ou Fausse et justifiez brièvement :',
+        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        strandIndex: roman,
+        strandText: defaultStrandText,
+        type: 'true_false',
+        correctAnswer: 'Vrai',
+      };
+    } else {
+      newExercise = {
+        title: `Tâche ${count} : Question d'évaluation`,
+        content: 'Consigne détaillée de la question...',
+        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        strandIndex: roman,
+        strandText: defaultStrandText,
+        type: 'open',
+      };
+    }
 
     if (!targetCrit.exercises) targetCrit.exercises = [];
     targetCrit.exercises.push(newExercise);
@@ -244,6 +333,67 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       ...targetCrit.exercises[exIdx],
       ...updates,
     };
+    setEditingEvaluation(newEval);
+  };
+
+  // Ajouter une sous-question à un exercice
+  const handleAddSubQuestionToExercise = (critIdx: number, exIdx: number) => {
+    if (!editingEvaluation) return;
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    const targetCrit = newEval.assessments[critIdx];
+    if (!targetCrit || !targetCrit.exercises[exIdx]) return;
+
+    const ex = targetCrit.exercises[exIdx];
+    if (!ex.subQuestions) ex.subQuestions = [];
+
+    const subCount = ex.subQuestions.length + 1;
+    const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+    const roman = romanNumerals[(subCount - 1) % romanNumerals.length];
+    const defaultStrand = targetCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || `Aspect (${roman})`;
+
+    ex.subQuestions.push({
+      id: `sub_${Date.now()}_${subCount}`,
+      label: `${subCount})`,
+      content: `Consigne de la sous-question ${subCount}...`,
+      strandIndex: roman,
+      strandText: defaultStrand,
+      type: 'open',
+    });
+
+    setEditingEvaluation(newEval);
+  };
+
+  // Mettre à jour une sous-question
+  const handleUpdateSubQuestion = (
+    critIdx: number,
+    exIdx: number,
+    subIdx: number,
+    updates: Partial<AssessmentSubQuestion>
+  ) => {
+    if (!editingEvaluation) return;
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    const targetCrit = newEval.assessments[critIdx];
+    if (!targetCrit || !targetCrit.exercises[exIdx] || !targetCrit.exercises[exIdx].subQuestions) return;
+
+    targetCrit.exercises[exIdx].subQuestions![subIdx] = {
+      ...targetCrit.exercises[exIdx].subQuestions![subIdx],
+      ...updates,
+    };
+    setEditingEvaluation(newEval);
+  };
+
+  // Supprimer une sous-question
+  const handleDeleteSubQuestion = (critIdx: number, exIdx: number, subIdx: number) => {
+    if (!editingEvaluation) return;
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    const targetCrit = newEval.assessments[critIdx];
+    if (!targetCrit || !targetCrit.exercises[exIdx] || !targetCrit.exercises[exIdx].subQuestions) return;
+
+    targetCrit.exercises[exIdx].subQuestions!.splice(subIdx, 1);
+    // Si plus de sous-questions, on peut remettre à undefined
+    if (targetCrit.exercises[exIdx].subQuestions!.length === 0) {
+      delete targetCrit.exercises[exIdx].subQuestions;
+    }
     setEditingEvaluation(newEval);
   };
 
@@ -1108,172 +1258,479 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
                 return (
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {/* Bannière du critère */}
-                    <div className={`p-4 rounded-2xl border ${colors.border} ${colors.bg} flex items-center justify-between gap-4`}>
-                      <div>
-                        <h4 className="font-bold text-sm text-slate-900">
-                          Critère {activeCrit.criterion} : {activeCrit.criterionName}
-                        </h4>
-                        <p className="text-xs text-slate-600 mt-0.5">
-                          Échelle : 1-{activeCrit.maxPoints || 8} points · {activeCrit.exercises?.length || 0} question(s) enregistrée(s)
-                        </p>
+                    {/* Bannière du critère & Menu d'ajout multi-manières */}
+                    <div className={`p-4 rounded-2xl border ${colors.border} ${colors.bg} space-y-3`}>
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <div>
+                          <h4 className="font-bold text-sm text-slate-900">
+                            Critère {activeCrit.criterion} : {activeCrit.criterionName}
+                          </h4>
+                          <p className="text-xs text-slate-600 mt-0.5">
+                            Échelle : 1-{activeCrit.maxPoints || 8} points · {activeCrit.exercises?.length || 0} tâche(s) enregistrée(s)
+                          </p>
+                        </div>
                       </div>
 
-                      <button
-                        onClick={() => handleAddQuestionToEditingEval(editingCriterionIdx)}
-                        className="flex items-center gap-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs shadow transition"
-                      >
-                        <Plus size={15} /> Ajouter une question
-                      </button>
+                      {/* Barres d'ajout rapide par type de question (Exigence du brief) */}
+                      <div className="pt-2 border-t border-slate-200/60">
+                        <span className="text-[10px] font-black uppercase text-purple-900 tracking-wider block mb-2">
+                          ➕ Ajouter une question (choisissez la modalité) :
+                        </span>
+                        <div className="flex gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleAddQuestionWithType(editingCriterionIdx, 'multiple_choice')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs shadow-xs transition"
+                            title="Ajouter une question QCM avec propositions à cocher"
+                          >
+                            <span>☑️</span> <span>Question QCM</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAddQuestionWithType(editingCriterionIdx, 'subquestions')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs shadow-xs transition"
+                            title="Ajouter un problème divisé en sous-questions 1), 2), 3)... avec un sous-aspect sous chaque sous-question"
+                          >
+                            <span>🔢</span> <span>Sous-questions 1), 2), 3)...</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAddQuestionWithType(editingCriterionIdx, 'geometry')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-xs transition"
+                            title="Ajouter une question avec outils de géométrie (Équerre, Compas, Rapporteur)"
+                          >
+                            <span>📐</span> <span>Géométrie & Construction</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAddQuestionWithType(editingCriterionIdx, 'art')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs shadow-xs transition"
+                            title="Ajouter une question d'art avec oeuvre célèbre et studio de dessin"
+                          >
+                            <span>🎨</span> <span>Arts & Dessin</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAddQuestionWithType(editingCriterionIdx, 'open')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs transition"
+                            title="Ajouter une tâche de rédaction libre"
+                          >
+                            <span>📝</span> <span>Rédaction libre</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAddQuestionWithType(editingCriterionIdx, 'true_false')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs transition"
+                            title="Ajouter une question Vrai ou Faux"
+                          >
+                            <span>⚖️</span> <span>Vrai / Faux</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Liste des questions */}
-                    <div className="space-y-5">
+                    <div className="space-y-6">
                       {(activeCrit.exercises || []).map((ex, exIdx) => {
-                        const qType = ex.type || 'open';
+                        const hasSubQuestions = Boolean(ex.subQuestions && ex.subQuestions.length > 0);
+                        const qType = hasSubQuestions ? 'subquestions' : (ex.type || 'open');
                         const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
 
                         return (
                           <div
                             key={exIdx}
-                            className="bg-white rounded-2xl p-5 border border-slate-300 shadow-xs space-y-4 hover:border-purple-300 transition"
+                            className="bg-white rounded-3xl p-5 sm:p-6 border-2 border-slate-300 shadow-sm space-y-5 hover:border-purple-300 transition"
                           >
+                            {/* Titre & suppression de la tâche */}
                             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                              <div className="flex items-center gap-2">
-                                <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold text-white ${colors.badge}`}>
-                                  Question {exIdx + 1}
+                              <div className="flex items-center gap-3 flex-1 mr-3">
+                                <span className={`px-2.5 py-1 rounded-xl text-xs font-black text-white ${colors.badge}`}>
+                                  Tâche {exIdx + 1}
                                 </span>
                                 <input
                                   type="text"
                                   value={ex.title}
                                   onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { title: e.target.value })}
                                   placeholder="Titre de la tâche..."
-                                  className="font-bold text-sm text-slate-800 border-b border-dashed border-slate-300 focus:border-purple-600 focus:outline-none px-1 py-0.5"
+                                  className="font-bold text-sm text-slate-800 border-b border-dashed border-slate-300 focus:border-purple-600 focus:outline-none px-2 py-0.5 w-full"
                                 />
                               </div>
 
                               <button
                                 onClick={() => handleDeleteEditingExercise(editingCriterionIdx, exIdx)}
-                                className="text-slate-400 hover:text-rose-600 p-1 transition"
-                                title="Supprimer cette question"
+                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition"
+                                title="Supprimer cette tâche"
                               >
                                 <Trash2 size={16} />
                               </button>
                             </div>
 
-                            {/* 🔴 CONFIGURATION DU SOUS-ASPECT INDIVIDUEL (EN ROUGE) */}
-                            <div className="bg-red-50/70 border border-red-200 rounded-xl p-3 space-y-2">
-                              <div className="flex items-center justify-between">
-                                <label className="text-[11px] font-black text-red-700 uppercase tracking-wide flex items-center gap-1">
-                                  <span>●</span> Sous-aspect individuel (précisé en rouge sous la question) :
-                                </label>
-                                <span className="text-[10px] text-red-600 italic">
-                                  Un seul sous-aspect par question (pas d'aspects groupés)
-                                </span>
-                              </div>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                                <div>
-                                  <select
-                                    value={ex.strandIndex || romanNumerals[exIdx % romanNumerals.length]}
-                                    onChange={e => {
-                                      const val = e.target.value;
-                                      const matchedDesc = activeCrit.strands?.find(s => s.toLowerCase().startsWith(`${val}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
-                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
-                                        strandIndex: val,
-                                        strandText: matchedDesc || ex.strandText || '',
-                                        criterionReference: `Critère ${activeCrit.criterion} : ${val}.`,
-                                      });
-                                    }}
-                                    className="w-full p-2 bg-white border border-red-300 rounded-lg text-xs font-bold text-red-800 focus:outline-none"
-                                  >
-                                    {romanNumerals.map(r => (
-                                      <option key={r} value={r}>
-                                        Sous-aspect ({r})
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                                <div className="sm:col-span-3">
-                                  <input
-                                    type="text"
-                                    value={ex.strandText || ''}
-                                    onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { strandText: e.target.value })}
-                                    placeholder="Description de la compétence évaluée (ex: appliquer les concepts mathématiques...)"
-                                    className="w-full p-2 bg-white border border-red-300 rounded-lg text-xs font-medium text-red-900 focus:outline-none"
-                                  />
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* ⚙️ TYPE DE QUESTION */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                            {/* ⚙️ SÉLECTEUR DE TYPE DE QUESTION (AVEC OPTION SOUS-QUESTIONS 1, 2, 3...) */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
                               <div>
-                                <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
-                                  Type de question :
+                                <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
+                                  Format de la question :
                                 </label>
                                 <select
                                   value={qType}
-                                  onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { type: e.target.value as any })}
-                                  className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none"
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    if (val === 'subquestions') {
+                                      // Initialiser avec 2 sous-questions si vide
+                                      if (!ex.subQuestions || ex.subQuestions.length === 0) {
+                                        const sub1Desc = activeCrit.strands?.find(s => s.toLowerCase().startsWith('i.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Sous-aspect (i)';
+                                        const sub2Desc = activeCrit.strands?.find(s => s.toLowerCase().startsWith('ii.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Sous-aspect (ii)';
+                                        handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                          subQuestions: [
+                                            { id: 'sub_1', label: '1)', content: 'Sous-question 1 : énoncer...', strandIndex: 'i', strandText: sub1Desc, type: 'open' },
+                                            { id: 'sub_2', label: '2)', content: 'Sous-question 2 : résoudre ou justifier...', strandIndex: 'ii', strandText: sub2Desc, type: 'open' },
+                                          ],
+                                        });
+                                      }
+                                    } else {
+                                      // Supprimer sous-questions explicites et définir type standard
+                                      const updates: Partial<AssessmentExercise> = { type: val as any };
+                                      delete (updates as any).subQuestions;
+                                      if (val === 'multiple_choice' && (!ex.options || ex.options.length === 0)) {
+                                        updates.options = ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'];
+                                        updates.correctAnswer = 'Proposition A';
+                                      }
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, updates);
+                                    }
+                                  }}
+                                  className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-400"
                                 >
                                   <option value="open">📝 Rédaction libre (avec outils maths/géométrie)</option>
+                                  <option value="multiple_choice">☑️ Choix multiples (QCM à cocher)</option>
+                                  <option value="subquestions">🔢 Question à sous-questions multiples 1), 2), 3)...</option>
                                   <option value="true_false">⚖️ Vrai ou Faux</option>
-                                  <option value="multiple_choice">☑️ Choix multiples (QCM)</option>
                                 </select>
                               </div>
 
-                              {/* Options pour Vrai / Faux */}
-                              {qType === 'true_false' && (
-                                <div className="sm:col-span-2">
-                                  <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
-                                    Bonne réponse attendue :
-                                  </label>
-                                  <div className="flex gap-4 pt-1">
-                                    {['Vrai', 'Faux'].map(opt => (
-                                      <label key={opt} className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer">
-                                        <input
-                                          type="radio"
-                                          name={`tf_correct_${exIdx}`}
-                                          checked={ex.correctAnswer === opt}
-                                          onChange={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { correctAnswer: opt })}
-                                          className="text-purple-600 focus:ring-purple-400"
-                                        />
-                                        <span>{opt}</span>
-                                      </label>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Options pour QCM */}
-                              {qType === 'multiple_choice' && (
-                                <div className="sm:col-span-2">
-                                  <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
-                                    Cochez la bonne réponse parmi les propositions ci-dessous :
-                                  </label>
-                                  <span className="text-[11px] text-purple-700 font-semibold">
-                                    Réponse correcte sélectionnée : <strong>{ex.correctAnswer || 'Non définie'}</strong>
+                              <div className="sm:col-span-2 flex items-center justify-between text-xs text-slate-500">
+                                {qType === 'multiple_choice' && (
+                                  <span className="text-purple-700 font-semibold bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200">
+                                    💡 L'élève aura des cases/boutons radio pour cocher la bonne réponse.
                                   </span>
-                                </div>
-                              )}
+                                )}
+                                {qType === 'subquestions' && (
+                                  <span className="text-indigo-700 font-semibold bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200">
+                                    💡 Chaque sous-question disposera de son sous-aspect (i, ii...) en rouge et de son espace de réponse.
+                                  </span>
+                                )}
+                                {qType === 'open' && (
+                                  <span className="text-slate-600 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                                    💡 Outils Maths (Équerre, Compas, Rapporteur) ou Art mis à disposition de l'élève.
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
-                            {/* Édition des propositions du QCM si actif */}
-                            {qType === 'multiple_choice' && (
-                              <div className="p-3 bg-purple-50/50 border border-purple-200 rounded-xl space-y-2">
-                                <label className="text-[10px] font-bold text-purple-900 uppercase block">
-                                  Propositions du QCM (cochez le bouton radio de la bonne réponse) :
-                                </label>
-                                <div className="space-y-1.5">
+                            {/* Consigne / Énoncé global */}
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
+                                {hasSubQuestions ? 'Contexte / Énoncé principal du problème :' : 'Consigne / Énoncé de la tâche :'}
+                              </label>
+                              <textarea
+                                value={ex.content}
+                                onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { content: e.target.value })}
+                                rows={hasSubQuestions ? 2 : 3}
+                                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-normal focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                placeholder={hasSubQuestions ? 'Présentez la situation ou les données du problème...' : 'Formulez la question claire pour l\'élève...'}
+                              />
+                            </div>
+
+                            {/* ═══════════════════════════════════════════════════════════
+                                CAS A : GESTION DES SOUS-QUESTIONS 1), 2), 3)...
+                                Avec configuration du sous-aspect sous chaque sous-question
+                                ═══════════════════════════════════════════════════════════ */}
+                            {hasSubQuestions && (
+                              <div className="bg-indigo-50/40 border-2 border-indigo-200 rounded-2xl p-4 space-y-4">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm">🔢</span>
+                                    <h5 className="font-black text-xs text-indigo-950 uppercase tracking-wide">
+                                      Sous-questions de cette tâche ({ex.subQuestions?.length || 0}) :
+                                    </h5>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddSubQuestionToExercise(editingCriterionIdx, exIdx)}
+                                    className="flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
+                                  >
+                                    <Plus size={14} /> Ajouter une sous-question (ex: {(ex.subQuestions?.length || 0) + 1})
+                                  </button>
+                                </div>
+
+                                <div className="space-y-4">
+                                  {(ex.subQuestions || []).map((sub, subIdx) => {
+                                    const subRoman = sub.strandIndex || romanNumerals[subIdx % romanNumerals.length];
+
+                                    return (
+                                      <div
+                                        key={sub.id || subIdx}
+                                        className="bg-white rounded-xl p-4 border border-indigo-200 shadow-2xs space-y-3"
+                                      >
+                                        <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                          <div className="flex items-center gap-2">
+                                            <input
+                                              type="text"
+                                              value={sub.label}
+                                              onChange={e => handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, { label: e.target.value })}
+                                              className="w-12 text-center p-1 bg-purple-50 border border-purple-200 rounded font-black text-xs text-purple-900"
+                                              placeholder="1)"
+                                            />
+                                            <span className="font-bold text-xs text-slate-700">Sous-question {subIdx + 1}</span>
+                                          </div>
+
+                                          <div className="flex items-center gap-2">
+                                            {/* Type de la sous-question */}
+                                            <select
+                                              value={sub.type || 'open'}
+                                              onChange={e => {
+                                                const val = e.target.value as any;
+                                                const subUpdates: Partial<AssessmentSubQuestion> = { type: val };
+                                                if (val === 'multiple_choice' && (!sub.options || sub.options.length === 0)) {
+                                                  subUpdates.options = ['Proposition A', 'Proposition B', 'Proposition C'];
+                                                  subUpdates.correctAnswer = 'Proposition A';
+                                                }
+                                                handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, subUpdates);
+                                              }}
+                                              className="p-1 bg-slate-50 border border-slate-200 rounded text-[11px] font-semibold text-slate-700"
+                                            >
+                                              <option value="open">📝 Rédaction</option>
+                                              <option value="multiple_choice">☑️ QCM</option>
+                                              <option value="true_false">⚖️ Vrai/Faux</option>
+                                            </select>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteSubQuestion(editingCriterionIdx, exIdx, subIdx)}
+                                              className="text-slate-400 hover:text-rose-600 p-1"
+                                              title="Supprimer cette sous-question"
+                                            >
+                                              <Trash2 size={14} />
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {/* 🔴 SÉLECTION DU SOUS-ASPECT CONVENABLE POUR CETTE SOUS-QUESTION */}
+                                        <div className="bg-red-50/80 border border-red-200 rounded-xl p-2.5 space-y-1.5">
+                                          <label className="text-[10px] font-black text-red-700 uppercase flex items-center gap-1">
+                                            <span>●</span> Sous-aspect évalué pour cette sous-question (affiché en rouge) :
+                                          </label>
+                                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                                            <div>
+                                              <select
+                                                value={subRoman}
+                                                onChange={e => {
+                                                  const val = e.target.value;
+                                                  const matchedDesc = activeCrit.strands?.find(s => s.toLowerCase().startsWith(`${val}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
+                                                  handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, {
+                                                    strandIndex: val,
+                                                    strandText: matchedDesc || sub.strandText || '',
+                                                  });
+                                                }}
+                                                className="w-full p-1.5 bg-white border border-red-300 rounded text-xs font-bold text-red-800"
+                                              >
+                                                {romanNumerals.map(r => (
+                                                  <option key={r} value={r}>
+                                                    Sous-aspect ({r})
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                            <div className="sm:col-span-3">
+                                              <input
+                                                type="text"
+                                                value={sub.strandText || ''}
+                                                onChange={e => handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, { strandText: e.target.value })}
+                                                placeholder="Description de la compétence (ex: calculer la surface, appliquer la formule...)"
+                                                className="w-full p-1.5 bg-white border border-red-300 rounded text-xs font-medium text-red-900"
+                                              />
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Énoncé de la sous-question */}
+                                        <div>
+                                          <input
+                                            type="text"
+                                            value={sub.content}
+                                            onChange={e => handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, { content: e.target.value })}
+                                            placeholder={`Consigne de la sous-question ${sub.label}...`}
+                                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium focus:bg-white focus:border-indigo-400 outline-none"
+                                          />
+                                        </div>
+
+                                        {/* Si la sous-question est un QCM */}
+                                        {sub.type === 'multiple_choice' && (
+                                          <div className="p-3 bg-purple-50/60 border border-purple-200 rounded-xl space-y-2">
+                                            <div className="flex items-center justify-between">
+                                              <label className="text-[10px] font-bold text-purple-900 uppercase">
+                                                Options du QCM (cochez le bouton radio de la bonne réponse) :
+                                              </label>
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  const curr = sub.options || ['Option A', 'Option B'];
+                                                  const nextOpt = `Option ${String.fromCharCode(65 + curr.length)}`;
+                                                  handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, {
+                                                    options: [...curr, nextOpt],
+                                                  });
+                                                }}
+                                                className="text-[10px] font-bold text-purple-700 hover:text-purple-900"
+                                              >
+                                                + Ajouter une option
+                                              </button>
+                                            </div>
+
+                                            <div className="space-y-1.5">
+                                              {(sub.options || ['Proposition A', 'Proposition B', 'Proposition C']).map((opt, oIdx) => (
+                                                <div key={oIdx} className="flex items-center gap-2">
+                                                  <input
+                                                    type="radio"
+                                                    name={`sub_qcm_${exIdx}_${subIdx}`}
+                                                    checked={sub.correctAnswer === opt}
+                                                    onChange={() => handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, { correctAnswer: opt })}
+                                                    className="text-purple-600"
+                                                    title="Marquer comme bonne réponse"
+                                                  />
+                                                  <input
+                                                    type="text"
+                                                    value={opt}
+                                                    onChange={e => {
+                                                      const next = [...(sub.options || ['Proposition A', 'Proposition B', 'Proposition C'])];
+                                                      const old = next[oIdx];
+                                                      next[oIdx] = e.target.value;
+                                                      const upd: Partial<AssessmentSubQuestion> = { options: next };
+                                                      if (sub.correctAnswer === old) upd.correctAnswer = e.target.value;
+                                                      handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, upd);
+                                                    }}
+                                                    className="flex-1 p-1 bg-white border border-slate-300 rounded text-xs"
+                                                  />
+                                                  {(sub.options || []).length > 2 && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                        const next = (sub.options || []).filter((_, idx) => idx !== oIdx);
+                                                        handleUpdateSubQuestion(editingCriterionIdx, exIdx, subIdx, { options: next });
+                                                      }}
+                                                      className="text-slate-400 hover:text-rose-600 p-0.5"
+                                                    >
+                                                      ✕
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* ═══════════════════════════════════════════════════════════
+                                CAS B : SOUS-ASPECT UNIQUE (SI PAS DE SOUS-QUESTIONS)
+                                ═══════════════════════════════════════════════════════════ */}
+                            {!hasSubQuestions && (
+                              <div className="bg-red-50/70 border border-red-200 rounded-xl p-3 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <label className="text-[11px] font-black text-red-700 uppercase tracking-wide flex items-center gap-1">
+                                    <span>●</span> Sous-aspect individuel (précisé en rouge sous la question) :
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddSubQuestionToExercise(editingCriterionIdx, exIdx)}
+                                    className="text-[11px] text-indigo-700 hover:text-indigo-900 font-bold underline"
+                                  >
+                                    ➕ Diviser en sous-questions 1), 2), 3)...
+                                  </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                                  <div>
+                                    <select
+                                      value={ex.strandIndex || romanNumerals[exIdx % romanNumerals.length]}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        const matchedDesc = activeCrit.strands?.find(s => s.toLowerCase().startsWith(`${val}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
+                                        handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                          strandIndex: val,
+                                          strandText: matchedDesc || ex.strandText || '',
+                                          criterionReference: `Critère ${activeCrit.criterion} : ${val}.`,
+                                        });
+                                      }}
+                                      className="w-full p-2 bg-white border border-red-300 rounded-lg text-xs font-bold text-red-800 focus:outline-none"
+                                    >
+                                      {romanNumerals.map(r => (
+                                        <option key={r} value={r}>
+                                          Sous-aspect ({r})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="sm:col-span-3">
+                                    <input
+                                      type="text"
+                                      value={ex.strandText || ''}
+                                      onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { strandText: e.target.value })}
+                                      placeholder="Description de la compétence évaluée (ex: appliquer les concepts mathématiques...)"
+                                      className="w-full p-2 bg-white border border-red-300 rounded-lg text-xs font-medium text-red-900 focus:outline-none"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* ═══════════════════════════════════════════════════════════
+                                CAS C : ÉDITION DES PROPOSITIONS DU QCM (POUR QUESTION SIMPLE)
+                                ═══════════════════════════════════════════════════════════ */}
+                            {!hasSubQuestions && qType === 'multiple_choice' && (
+                              <div className="p-4 bg-purple-50/70 border-2 border-purple-200 rounded-2xl space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <label className="text-[11px] font-black text-purple-900 uppercase block">
+                                      Propositions du QCM (Choix multiples) :
+                                    </label>
+                                    <span className="text-[11px] text-purple-700">
+                                      Cochez le bouton radio de la réponse correcte : <strong>{ex.correctAnswer || 'Non définie'}</strong>
+                                    </span>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const curr = ex.options || ['Proposition A', 'Proposition B'];
+                                      const nextLabel = `Proposition ${String.fromCharCode(65 + curr.length)}`;
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                        options: [...curr, nextLabel],
+                                      });
+                                    }}
+                                    className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-xs shadow-xs"
+                                  >
+                                    + Ajouter une proposition
+                                  </button>
+                                </div>
+
+                                <div className="space-y-2">
                                   {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => (
-                                    <div key={optIdx} className="flex items-center gap-2">
+                                    <div key={optIdx} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-purple-200">
                                       <input
                                         type="radio"
                                         name={`qcm_correct_${exIdx}`}
                                         checked={ex.correctAnswer === opt}
                                         onChange={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { correctAnswer: opt })}
-                                        className="text-purple-600 focus:ring-purple-400"
+                                        className="text-purple-600 focus:ring-purple-400 w-4 h-4 ml-1"
                                         title="Définir comme bonne réponse"
                                       />
                                       <input
@@ -1289,28 +1746,50 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                           }
                                           handleUpdateEditingExercise(editingCriterionIdx, exIdx, update);
                                         }}
-                                        className="flex-1 p-1.5 bg-white border border-slate-300 rounded-lg text-xs"
-                                        placeholder={`Option ${optIdx + 1}`}
+                                        className="flex-1 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
+                                        placeholder={`Proposition ${optIdx + 1}`}
                                       />
+                                      {(ex.options || []).length > 2 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const nextOptions = (ex.options || []).filter((_, idx) => idx !== optIdx);
+                                            handleUpdateEditingExercise(editingCriterionIdx, exIdx, { options: nextOptions });
+                                          }}
+                                          className="text-slate-400 hover:text-rose-600 p-1"
+                                          title="Supprimer cette proposition"
+                                        >
+                                          ✕
+                                        </button>
+                                      )}
                                     </div>
                                   ))}
                                 </div>
                               </div>
                             )}
 
-                            {/* Consigne de la question */}
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
-                                Consigne / Énoncé de la question :
-                              </label>
-                              <textarea
-                                value={ex.content}
-                                onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { content: e.target.value })}
-                                rows={3}
-                                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-normal focus:outline-none focus:ring-2 focus:ring-purple-400"
-                                placeholder="Formulez la question claire pour l'élève..."
-                              />
-                            </div>
+                            {/* Options pour Vrai / Faux */}
+                            {!hasSubQuestions && qType === 'true_false' && (
+                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
+                                  Bonne réponse attendue :
+                                </label>
+                                <div className="flex gap-4 pt-1">
+                                  {['Vrai', 'Faux'].map(opt => (
+                                    <label key={opt} className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer">
+                                      <input
+                                        type="radio"
+                                        name={`tf_correct_${exIdx}`}
+                                        checked={ex.correctAnswer === opt}
+                                        onChange={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { correctAnswer: opt })}
+                                        className="text-purple-600 focus:ring-purple-400"
+                                      />
+                                      <span>{opt}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
 
                             {/* 🖼️ OEUVRE D'ART / PHOTO / ILLUSTRATION (POUR LES ARTS, SCIENCES, ETC.) */}
                             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">

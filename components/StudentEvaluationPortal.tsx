@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Award, CheckCircle, Clock, FileText, LogOut, Printer, Send, ShieldCheck, User, AlertCircle, ChevronRight, Save, Image as ImageIcon, Check, Lock, AlertTriangle } from 'lucide-react';
-import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise } from '../types';
+import {
+  Award, CheckCircle, Clock, FileText, LogOut, Printer, Send, ShieldCheck, User, AlertCircle,
+  ChevronRight, Save, Image as ImageIcon, Check, Lock, AlertTriangle, Palette, Compass, Ruler,
+  Square, Circle, Triangle, Edit3
+} from 'lucide-react';
+import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GeometricDrawingModal from './GeometricDrawingModal';
@@ -17,7 +21,7 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   D: { bg: 'bg-rose-50',    border: 'border-rose-300',   text: 'text-rose-800',    badge: 'bg-rose-600',    light: 'bg-rose-100' },
 };
 
-// Helper: déterminer précisément le sous-aspect individuel (i, ii, iii...)
+// Helper: déterminer précisément le sous-aspect individuel pour une question principale (i, ii, iii...)
 function resolveStrandForQuestion(
   criterionLetter: string,
   strands: string[] = [],
@@ -70,6 +74,94 @@ function resolveStrandForQuestion(
   };
 }
 
+// Helper: déterminer le sous-aspect spécifique pour une SOUS-QUESTION 1), 2), 3)...
+function resolveStrandForSubQuestion(
+  criterionLetter: string,
+  strands: string[] = [],
+  sub: AssessmentSubQuestion,
+  subIndex: number
+): { roman: string; description: string; fullLabel: string } {
+  if (sub.strandIndex && sub.strandText) {
+    return {
+      roman: sub.strandIndex,
+      description: sub.strandText,
+      fullLabel: `Sous-aspect (${sub.strandIndex}) : ${sub.strandText}`,
+    };
+  }
+
+  const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+  const targetRoman = (sub.strandIndex || romanNumerals[subIndex % romanNumerals.length] || 'i').toLowerCase();
+
+  const matched = strands.find(s =>
+    s.toLowerCase().trim().startsWith(`${targetRoman}.`) ||
+    s.toLowerCase().trim().startsWith(`${targetRoman})`)
+  );
+
+  if (matched) {
+    const cleanDesc = matched.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+    return {
+      roman: targetRoman,
+      description: cleanDesc,
+      fullLabel: `Sous-aspect (${targetRoman}) : ${cleanDesc}`,
+    };
+  }
+
+  const fallback = strands[subIndex % Math.max(1, strands.length)] || '';
+  const cleanFallback = fallback.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+  return {
+    roman: targetRoman,
+    description: cleanFallback,
+    fullLabel: `Sous-aspect (${targetRoman}) : ${cleanFallback || `Compétence ${criterionLetter}`}`,
+  };
+}
+
+// Helper: Extraire les sous-questions d'un exercice (soit définies explicitement, soit détectées dans le texte 1) ... 2) ...)
+function getExerciseSubQuestions(
+  exercise: AssessmentExercise,
+  criterionLetter: string,
+  strands: string[] = []
+): AssessmentSubQuestion[] {
+  // 1. Sous-questions explicites enregistrées
+  if (exercise.subQuestions && exercise.subQuestions.length > 0) {
+    return exercise.subQuestions;
+  }
+
+  // 2. Détection intelligente dans le contenu (ex: lignes commençant par 1) ... 2) ... ou a) ... b) ...)
+  const content = exercise.content || '';
+  const pattern = /(?:^|\n)\s*(?:([0-9]+|[a-d])\s*[\)\.]\s+)/gi;
+  const matches = Array.from(content.matchAll(pattern)) as RegExpExecArray[];
+
+  if (matches.length >= 2) {
+    const subQuestions: AssessmentSubQuestion[] = [];
+    const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+
+    for (let i = 0; i < matches.length; i++) {
+      const match = matches[i];
+      const nextMatch = matches[i + 1];
+      const startPos = (match.index || 0) + match[0].length;
+      const endPos = nextMatch ? nextMatch.index : content.length;
+      const subText = content.substring(startPos, endPos).trim();
+      const label = match[1] + ')';
+      const roman = romanNumerals[i % romanNumerals.length];
+      const matchedStrand = strands.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+
+      subQuestions.push({
+        id: `sub_${i + 1}`,
+        label,
+        content: subText,
+        strandIndex: roman,
+        strandText: matchedStrand || '',
+        type: exercise.type || 'open',
+        options: exercise.options,
+        correctAnswer: exercise.correctAnswer,
+      });
+    }
+    return subQuestions;
+  }
+
+  return [];
+}
+
 const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initialAccessCode = '', onExit }) => {
   // Login fields
   const [accessCode, setAccessCode] = useState(initialAccessCode);
@@ -85,14 +177,20 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
   // Taking evaluation state
   const [activeCriterionIdx, setActiveCriterionIdx] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({}); // key: `${criterion}_${exerciseIndex}` -> response
-  const [drawings, setDrawings] = useState<Record<string, string>>({}); // key: `${criterion}_${exerciseIndex}` -> dataUrl
+  // answers stores:
+  // - for standard questions: `${criterion}_${exIdx}` -> response
+  // - for sub-questions: `${criterion}_${exIdx}_sub_${subIdx}` -> response
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  // drawings stores:
+  // - `${criterion}_${exIdx}` or `${criterion}_${exIdx}_sub_${subIdx}` -> dataUrl
+  const [drawings, setDrawings] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [lastAutoSave, setLastAutoSave] = useState<string | null>(null);
 
-  // Geometric drawing modal state
+  // Geometric & Art drawing modal state
   const [drawingModalTarget, setDrawingModalTarget] = useState<string | null>(null);
+  const [drawingModalLabel, setDrawingModalLabel] = useState<string>('');
 
   // 45 min timer
   const [secondsRemaining, setSecondsRemaining] = useState<number>(45 * 60);
@@ -140,6 +238,17 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                       answers: [],
                     });
                     setIsLockedAlready(true);
+                  } else {
+                    // Charger le brouillon local si existant
+                    const draftKey = `draft_eval_${code}_${studentNum}`;
+                    const savedDraft = localStorage.getItem(draftKey);
+                    if (savedDraft) {
+                      try {
+                        const parsedDraft = JSON.parse(savedDraft);
+                        if (parsedDraft.answers) setAnswers(parsedDraft.answers);
+                        if (parsedDraft.drawings) setDrawings(parsedDraft.drawings);
+                      } catch {}
+                    }
                   }
                 });
               }
@@ -147,64 +256,61 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           }
         }
       }
-    } catch {}
+    } catch (err) {
+      console.warn('Erreur lecture session élève locale:', err);
+    }
   }, [initialAccessCode]);
 
-  // Gestion du chronomètre de 45 minutes
+  // Gestion du chronomètre 45 minutes
   useEffect(() => {
-    if (!evaluation || existingSubmission || isLockedAlready) return;
+    if (!evaluation || isLockedAlready || existingSubmission) return;
 
+    // Restaurer le temps restant depuis localStorage si session en cours
     const timerKey = `timer_${evaluation.accessCode}_${studentNumber}`;
-    const savedEndTime = localStorage.getItem(timerKey);
-    const durationSec = (evaluation.durationMinutes || 45) * 60;
+    const savedTime = localStorage.getItem(timerKey);
+    const initialDuration = evaluation.durationMinutes ? evaluation.durationMinutes * 60 : 45 * 60;
+    const startTime = savedTime ? parseInt(savedTime) : initialDuration;
+    setSecondsRemaining(startTime);
 
-    let targetEndTime: number;
-    if (savedEndTime) {
-      targetEndTime = parseInt(savedEndTime);
-    } else {
-      targetEndTime = Date.now() + durationSec * 1000;
-      localStorage.setItem(timerKey, targetEndTime.toString());
-    }
-
-    const updateTimer = () => {
-      const diff = Math.max(0, Math.floor((targetEndTime - Date.now()) / 1000));
-      setSecondsRemaining(diff);
-
-      // Auto-submit si temps écoulé !
-      if (diff <= 0) {
-        clearInterval(timerIntervalRef.current);
-        alert('⏰ Temps écoulé (45 minutes) ! Votre copie va être soumise automatiquement.');
-        handleSubmitEvaluation(true);
-      }
-    };
-
-    updateTimer();
-    timerIntervalRef.current = setInterval(updateTimer, 1000);
+    timerIntervalRef.current = setInterval(() => {
+      setSecondsRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(timerIntervalRef.current);
+          handleSubmitEvaluation(true); // Soumission automatique à la fin du temps
+          return 0;
+        }
+        const updated = prev - 1;
+        try {
+          localStorage.setItem(timerKey, updated.toString());
+        } catch {}
+        return updated;
+      });
+    }, 1000);
 
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
-  }, [evaluation, existingSubmission, isLockedAlready, studentNumber]);
+  }, [evaluation?.id, isLockedAlready, Boolean(existingSubmission)]);
 
-  // Sauvegarder les brouillons de réponse de l'élève en local
-  const autoSaveDraftAnswers = (newAnswers: Record<string, string>, newDrawings: Record<string, string>) => {
-    if (!evaluation || !studentNumber) return;
-    try {
-      const draftKey = `draft_eval_${evaluation.accessCode}_${studentNumber}`;
-      localStorage.setItem(draftKey, JSON.stringify({ answers: newAnswers, drawings: newDrawings }));
-      setLastAutoSave(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    } catch {}
-  };
-
-  // Format du temps restant (ex: 43:25)
+  // Formatage mm:ss
   const formatTimeRemaining = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // ── Handler Connexion Élève ────────────────────────────────────────────────
-  const handleStudentLogin = async (e: React.FormEvent) => {
+  // ── Sauvegarde automatique du brouillon ────────────────────────────────────
+  const autoSaveDraftAnswers = (newAnswers: Record<string, string>, newDrawings: Record<string, string>) => {
+    if (!evaluation || isLockedAlready) return;
+    try {
+      const draftKey = `draft_eval_${evaluation.accessCode}_${studentNumber}`;
+      localStorage.setItem(draftKey, JSON.stringify({ answers: newAnswers, drawings: newDrawings, updatedAt: new Date().toISOString() }));
+      setLastAutoSave(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } catch {}
+  };
+
+  // Connexion de l'élève avec code + N° inscription + Nom
+  const handleValidateAccess = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
 
@@ -213,23 +319,29 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     const cleanName = studentName.trim();
 
     if (!cleanCode) {
-      setLoginError('Veuillez renseigner le code d\'accès donné par votre enseignant.');
+      setLoginError('Veuillez saisir le code d\'accès fourni par votre enseignant.');
       return;
     }
     if (!cleanNum) {
-      setLoginError('Veuillez saisir votre numéro d\'inscription (matricule permanent).');
+      setLoginError('Veuillez saisir votre N° d\'inscription / Matricule.');
       return;
     }
     if (!cleanName) {
-      setLoginError('Veuillez renseigner votre nom et prénom.');
+      setLoginError('Veuillez saisir votre nom et prénom complets.');
       return;
     }
 
     setIsValidating(true);
     try {
+      // 1. Sauvegarder l'identité permanente de l'élève
+      localStorage.setItem('ib_permanent_matricule', cleanNum);
+      localStorage.setItem('ib_permanent_student_name', cleanName);
+      localStorage.setItem('ib_student_session', JSON.stringify({ accessCode: cleanCode, studentNumber: cleanNum, studentName: cleanName }));
+
+      // 2. Vérifier si l'évaluation existe
       const evalData = await getEvaluationByAccessCode(cleanCode);
       if (!evalData) {
-        setLoginError(`Aucune évaluation trouvée pour le code "${cleanCode}". Vérifiez le code avec votre professeur.`);
+        setLoginError(`Aucune évaluation trouvée pour le code "${cleanCode}". Vérifiez avec votre professeur.`);
         setIsValidating(false);
         return;
       }
@@ -240,21 +352,13 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         return;
       }
 
-      // Enregistrer la session élève et le matricule permanent
-      localStorage.setItem('ib_permanent_matricule', cleanNum);
-      localStorage.setItem('ib_permanent_student_name', cleanName);
-      localStorage.setItem('ib_student_session', JSON.stringify({
-        studentNumber: cleanNum,
-        studentName: cleanName,
-        accessCode: cleanCode,
-      }));
-
-      // VÉRIFICATION DE VERROUILLAGE : Copie déjà soumise par cet élève ?
+      // 3. Vérifier si une copie a DÉJÀ été soumise par ce matricule pour ce code
       const lockKey = `ib_locked_${cleanCode}_${cleanNum}`;
       const isLocallyLocked = localStorage.getItem(lockKey) === 'true';
 
       const prevSub = await getStudentSubmission(cleanCode, cleanNum);
       if (prevSub || isLocallyLocked) {
+        setEvaluation(evalData);
         setExistingSubmission(prevSub || {
           id: `locked_${cleanNum}`,
           evaluationId: evalData.id,
@@ -267,12 +371,12 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           answers: [],
         });
         setIsLockedAlready(true);
-        setEvaluation(evalData);
         setIsValidating(false);
         return;
       }
 
-      // Initialiser les réponses à partir du brouillon local s'il existe
+      // 4. Charger l'évaluation et le brouillon existant
+      setEvaluation(evalData);
       const draftKey = `draft_eval_${cleanCode}_${cleanNum}`;
       const savedDraft = localStorage.getItem(draftKey);
       if (savedDraft) {
@@ -282,30 +386,26 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           if (parsed.drawings) setDrawings(parsed.drawings);
         } catch {}
       }
-
-      setEvaluation(evalData);
     } catch (err: any) {
-      setLoginError(err.message || 'Erreur lors de l\'accès à l\'évaluation.');
+      setLoginError(err.message || 'Erreur lors de la validation du code.');
     } finally {
       setIsValidating(false);
     }
   };
 
-  // ── Mise à jour de réponse d'un exercice ──────────────────────────────────
-  const handleResponseChange = (criterion: string, exerciseIdx: number, text: string) => {
+  // Mise à jour de la réponse (pour question principale ou sous-question)
+  const handleResponseChange = (key: string, value: string) => {
     if (isLockedAlready) return;
-    const key = `${criterion}_${exerciseIdx}`;
     setAnswers(prev => {
-      const next = { ...prev, [key]: text };
+      const next = { ...prev, [key]: value };
       autoSaveDraftAnswers(next, drawings);
       return next;
     });
   };
 
-  // Insertion de symboles mathématiques dans la réponse avec positionnement du curseur
-  const handleInsertMathSymbol = (criterion: string, exerciseIdx: number, symbol: string) => {
+  // Insertion de symboles mathématiques dans le textarea ciblé
+  const handleInsertMathSymbol = (key: string, symbol: string) => {
     if (isLockedAlready) return;
-    const key = `${criterion}_${exerciseIdx}`;
     const textarea = document.getElementById(`textarea_${key}`) as HTMLTextAreaElement | null;
     const current = answers[key] || '';
 
@@ -327,10 +427,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       updated = current + symbol;
     }
 
-    handleResponseChange(criterion, exerciseIdx, updated);
+    handleResponseChange(key, updated);
   };
 
-  // Sauvegarde d'un tracé géométrique
+  // Sauvegarde d'un tracé géométrique ou dessin d'art
   const handleSaveDrawing = (dataUrl: string) => {
     if (!drawingModalTarget || isLockedAlready) return;
     setDrawings(prev => {
@@ -341,9 +441,35 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     setDrawingModalTarget(null);
   };
 
-  // ── Calcul de l'avancement ────────────────────────────────────────────────
-  const totalExercises = (evaluation?.assessments || []).reduce((acc, a) => acc + (a.exercises?.length || 0), 0);
-  const completedExercises = Object.values(answers).filter(v => v && v.trim().length > 0).length;
+  // ── Calcul de l'avancement global ──────────────────────────────────────────
+  const isMathSubject = /math/i.test(evaluation?.subject || '');
+  const isArtSubject = /art|plastique|visuel|dessin/i.test(evaluation?.subject || '');
+
+  let totalQuestionsCount = 0;
+  let answeredQuestionsCount = 0;
+
+  if (evaluation) {
+    evaluation.assessments.forEach(crit => {
+      (crit.exercises || []).forEach((ex, exIdx) => {
+        const subQuestions = getExerciseSubQuestions(ex, crit.criterion, crit.strands);
+        if (subQuestions.length > 0) {
+          subQuestions.forEach((_, sIdx) => {
+            totalQuestionsCount++;
+            const subKey = `${crit.criterion}_${exIdx}_sub_${sIdx}`;
+            if (answers[subKey] && answers[subKey].trim().length > 0) {
+              answeredQuestionsCount++;
+            }
+          });
+        } else {
+          totalQuestionsCount++;
+          const key = `${crit.criterion}_${exIdx}`;
+          if (answers[key] && answers[key].trim().length > 0) {
+            answeredQuestionsCount++;
+          }
+        }
+      });
+    });
+  }
 
   // ── Soumission de la copie (avec verrouillage immédiat et définitif) ───────
   const handleSubmitEvaluation = async (forceAutoSubmit = false) => {
@@ -355,10 +481,30 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
       (evaluation.assessments || []).forEach(crit => {
         (crit.exercises || []).forEach((ex, exIdx) => {
-          const key = `${crit.criterion}_${exIdx}`;
-          const responseText = answers[key] || '';
-          const drawingDataUrl = drawings[key];
+          const mainKey = `${crit.criterion}_${exIdx}`;
           const strand = resolveStrandForQuestion(crit.criterion, crit.strands, ex, exIdx);
+          const subQuestions = getExerciseSubQuestions(ex, crit.criterion, crit.strands);
+
+          let combinedResponse = '';
+          const subAnswersMap: Record<string, { response: string; drawingDataUrl?: string }> = {};
+
+          if (subQuestions.length > 0) {
+            const parts: string[] = [];
+            subQuestions.forEach((sub, sIdx) => {
+              const subKey = `${crit.criterion}_${exIdx}_sub_${sIdx}`;
+              const subResp = answers[subKey] || '';
+              const subDraw = drawings[subKey];
+              const subId = sub.id || `sub_${sIdx + 1}`;
+              subAnswersMap[subId] = {
+                response: subResp,
+                drawingDataUrl: subDraw,
+              };
+              parts.push(`${sub.label} ${subResp || '(Sans réponse)'}`);
+            });
+            combinedResponse = parts.join('\n\n');
+          } else {
+            combinedResponse = answers[mainKey] || '';
+          }
 
           formattedAnswers.push({
             criterion: crit.criterion,
@@ -369,8 +515,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             strandText: strand.description,
             questionType: ex.type || 'open',
             questionContent: ex.content,
-            studentResponse: responseText,
-            drawingDataUrl: drawingDataUrl,
+            studentResponse: combinedResponse,
+            drawingDataUrl: drawings[mainKey],
+            subAnswers: Object.keys(subAnswersMap).length > 0 ? subAnswersMap : undefined,
           });
         });
       });
@@ -384,7 +531,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         answers: formattedAnswers,
       });
 
-      // VERROUILLAGE DÉFINITIF EN LOCAL : Même si l'élève rafraîchit la page, il ne peut plus rouvrir
+      // VERROUILLAGE DÉFINITIF EN LOCAL
       const cleanNum = studentNumber.trim();
       const lockKey = `ib_locked_${evaluation.accessCode}_${cleanNum}`;
       localStorage.setItem(lockKey, 'true');
@@ -398,102 +545,89 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setShowConfirmSubmit(false);
 
       if (!forceAutoSubmit) {
-        alert('✅ Votre copie a été transmise avec succès à votre enseignant !\nElle est maintenant définitivement enregistrée et verrouillée.');
+        alert('🎉 Votre copie a été remise avec succès et est maintenant verrouillée.');
       }
     } catch (err: any) {
-      alert(`Erreur lors de la remise de votre copie : ${err.message || 'Veuillez réessayer'}`);
+      alert(`Erreur lors de la remise : ${err.message || 'Impossible de soumettre la copie'}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VUE 1 : FORMULAIRE D'ACCÈS ÉLÈVE (LOGIN)
+  // VUE 1 : ÉCRAN DE CONNEXION ÉLÈVE
   // ═══════════════════════════════════════════════════════════════════════════
   if (!evaluation) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900 flex flex-col justify-between p-4 sm:p-6">
-        {/* Header simple avec logo */}
-        <header className="max-w-xl mx-auto w-full flex items-center justify-between py-2">
+      <div className="min-h-screen bg-gradient-to-br from-purple-950 via-slate-900 to-indigo-950 flex flex-col justify-between p-4 sm:p-6 text-white">
+        <header className="flex items-center justify-between max-w-5xl mx-auto w-full py-2">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-white rounded-2xl p-1 shadow-lg flex items-center justify-center">
-              <img
-                src="/logo-alkawtar.png"
-                alt="Logo Al-Kawthar"
-                className="w-full h-full object-contain"
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-              />
+            <div className="w-10 h-10 bg-purple-600 rounded-xl flex items-center justify-center font-black text-white shadow-lg">
+              PEI
             </div>
             <div>
-              <h2 className="text-white font-extrabold text-base tracking-wide">Écoles Al-Kawthar</h2>
-              <p className="text-purple-200 text-xs font-medium">Espace Évaluation des Élèves (PEI IB)</p>
+              <h1 className="font-bold text-sm tracking-wide text-purple-200">Évaluation Critériée en Ligne</h1>
+              <p className="text-[11px] text-purple-400">Portail officiel des élèves · Baccalauréat International</p>
             </div>
           </div>
           <button
             onClick={onExit}
-            className="flex items-center gap-1.5 text-xs text-purple-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-xl transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold transition"
           >
             <LogOut size={14} /> Retour à l'accueil
           </button>
         </header>
 
-        {/* Boîte de connexion */}
-        <main className="max-w-md mx-auto w-full my-auto py-8">
-          <div className="bg-white rounded-3xl shadow-2xl p-6 sm:p-8 border border-purple-100">
+        <main className="max-w-md mx-auto w-full my-8">
+          <div className="bg-white text-slate-900 rounded-3xl p-6 sm:p-8 shadow-2xl border border-purple-200/20 animate-fadeIn">
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-purple-100 text-purple-700 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-inner">
-                <FileText size={32} />
+                <ShieldCheck size={32} />
               </div>
-              <h1 className="text-2xl font-black text-slate-800">Évaluation Électronique</h1>
-              <p className="text-slate-500 text-xs mt-1">
-                Entrez votre numéro d'inscription permanent et le code d'évaluation pour commencer votre épreuve de 45 min.
+              <h2 className="text-xl font-black text-slate-800">Espace Évaluation Élève</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Saisissez votre code d'accès et vos identifiants d'élève pour composer
               </p>
             </div>
 
             {loginError && (
-              <div className="mb-5 bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-xl flex items-start gap-2.5 text-xs">
-                <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+              <div className="mb-4 bg-rose-50 border border-rose-200 text-rose-700 p-3 rounded-xl text-xs flex items-start gap-2">
+                <AlertCircle size={16} className="text-rose-600 flex-shrink-0 mt-0.5" />
                 <span>{loginError}</span>
               </div>
             )}
 
-            <form onSubmit={handleStudentLogin} className="space-y-4">
+            <form onSubmit={handleValidateAccess} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">
-                  Code d'évaluation (donné par le professeur) <span className="text-rose-500">*</span>
+                  Code d'accès de l'évaluation <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <input
                     type="text"
                     value={accessCode}
                     onChange={e => setAccessCode(e.target.value.toUpperCase())}
-                    placeholder="Ex: EVAL-8492"
-                    className="w-full pl-3.5 pr-10 py-3 bg-purple-50/50 border-2 border-purple-200 focus:border-purple-600 rounded-xl font-mono text-base font-bold text-purple-900 tracking-wider uppercase focus:outline-none transition"
+                    placeholder="Ex: EVAL-4892"
+                    className="w-full px-4 py-3 bg-purple-50/50 border-2 border-purple-200 focus:border-purple-600 rounded-xl text-base font-mono font-black text-purple-900 tracking-wider text-center focus:outline-none transition uppercase"
                     required
+                    autoFocus
                   />
-                  <div className="absolute right-3 top-3 text-purple-400">
-                    <ShieldCheck size={20} />
-                  </div>
                 </div>
+                <p className="text-[11px] text-slate-400 mt-1">Fourni au tableau ou par votre enseignant</p>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">
-                  Numéro d'inscription / Matricule (unique et permanent) <span className="text-rose-500">*</span>
+                  N° d'inscription / Matricule <span className="text-rose-500">*</span>
                 </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={studentNumber}
-                    onChange={e => setStudentNumber(e.target.value)}
-                    placeholder="Ex: 2024-0012 ou votre matricule élève"
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 focus:border-purple-600 rounded-xl text-sm focus:outline-none transition font-medium"
-                    required
-                  />
-                  <div className="absolute left-3 top-2.5 text-slate-400">
-                    <User size={18} />
-                  </div>
-                </div>
+                <input
+                  type="text"
+                  value={studentNumber}
+                  onChange={e => setStudentNumber(e.target.value)}
+                  placeholder="Ex: 2024-8491"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 focus:border-purple-600 rounded-xl text-sm font-mono font-bold focus:outline-none transition"
+                  required
+                />
               </div>
 
               <div>
@@ -542,7 +676,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VUE 2 : COPIE SOUMISE & VERROUILLÉE (L'ÉLÈVE NE PEUT PLUS MODIFIER OU REFAIRE)
+  // VUE 2 : COPIE SOUMISE & VERROUILLÉE
   // ═══════════════════════════════════════════════════════════════════════════
   if (existingSubmission || isLockedAlready) {
     const isGraded = existingSubmission?.status === 'graded';
@@ -587,7 +721,6 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
         {/* Contenu copie verrouillée */}
         <main className="max-w-4xl mx-auto w-full p-4 sm:p-6 space-y-6 flex-1">
-          {/* Bannière de verrouillage stricte */}
           <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 text-amber-950 flex items-start gap-4">
             <div className="w-12 h-12 bg-amber-500 text-white rounded-2xl flex items-center justify-center flex-shrink-0 shadow-md">
               <Lock size={26} />
@@ -674,8 +807,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                       )}
                     </div>
 
-                    {/* Sous-aspect précis en rouge */}
-                    {ans.strandIndex && (
+                    {/* Sous-aspect principal si pas de sous-questions */}
+                    {ans.strandIndex && !ans.subAnswers && (
                       <div className="text-red-600 font-bold text-xs bg-red-50/60 px-2.5 py-1 rounded border border-red-200">
                         🔴 Sous-aspect ({ans.strandIndex}) : {ans.strandText}
                       </div>
@@ -685,25 +818,56 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                       {ans.questionContent}
                     </div>
 
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block mb-1">
-                        Votre réponse saisie :
-                      </span>
-                      <p className="text-xs text-slate-800 whitespace-pre-wrap bg-purple-50/40 p-3 rounded-xl border border-purple-100 leading-relaxed font-mono">
-                        {ans.studentResponse || '(Aucune réponse)'}
-                      </p>
+                    {/* Affichage des réponses par sous-question si présentes */}
+                    {ans.subAnswers && Object.keys(ans.subAnswers).length > 0 ? (
+                      <div className="space-y-3 pt-2">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">
+                          Détail de vos réponses par sous-question :
+                        </span>
+                        {Object.entries(ans.subAnswers).map(([subId, subData], subIdx) => (
+                          <div key={subId} className="bg-purple-50/40 p-3.5 rounded-xl border border-purple-100 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-xs text-purple-900">
+                                Sous-question {subIdx + 1})
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-800 whitespace-pre-wrap font-mono">
+                              {subData.response || '(Aucune réponse)'}
+                            </p>
+                            {subData.drawingDataUrl && (
+                              <div className="mt-2 text-center pt-2 border-t border-purple-100">
+                                <span className="text-[10px] font-bold text-slate-500 block mb-1">Tracé / Figure géométrique :</span>
+                                <img
+                                  src={subData.drawingDataUrl}
+                                  alt="Tracé élève"
+                                  className="max-h-40 max-w-full mx-auto border border-slate-200 rounded shadow-xs bg-white"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block mb-1">
+                          Votre réponse saisie :
+                        </span>
+                        <p className="text-xs text-slate-800 whitespace-pre-wrap bg-purple-50/40 p-3 rounded-xl border border-purple-100 leading-relaxed font-mono">
+                          {ans.studentResponse || '(Aucune réponse)'}
+                        </p>
 
-                      {ans.drawingDataUrl && (
-                        <div className="mt-2 text-center">
-                          <span className="text-[10px] font-bold text-slate-500 block mb-1">Figure géométrique :</span>
-                          <img
-                            src={ans.drawingDataUrl}
-                            alt="Figure géométrique"
-                            className="max-h-48 max-w-full mx-auto border border-slate-200 rounded shadow-xs"
-                          />
-                        </div>
-                      )}
-                    </div>
+                        {ans.drawingDataUrl && (
+                          <div className="mt-2 text-center">
+                            <span className="text-[10px] font-bold text-slate-500 block mb-1">Figure géométrique / Tracé :</span>
+                            <img
+                              src={ans.drawingDataUrl}
+                              alt="Figure élève"
+                              className="max-h-48 max-w-full mx-auto border border-slate-200 rounded shadow-xs bg-white"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {isGraded && ans.teacherComment && (
                       <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-xs text-emerald-900">
@@ -730,7 +894,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VUE 3 : PASSATION EN LIGNE (INTERACTIVE - 45 MIN AVEC OUTILS MATHS & GÉOMÉTRIE)
+  // VUE 3 : PASSATION EN LIGNE (INTERACTIVE - 45 MIN AVEC OUTILS MATHS & GÉOMÉTRIE & ART)
   // ═══════════════════════════════════════════════════════════════════════════
   const activeAssessment = evaluation.assessments[activeCriterionIdx];
   const activeColors = activeAssessment
@@ -738,6 +902,29 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     : CRITERION_COLORS.A;
 
   const isTimeCritical = secondsRemaining <= 300; // < 5 minutes
+
+  // Symboles mathématiques pour barre d'outils
+  const MATH_SYMBOLS = [
+    { label: 'x²', val: '²' },
+    { label: 'x³', val: '³' },
+    { label: 'xⁿ', val: '^()' },
+    { label: '√x', val: '√()' },
+    { label: '∛x', val: '∛()' },
+    { label: 'a/b', val: ' / ' },
+    { label: 'π', val: 'π' },
+    { label: '°', val: '°' },
+    { label: '±', val: '±' },
+    { label: '×', val: '×' },
+    { label: '÷', val: '÷' },
+    { label: '≠', val: '≠' },
+    { label: '≤', val: '≤' },
+    { label: '≥', val: '≥' },
+    { label: '∠', val: '∠' },
+    { label: '△', val: '△' },
+    { label: '⊥', val: '⊥' },
+    { label: '∥', val: '∥' },
+    { label: '[AB]', val: '[AB]' },
+  ];
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col">
@@ -769,8 +956,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
             {/* Progression */}
             <div className="hidden md:flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700">
-              <CheckCircle size={14} className={completedExercises === totalExercises ? 'text-green-600' : 'text-purple-600'} />
-              <span>{completedExercises} / {totalExercises} réponses</span>
+              <CheckCircle size={14} className={answeredQuestionsCount === totalQuestionsCount && totalQuestionsCount > 0 ? 'text-green-600' : 'text-purple-600'} />
+              <span>{answeredQuestionsCount} / {totalQuestionsCount} répondues</span>
             </div>
 
             <button
@@ -812,11 +999,6 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           {evaluation.assessments.map((crit, idx) => {
             const colors = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
             const critExercisesCount = crit.exercises?.length || 0;
-            const critAnswersCount = (crit.exercises || []).filter((_, exI) => {
-              const k = `${crit.criterion}_${exI}`;
-              return answers[k] && answers[k].trim().length > 0;
-            }).length;
-
             const isCurrent = activeCriterionIdx === idx;
             return (
               <button
@@ -832,12 +1014,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                   {crit.criterion}
                 </span>
                 <span>{crit.criterionName}</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                  critAnswersCount === critExercisesCount && critExercisesCount > 0
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-slate-100 text-slate-500'
-                }`}>
-                  {critAnswersCount}/{critExercisesCount}
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-600">
+                  {critExercisesCount} tâche(s)
                 </span>
               </button>
             );
@@ -866,39 +1044,35 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             </div>
 
             {/* Questions / Tâches du critère */}
-            <div className="space-y-5">
+            <div className="space-y-6">
               {(activeAssessment.exercises || []).map((ex, exIdx) => {
-                const answerKey = `${activeAssessment.criterion}_${exIdx}`;
-                const currentAnswer = answers[answerKey] || '';
-                const currentDrawing = drawings[answerKey];
-                const strand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx);
-                const qType = ex.type || 'open';
+                const subQuestions = getExerciseSubQuestions(ex, activeAssessment.criterion, activeAssessment.strands);
+                const hasSubQuestions = subQuestions.length > 0;
+                const mainStrand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx);
 
                 return (
                   <div
                     key={exIdx}
-                    className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4 hover:border-purple-200 transition"
+                    className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-sm space-y-5 hover:border-purple-300 transition"
                   >
+                    {/* Header de la question principale */}
                     <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold text-white ${activeColors.badge}`}>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-3 py-1 rounded-xl text-xs font-black text-white ${activeColors.badge}`}>
                           Question {exIdx + 1}
                         </span>
-                        <h4 className="font-bold text-base text-slate-900">{ex.title}</h4>
+                        <h4 className="font-black text-base text-slate-900">{ex.title}</h4>
                       </div>
                       <span className="text-xs font-semibold text-slate-400">
-                        {qType === 'true_false' ? 'Vrai ou Faux' : qType === 'multiple_choice' ? 'QCM' : 'Rédaction'}
+                        {hasSubQuestions
+                          ? `${subQuestions.length} sous-questions`
+                          : ex.type === 'multiple_choice' ? 'QCM' : ex.type === 'true_false' ? 'Vrai/Faux' : 'Rédaction'}
                       </span>
-                    </div>
-
-                    {/* 🔴 SOUS-ASPECT INDIVIDUEL EN ROUGE SOUS LA QUESTION (EXIGENCE FORMELLE DU BRIEF) */}
-                    <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50/70 px-3 py-1.5 rounded-xl border border-red-200">
-                      <span className="text-red-700 font-black">● {strand.fullLabel}</span>
                     </div>
 
                     {/* OEUVRE D'ART / PHOTO / SCHÉMA SI PRÉSENT */}
                     {ex.imageUrl && (
-                      <div className="my-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+                      <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
                         <img
                           src={ex.imageUrl}
                           alt={ex.imageCaption || 'Illustration oeuvre d\'art'}
@@ -912,172 +1086,376 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                       </div>
                     )}
 
-                    {/* Énoncé de la question */}
-                    <div className="bg-slate-50 p-4 rounded-xl text-sm text-slate-800 whitespace-pre-wrap leading-relaxed border border-slate-100 font-normal">
-                      {ex.content}
-                    </div>
-
-                    {/* ── ZONE DE RÉPONSE INTERACTIVE SELON LE TYPE DE QUESTION ── */}
-
-                    {/* 1. TYPE VRAI OU FAUX */}
-                    {qType === 'true_false' && (
-                      <div className="space-y-3 pt-1">
-                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                          Indiquez votre réponse :
-                        </label>
-                        <div className="grid grid-cols-2 gap-3 max-w-md">
-                          {['Vrai', 'Faux'].map(option => {
-                            const isSelected = currentAnswer.startsWith(option);
-                            return (
-                              <button
-                                key={option}
-                                type="button"
-                                onClick={() => handleResponseChange(activeAssessment.criterion, exIdx, option)}
-                                className={`py-3 px-4 rounded-xl font-bold text-sm border-2 transition flex items-center justify-center gap-2 ${
-                                  isSelected
-                                    ? 'bg-purple-600 border-purple-600 text-white shadow-md'
-                                    : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
-                                }`}
-                              >
-                                {isSelected && <Check size={16} />}
-                                <span>{option}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <div>
-                          <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                            Justification ou explication (facultative) :
-                          </label>
-                          <textarea
-                            value={currentAnswer.replace(/^(Vrai|Faux)\s*:\s*/, '')}
-                            onChange={e => {
-                              const prefix = currentAnswer.startsWith('Vrai') ? 'Vrai : ' : currentAnswer.startsWith('Faux') ? 'Faux : ' : '';
-                              handleResponseChange(activeAssessment.criterion, exIdx, prefix + e.target.value);
-                            }}
-                            rows={2}
-                            placeholder="Rédigez votre justification ici..."
-                            className="w-full p-3 border border-slate-300 focus:border-purple-600 rounded-xl text-xs outline-none"
-                          />
-                        </div>
+                    {/* Énoncé global / Contexte de la question */}
+                    {ex.content && (
+                      <div className="bg-slate-50 p-4 rounded-2xl text-sm text-slate-800 whitespace-pre-wrap leading-relaxed border border-slate-100 font-normal">
+                        {ex.content}
                       </div>
                     )}
 
-                    {/* 2. TYPE CHOIX MULTIPLES (QCM) */}
-                    {qType === 'multiple_choice' && (
-                      <div className="space-y-2.5 pt-1">
-                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                          Cochez la bonne réponse :
-                        </label>
-                        <div className="space-y-2">
-                          {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => {
-                            const isSelected = currentAnswer === opt;
-                            return (
-                              <div
-                                key={optIdx}
-                                onClick={() => handleResponseChange(activeAssessment.criterion, exIdx, opt)}
-                                className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
-                                  isSelected
-                                    ? 'bg-purple-50 border-purple-600 text-purple-950 font-bold shadow-xs'
-                                    : 'bg-white border-slate-200 hover:border-purple-200 text-slate-700'
-                                }`}
-                              >
-                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                                  isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-300'
-                                }`}>
-                                  {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
-                                </div>
-                                <span className="text-sm">{opt}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 3. TYPE OUVERT / RÉDACTION AVEC BARRE D'OUTILS MATHS & GÉOMÉTRIE */}
-                    {qType === 'open' && (
-                      <div className="space-y-2">
-                        {/* 📐 BARRE D'OUTILS MATHÉMATIQUES & GÉOMÉTRIE */}
-                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 flex items-center justify-between flex-wrap gap-1.5 text-xs">
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <span className="text-[11px] font-bold text-slate-500 uppercase mr-1">Maths :</span>
-                            {[
-                              { label: 'x²', val: '²' },
-                              { label: 'x³', val: '³' },
-                              { label: 'xⁿ', val: '^()' },
-                              { label: '√x', val: '√()' },
-                              { label: '∛x', val: '∛()' },
-                              { label: 'a/b', val: ' / ' },
-                              { label: 'π', val: 'π' },
-                              { label: '°', val: '°' },
-                              { label: '±', val: '±' },
-                              { label: '×', val: '×' },
-                              { label: '÷', val: '÷' },
-                              { label: '≠', val: '≠' },
-                              { label: '≤', val: '≤' },
-                              { label: '≥', val: '≥' },
-                              { label: '∠', val: '∠' },
-                              { label: '△', val: '△' },
-                              { label: '⊥', val: '⊥' },
-                              { label: '∥', val: '∥' },
-                              { label: '[AB]', val: '[AB]' },
-                            ].map(item => (
-                              <button
-                                key={item.label}
-                                type="button"
-                                onClick={() => handleInsertMathSymbol(activeAssessment.criterion, exIdx, item.val)}
-                                className="px-2 py-1 bg-white hover:bg-purple-100 text-slate-700 hover:text-purple-800 border border-slate-200 rounded font-bold text-xs transition shadow-2xs"
-                                title={`Insérer ${item.label}`}
-                              >
-                                {item.label}
-                              </button>
-                            ))}
-                          </div>
-
-                          {/* Bouton outil géométrique */}
-                          <button
-                            type="button"
-                            onClick={() => setDrawingModalTarget(answerKey)}
-                            className="flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
-                            title="Ouvrir l'outil de dessin géométrique"
-                          >
-                            <span>📐</span> Tracer une figure
-                          </button>
+                    {/* ═══════════════════════════════════════════════════════════
+                        CAS 1 : LA QUESTION CONTIENT DES SOUS-QUESTIONS 1), 2), 3)...
+                        Chaque sous-question a son sous-aspect en rouge, sa réponse et ses outils !
+                        ═══════════════════════════════════════════════════════════ */}
+                    {hasSubQuestions ? (
+                      <div className="space-y-6 pt-2">
+                        <div className="text-xs font-bold uppercase tracking-wider text-purple-900 flex items-center gap-2">
+                          <span>📋</span>
+                          <span>Sous-questions à traiter :</span>
                         </div>
 
-                        {/* Zone de saisie directe (sans espace pointillé) */}
-                        <textarea
-                          id={`textarea_${answerKey}`}
-                          value={currentAnswer}
-                          onChange={e => handleResponseChange(activeAssessment.criterion, exIdx, e.target.value)}
-                          placeholder="Écrivez directement ici votre réponse rédigée et détaillée..."
-                          rows={6}
-                          className="w-full p-4 border border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition leading-relaxed resize-y font-sans"
-                        />
+                        {subQuestions.map((sub, sIdx) => {
+                          const subKey = `${activeAssessment.criterion}_${exIdx}_sub_${sIdx}`;
+                          const subAnswer = answers[subKey] || '';
+                          const subDrawing = drawings[subKey];
+                          const subStrand = resolveStrandForSubQuestion(activeAssessment.criterion, activeAssessment.strands, sub, sIdx);
+                          const subQType = sub.type || ex.type || 'open';
 
-                        {/* Aperçu de la figure géométrique insérée */}
-                        {currentDrawing && (
-                          <div className="relative inline-block bg-slate-50 border border-slate-300 rounded-xl p-2 text-center mt-2">
-                            <span className="text-[10px] font-bold text-slate-600 block mb-1">
-                              📐 Figure géométrique rattachée à cette question :
-                            </span>
-                            <img
-                              src={currentDrawing}
-                              alt="Figure géométrique élève"
-                              className="max-h-48 max-w-full mx-auto border border-slate-200 rounded bg-white shadow-xs"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const next = { ...drawings };
-                                delete next[answerKey];
-                                setDrawings(next);
-                              }}
-                              className="mt-1 text-[11px] text-rose-600 hover:text-rose-800 font-bold"
+                          return (
+                            <div
+                              key={sub.id || sIdx}
+                              className="bg-purple-50/20 border-2 border-purple-100 rounded-2xl p-5 space-y-4 hover:border-purple-300 transition"
                             >
-                              Supprimer la figure
-                            </button>
+                              {/* Intitulé de la sous-question */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-baseline gap-2">
+                                  <span className="font-black text-sm text-purple-700 bg-purple-100 px-2.5 py-0.5 rounded-lg flex-shrink-0">
+                                    {sub.label || `${sIdx + 1})`}
+                                  </span>
+                                  <h5 className="font-bold text-sm text-slate-900 leading-snug">
+                                    {sub.content || `Sous-question ${sIdx + 1}`}
+                                  </h5>
+                                </div>
+                                <span className="text-[11px] font-semibold text-slate-400 flex-shrink-0">
+                                  {subQType === 'multiple_choice' ? '☑️ QCM' : subQType === 'true_false' ? '⚖️ Vrai/Faux' : '📝 Rédaction'}
+                                </span>
+                              </div>
+
+                              {/* 🔴 SOUS-ASPECT INDIVIDUEL EN ROUGE SOUS CETTE SOUS-QUESTION (EXIGENCE BRIEF) */}
+                              <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50 px-3 py-1.5 rounded-xl border border-red-200">
+                                <span className="text-red-700 font-black">● {subStrand.fullLabel}</span>
+                              </div>
+
+                              {/* ── ZONE DE RÉPONSE INTERACTIVE SELON LE TYPE DE LA SOUS-QUESTION ── */}
+
+                              {/* A. QCM : COCHER LA BONNE RÉPONSE */}
+                              {subQType === 'multiple_choice' && (
+                                <div className="space-y-2 pt-1">
+                                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                                    Cochez la bonne réponse :
+                                  </label>
+                                  <div className="space-y-2">
+                                    {(sub.options || ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => {
+                                      const isSelected = subAnswer === opt;
+                                      return (
+                                        <div
+                                          key={optIdx}
+                                          onClick={() => handleResponseChange(subKey, opt)}
+                                          className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
+                                            isSelected
+                                              ? 'bg-purple-100/90 border-purple-600 text-purple-950 font-bold shadow-xs'
+                                              : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
+                                          }`}
+                                        >
+                                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                            isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-400 bg-white'
+                                          }`}>
+                                            {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                          </div>
+                                          <span className="text-sm">{opt}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* B. VRAI OU FAUX */}
+                              {subQType === 'true_false' && (
+                                <div className="space-y-2.5 pt-1">
+                                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                                    Indiquez votre réponse :
+                                  </label>
+                                  <div className="grid grid-cols-2 gap-3 max-w-xs">
+                                    {['Vrai', 'Faux'].map(opt => {
+                                      const isSelected = subAnswer.startsWith(opt);
+                                      return (
+                                        <button
+                                          key={opt}
+                                          type="button"
+                                          onClick={() => handleResponseChange(subKey, opt)}
+                                          className={`py-2.5 px-4 rounded-xl font-bold text-xs border-2 transition flex items-center justify-center gap-2 ${
+                                            isSelected
+                                              ? 'bg-purple-600 border-purple-600 text-white shadow-md'
+                                              : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
+                                          }`}
+                                        >
+                                          {isSelected && <Check size={14} />}
+                                          <span>{opt}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* C. RÉDACTION LIBRE AVEC OUTILS MATHS & GÉOMÉTRIE OU ART */}
+                              {subQType === 'open' && (
+                                <div className="space-y-2 pt-1">
+                                  {/* BARRE D'OUTILS SPÉCIALISÉE SOUS LA SOUS-QUESTION */}
+                                  <div className="bg-white border border-slate-200 rounded-xl p-2 flex items-center justify-between flex-wrap gap-2 text-xs shadow-2xs">
+                                    {/* Outils Maths si matière scientifique */}
+                                    {isMathSubject && (
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        <span className="text-[10px] font-bold text-slate-500 uppercase mr-1">Maths :</span>
+                                        {MATH_SYMBOLS.slice(0, 10).map(item => (
+                                          <button
+                                            key={item.label}
+                                            type="button"
+                                            onClick={() => handleInsertMathSymbol(subKey, item.val)}
+                                            className="px-2 py-0.5 bg-slate-50 hover:bg-purple-100 text-slate-700 hover:text-purple-900 border border-slate-200 rounded font-bold text-xs transition"
+                                            title={`Insérer ${item.label}`}
+                                          >
+                                            {item.label}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {/* Palette rapide si matière d'art */}
+                                    {isArtSubject && (
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[10px] font-bold text-purple-700 uppercase">🎨 Outils d'Art :</span>
+                                        <span className="text-[11px] text-slate-500 italic">Pinceaux, fusain, lavis et palette disponibles</span>
+                                      </div>
+                                    )}
+
+                                    {/* Bouton pour ouvrir l'outil de dessin adapté */}
+                                    <div className="flex items-center gap-1.5 ml-auto">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setDrawingModalTarget(subKey);
+                                          setDrawingModalLabel(`Question ${exIdx + 1} - ${sub.label}`);
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
+                                        title="Ouvrir le studio de tracé (Équerre, Rapporteur, Compas ou Art)"
+                                      >
+                                        {isArtSubject ? <span>🎨 Dessiner / Esquisser</span> : <span>📐 Géométrie (Équerre, Compas)</span>}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Zone de saisie directe pour cette sous-question */}
+                                  <textarea
+                                    id={`textarea_${subKey}`}
+                                    value={subAnswer}
+                                    onChange={e => handleResponseChange(subKey, e.target.value)}
+                                    placeholder={`Rédigez votre réponse détaillée pour la sous-question ${sub.label}...`}
+                                    rows={4}
+                                    className="w-full p-3.5 bg-white border border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition font-sans leading-relaxed"
+                                  />
+
+                                  {/* Tracé rattaché à cette sous-question */}
+                                  {subDrawing && (
+                                    <div className="relative inline-block bg-white border border-slate-300 rounded-xl p-2.5 text-center mt-1 shadow-2xs">
+                                      <span className="text-[10px] font-bold text-slate-600 block mb-1">
+                                        {isArtSubject ? '🎨 Dessin / Croquis rattaché :' : '📐 Figure géométrique rattachée :'}
+                                      </span>
+                                      <img
+                                        src={subDrawing}
+                                        alt="Figure élève"
+                                        className="max-h-40 max-w-full mx-auto border border-slate-200 rounded bg-white"
+                                      />
+                                      <div className="flex items-center justify-center gap-3 mt-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setDrawingModalTarget(subKey);
+                                            setDrawingModalLabel(`Question ${exIdx + 1} - ${sub.label}`);
+                                          }}
+                                          className="text-[11px] text-purple-600 hover:text-purple-800 font-bold"
+                                        >
+                                          Modifier le tracé
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const next = { ...drawings };
+                                            delete next[subKey];
+                                            setDrawings(next);
+                                          }}
+                                          className="text-[11px] text-rose-600 hover:text-rose-800 font-bold"
+                                        >
+                                          Supprimer
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      /* ═══════════════════════════════════════════════════════════
+                          CAS 2 : QUESTION UNIQUE SANS SOUS-QUESTIONS
+                          Affichage classique avec son sous-aspect unique en rouge
+                          ═══════════════════════════════════════════════════════════ */
+                      <div className="space-y-4">
+                        {/* 🔴 SOUS-ASPECT INDIVIDUEL EN ROUGE SOUS LA QUESTION */}
+                        <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50/70 px-3 py-1.5 rounded-xl border border-red-200">
+                          <span className="text-red-700 font-black">● {mainStrand.fullLabel}</span>
+                        </div>
+
+                        {/* TYPE QCM */}
+                        {ex.type === 'multiple_choice' && (
+                          <div className="space-y-2.5 pt-1">
+                            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                              Cochez la bonne réponse :
+                            </label>
+                            <div className="space-y-2">
+                              {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => {
+                                const answerKey = `${activeAssessment.criterion}_${exIdx}`;
+                                const currentAnswer = answers[answerKey] || '';
+                                const isSelected = currentAnswer === opt;
+                                return (
+                                  <div
+                                    key={optIdx}
+                                    onClick={() => handleResponseChange(answerKey, opt)}
+                                    className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
+                                      isSelected
+                                        ? 'bg-purple-50 border-purple-600 text-purple-950 font-bold shadow-xs'
+                                        : 'bg-white border-slate-200 hover:border-purple-200 text-slate-700'
+                                    }`}
+                                  >
+                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                      isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-300 bg-white'
+                                    }`}>
+                                      {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                    </div>
+                                    <span className="text-sm">{opt}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TYPE VRAI / FAUX */}
+                        {ex.type === 'true_false' && (
+                          <div className="space-y-3 pt-1">
+                            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                              Indiquez votre réponse :
+                            </label>
+                            <div className="grid grid-cols-2 gap-3 max-w-md">
+                              {['Vrai', 'Faux'].map(option => {
+                                const answerKey = `${activeAssessment.criterion}_${exIdx}`;
+                                const currentAnswer = answers[answerKey] || '';
+                                const isSelected = currentAnswer.startsWith(option);
+                                return (
+                                  <button
+                                    key={option}
+                                    type="button"
+                                    onClick={() => handleResponseChange(answerKey, option)}
+                                    className={`py-3 px-4 rounded-xl font-bold text-sm border-2 transition flex items-center justify-center gap-2 ${
+                                      isSelected
+                                        ? 'bg-purple-600 border-purple-600 text-white shadow-md'
+                                        : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
+                                    }`}
+                                  >
+                                    {isSelected && <Check size={16} />}
+                                    <span>{option}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TYPE RÉDACTION LIBRE AVEC OUTILS MATHS & GÉOMÉTRIE OU ART */}
+                        {(!ex.type || ex.type === 'open') && (
+                          <div className="space-y-2">
+                            {/* 📐 BARRE D'OUTILS MATHÉMATIQUES & GÉOMÉTRIE & ART */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 flex items-center justify-between flex-wrap gap-1.5 text-xs">
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <span className="text-[11px] font-bold text-slate-500 uppercase mr-1">
+                                  {isArtSubject ? 'Art :' : 'Maths :'}
+                                </span>
+                                {MATH_SYMBOLS.map(item => (
+                                  <button
+                                    key={item.label}
+                                    type="button"
+                                    onClick={() => handleInsertMathSymbol(`${activeAssessment.criterion}_${exIdx}`, item.val)}
+                                    className="px-2 py-1 bg-white hover:bg-purple-100 text-slate-700 hover:text-purple-800 border border-slate-200 rounded font-bold text-xs transition shadow-2xs"
+                                    title={`Insérer ${item.label}`}
+                                  >
+                                    {item.label}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {/* Bouton outil de tracé */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDrawingModalTarget(`${activeAssessment.criterion}_${exIdx}`);
+                                  setDrawingModalLabel(`Question ${exIdx + 1}`);
+                                }}
+                                className="flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
+                                title="Ouvrir le studio de tracé (Équerre, Rapporteur, Compas ou Art)"
+                              >
+                                {isArtSubject ? <span>🎨 Studio de dessin & croquis</span> : <span>📐 Tracer une figure (Équerre, Compas)</span>}
+                              </button>
+                            </div>
+
+                            {/* Zone de saisie directe */}
+                            <textarea
+                              id={`textarea_${activeAssessment.criterion}_${exIdx}`}
+                              value={answers[`${activeAssessment.criterion}_${exIdx}`] || ''}
+                              onChange={e => handleResponseChange(`${activeAssessment.criterion}_${exIdx}`, e.target.value)}
+                              placeholder="Écrivez directement ici votre réponse rédigée et détaillée..."
+                              rows={5}
+                              className="w-full p-4 border border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition leading-relaxed resize-y font-sans"
+                            />
+
+                            {/* Aperçu du tracé rattaché */}
+                            {drawings[`${activeAssessment.criterion}_${exIdx}`] && (
+                              <div className="relative inline-block bg-slate-50 border border-slate-300 rounded-xl p-2 text-center mt-2">
+                                <span className="text-[10px] font-bold text-slate-600 block mb-1">
+                                  {isArtSubject ? '🎨 Dessin / Croquis rattaché :' : '📐 Figure géométrique rattachée :'}
+                                </span>
+                                <img
+                                  src={drawings[`${activeAssessment.criterion}_${exIdx}`]}
+                                  alt="Tracé élève"
+                                  className="max-h-48 max-w-full mx-auto border border-slate-200 rounded bg-white shadow-xs"
+                                />
+                                <div className="flex items-center justify-center gap-3 mt-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setDrawingModalTarget(`${activeAssessment.criterion}_${exIdx}`);
+                                      setDrawingModalLabel(`Question ${exIdx + 1}`);
+                                    }}
+                                    className="text-[11px] text-purple-600 hover:text-purple-800 font-bold"
+                                  >
+                                    Modifier le tracé
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const next = { ...drawings };
+                                      delete next[`${activeAssessment.criterion}_${exIdx}`];
+                                      setDrawings(next);
+                                    }}
+                                    className="text-[11px] text-rose-600 hover:text-rose-800 font-bold"
+                                  >
+                                    Supprimer
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1117,13 +1495,15 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         )}
       </main>
 
-      {/* ── MODALE GÉOMÉTRIQUE TRACÉ DE FIGURE ── */}
+      {/* ── MODALE GÉOMÉTRIQUE & ART (ÉQUERRE, RAPPORTEUR, COMPAS, COULEURS) ── */}
       {drawingModalTarget && (
         <GeometricDrawingModal
           isOpen={true}
           onClose={() => setDrawingModalTarget(null)}
           onSaveDrawing={handleSaveDrawing}
           initialDrawing={drawings[drawingModalTarget]}
+          subject={evaluation.subject}
+          questionLabel={drawingModalLabel}
         />
       )}
 
@@ -1152,18 +1532,18 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                   <span className="font-bold text-slate-800">{evaluation.title}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500 font-semibold">Questions complétées :</span>
-                  <span className={`font-black ${completedExercises === totalExercises ? 'text-green-600' : 'text-amber-600'}`}>
-                    {completedExercises} sur {totalExercises}
+                  <span className="text-slate-500 font-semibold">Questions répondues :</span>
+                  <span className={`font-black ${answeredQuestionsCount === totalQuestionsCount ? 'text-green-600' : 'text-amber-600'}`}>
+                    {answeredQuestionsCount} sur {totalQuestionsCount}
                   </span>
                 </div>
               </div>
 
-              {completedExercises < totalExercises && (
+              {answeredQuestionsCount < totalQuestionsCount && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 flex items-start gap-2">
                   <AlertTriangle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
                   <span>
-                    Attention : Vous avez laissé <strong>{totalExercises - completedExercises}</strong> question(s) sans réponse.
+                    Attention : Vous avez laissé <strong>{totalQuestionsCount - answeredQuestionsCount}</strong> question(s) ou sous-question(s) sans réponse.
                   </span>
                 </div>
               )}
