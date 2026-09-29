@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon } from 'lucide-react';
+import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
@@ -71,6 +71,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   // New evaluation modal
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedPlanForCreate, setSelectedPlanForCreate] = useState<UnitPlan | null>(currentUnitPlan || null);
+  const [selectedCriteriaForCreate, setSelectedCriteriaForCreate] = useState<string[]>([]);
   const [customTitle, setCustomTitle] = useState('');
   const [customDuration, setCustomDuration] = useState('45');
   const [customInstructions, setCustomInstructions] = useState('Répondez de manière structurée et détaillée à chaque question.');
@@ -123,8 +124,20 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     if (currentUnitPlan) {
       setSelectedPlanForCreate(currentUnitPlan);
       setCustomTitle(`Évaluation critériée — ${currentUnitPlan.title}`);
+      if (currentUnitPlan.assessments && currentUnitPlan.assessments.length > 0) {
+        setSelectedCriteriaForCreate(currentUnitPlan.assessments.map(a => a.criterion));
+      }
     }
   }, [currentUnitPlan]);
+
+  // Mettre à jour les critères sélectionnés par défaut dès que l'unité change
+  useEffect(() => {
+    if (selectedPlanForCreate?.assessments && selectedPlanForCreate.assessments.length > 0) {
+      setSelectedCriteriaForCreate(selectedPlanForCreate.assessments.map(a => a.criterion));
+    } else {
+      setSelectedCriteriaForCreate([]);
+    }
+  }, [selectedPlanForCreate]);
 
   // Charger les soumissions pour l'évaluation sélectionnée
   const handleOpenSubmissions = async (evaluation: OnlineEvaluation) => {
@@ -397,6 +410,73 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     setEditingEvaluation(newEval);
   };
 
+  // Retirer un critère complet de l'évaluation
+  const handleRemoveCriterionFromEvaluation = (critIdx: number) => {
+    if (!editingEvaluation) return;
+    if (editingEvaluation.assessments.length <= 1) {
+      alert('Une évaluation doit comporter au moins un critère.');
+      return;
+    }
+    const targetCrit = editingEvaluation.assessments[critIdx];
+    if (!confirm(`Voulez-vous retirer le Critère ${targetCrit.criterion} (${targetCrit.criterionName}) de cette évaluation ?`)) {
+      return;
+    }
+
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    newEval.assessments.splice(critIdx, 1);
+    setEditingEvaluation(newEval);
+    setEditingCriterionIdx(0);
+  };
+
+  // Ajouter un critère à l'évaluation (depuis l'unité source ou standard IB)
+  const handleAddCriterionToEvaluation = (criterionLetter: string) => {
+    if (!editingEvaluation) return;
+    const parentUnit = allUnitPlans.find(p => p.id === editingEvaluation.unitId);
+    const existingInParent = parentUnit?.assessments?.find(a => a.criterion === criterionLetter);
+
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+
+    if (existingInParent) {
+      newEval.assessments.push(JSON.parse(JSON.stringify(existingInParent)));
+    } else {
+      const criterionNames: Record<string, string> = {
+        A: 'Connaissances et compréhension',
+        B: 'Recherche de régularités / Conception',
+        C: 'Communication',
+        D: 'Application dans des contextes réels',
+      };
+      newEval.assessments.push({
+        criterion: criterionLetter,
+        criterionName: criterionNames[criterionLetter] || `Critère ${criterionLetter}`,
+        maxPoints: 8,
+        strands: [
+          'i. Sélectionner les concepts et techniques appropriés',
+          'ii. Appliquer les méthodes pour résoudre des problèmes',
+          'iii. Justifier et expliquer la démarche de résolution',
+        ],
+        rubricRows: [
+          { level: '1-2', descriptor: 'L\'élève démontre des connaissances très élémentaires.' },
+          { level: '3-4', descriptor: 'L\'élève démontre une compréhension satisfaisante des concepts.' },
+          { level: '5-6', descriptor: 'L\'élève démontre une bonne compréhension et applique les méthodes avec assurance.' },
+          { level: '7-8', descriptor: 'L\'élève démontre une excellente maîtrise et justifie de manière rigoureuse.' },
+        ],
+        exercises: [
+          {
+            title: `Tâche 1 : Évaluation ${criterionLetter}`,
+            content: 'Consigne de la tâche à réaliser...',
+            criterionReference: `Critère ${criterionLetter} : i.`,
+            strandIndex: 'i',
+            strandText: 'Sélectionner les concepts et techniques appropriés',
+            type: 'open',
+          }
+        ],
+      });
+    }
+
+    setEditingEvaluation(newEval);
+    setEditingCriterionIdx(newEval.assessments.length - 1);
+  };
+
   // Supprimer une question
   const handleDeleteEditingExercise = (critIdx: number, exIdx: number) => {
     if (!editingEvaluation) return;
@@ -420,6 +500,16 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       return;
     }
 
+    // Filtrer les critères selon le choix de l'enseignant (Exigence: un seul ou plusieurs critères selon l'unité)
+    const chosenAssessments = selectedPlanForCreate.assessments.filter(a =>
+      selectedCriteriaForCreate.includes(a.criterion)
+    );
+
+    if (chosenAssessments.length === 0) {
+      alert('Veuillez sélectionner au moins un critère (ex: Critère A seul, ou A et B) pour composer cette évaluation.');
+      return;
+    }
+
     const title = customTitle.trim() || `Évaluation : ${selectedPlanForCreate.title}`;
     const code = `EVAL-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -436,7 +526,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       globalContext: selectedPlanForCreate.globalContext,
       keyConcept: selectedPlanForCreate.keyConcept,
       relatedConcepts: selectedPlanForCreate.relatedConcepts,
-      assessments: selectedPlanForCreate.assessments,
+      assessments: chosenAssessments,
       durationMinutes: parseInt(customDuration) || 0,
       instructions: customInstructions,
       status: 'active',
@@ -444,7 +534,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
     setEvaluations(prev => [newEval, ...prev]);
     setShowCreateModal(false);
-    alert(`✅ Évaluation créée avec succès !\n\nCode d'accès pour les élèves : ${newEval.accessCode}\nDonnez ce code à vos élèves pour qu'ils puissent composer.`);
+    alert(`✅ Évaluation créée avec succès !\n\nCritère(s) retenu(s) : ${chosenAssessments.map(a => `Critère ${a.criterion}`).join(', ')}\nCode d'accès pour les élèves : ${newEval.accessCode}\nDonnez ce code à vos élèves pour qu'ils puissent composer.`);
   };
 
   // ── CORRECTION AUTOMATIQUE PAR IA (GEMINI) ─────────────────────────────────
@@ -907,17 +997,103 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   />
                 </div>
 
-                {/* Résumé des critères qui seront inclus */}
-                {selectedPlanForCreate?.assessments && selectedPlanForCreate.assessments.length > 0 && (
-                  <div className="bg-purple-50 p-3 rounded-xl border border-purple-100 text-xs">
-                    <span className="font-bold text-purple-900 block mb-1">Critères inclus dans cette évaluation :</span>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {selectedPlanForCreate.assessments.map(a => (
-                        <span key={a.criterion} className="bg-white border border-purple-200 text-purple-800 px-2 py-0.5 rounded font-semibold text-[11px]">
-                          Critère {a.criterion} ({a.exercises?.length || 0} ex.)
-                        </span>
-                      ))}
+                {/* Choix des critères à inclure (Exigence: un seul ou plusieurs critères selon l'unité) */}
+                {selectedPlanForCreate?.assessments && selectedPlanForCreate.assessments.length > 0 ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <label className="block text-xs font-bold text-slate-800 uppercase tracking-wide">
+                        Critères à évaluer dans cette épreuve <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (selectedPlanForCreate?.assessments) {
+                              setSelectedCriteriaForCreate(selectedPlanForCreate.assessments.map(a => a.criterion));
+                            }
+                          }}
+                          className="text-[11px] text-purple-700 hover:text-purple-900 font-bold"
+                        >
+                          Tous
+                        </button>
+                        <span className="text-slate-300">·</span>
+                        {selectedPlanForCreate.assessments.map(a => (
+                          <button
+                            key={a.criterion}
+                            type="button"
+                            onClick={() => setSelectedCriteriaForCreate([a.criterion])}
+                            className="text-[11px] text-slate-600 hover:text-purple-700 font-semibold"
+                            title={`Évaluer uniquement le Critère ${a.criterion}`}
+                          >
+                            Seul {a.criterion}
+                          </button>
+                        ))}
+                      </div>
                     </div>
+
+                    <p className="text-[11px] text-slate-500">
+                      Cochez le ou les critères souhaités pour cette évaluation (ex: <strong>Critère A seul</strong>, ou <strong>A et B</strong>, etc.) :
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {selectedPlanForCreate.assessments.map(a => {
+                        const colors = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
+                        const isSelected = selectedCriteriaForCreate.includes(a.criterion);
+
+                        return (
+                          <div
+                            key={a.criterion}
+                            onClick={() => {
+                              setSelectedCriteriaForCreate(prev =>
+                                prev.includes(a.criterion)
+                                  ? prev.filter(c => c !== a.criterion)
+                                  : [...prev, a.criterion]
+                              );
+                            }}
+                            className={`p-3 rounded-2xl border-2 cursor-pointer transition flex items-center justify-between gap-3 ${
+                              isSelected
+                                ? `border-purple-600 bg-purple-50/70 shadow-xs`
+                                : 'border-slate-200 bg-white hover:border-slate-300 opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div
+                                className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition ${
+                                  isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-300 bg-white'
+                                }`}
+                              >
+                                {isSelected && <Check size={13} strokeWidth={3} />}
+                              </div>
+                              <span
+                                className={`w-6 h-6 rounded-lg ${colors.badge} text-white font-black text-xs flex items-center justify-center flex-shrink-0`}
+                              >
+                                {a.criterion}
+                              </span>
+                              <div className="min-w-0">
+                                <h5 className="font-bold text-xs text-slate-900 truncate">
+                                  Critère {a.criterion}
+                                </h5>
+                                <p className="text-[10px] text-slate-500 truncate">{a.criterionName}</p>
+                              </div>
+                            </div>
+
+                            <span className="text-[10px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded-lg border border-slate-200 flex-shrink-0">
+                              {a.exercises?.length || 0} tâche(s)
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {selectedCriteriaForCreate.length === 0 && (
+                      <p className="text-[11px] text-rose-600 font-bold bg-rose-50 p-2 rounded-xl border border-rose-200 flex items-center gap-1.5">
+                        <AlertCircle size={14} /> Veuillez cocher au moins un critère pour composer cette évaluation.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
+                    Cette unité n'a pas encore de critères générés. Vous pourrez ajouter les questions manuellement ensuite.
                   </div>
                 )}
 
@@ -1223,8 +1399,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 </div>
               </div>
 
-              {/* Navigation par critère */}
-              <div className="flex border-b border-slate-200 bg-white px-4 pt-2 overflow-x-auto gap-2">
+              {/* Navigation par critère avec possibilité d'ajouter ou retirer des critères */}
+              <div className="flex border-b border-slate-200 bg-white px-4 pt-2 overflow-x-auto gap-2 items-center">
                 {editingEvaluation.assessments.map((crit, idx) => {
                   const colors = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
                   const isCurrent = editingCriterionIdx === idx;
@@ -1248,6 +1424,30 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     </button>
                   );
                 })}
+
+                {/* Bouton pour ajouter un critère manquant (ex: si l'enseignant a choisi A seul et veut maintenant ajouter B) */}
+                {(() => {
+                  const currentLetters = editingEvaluation.assessments.map(a => a.criterion);
+                  const candidateLetters = ['A', 'B', 'C', 'D'].filter(l => !currentLetters.includes(l));
+                  if (candidateLetters.length === 0) return null;
+
+                  return (
+                    <div className="flex items-center gap-1.5 ml-2">
+                      {candidateLetters.map(letter => (
+                        <button
+                          key={letter}
+                          type="button"
+                          onClick={() => handleAddCriterionToEvaluation(letter)}
+                          className="flex items-center gap-1 px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-dashed border-purple-300 rounded-lg text-xs font-bold transition shadow-2xs"
+                          title={`Ajouter le Critère ${letter} à cette évaluation`}
+                        >
+                          <Plus size={12} />
+                          <span>+ Critère {letter}</span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Contenu du critère actif */}
@@ -1269,6 +1469,19 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                             Échelle : 1-{activeCrit.maxPoints || 8} points · {activeCrit.exercises?.length || 0} tâche(s) enregistrée(s)
                           </p>
                         </div>
+
+                        {/* Bouton pour retirer ce critère si plus d'un critère présent */}
+                        {editingEvaluation.assessments.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCriterionFromEvaluation(editingCriterionIdx)}
+                            className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold transition shadow-2xs"
+                            title="Retirer ce critère de l'évaluation"
+                          >
+                            <Trash2 size={13} />
+                            <span>Retirer le Critère {activeCrit.criterion}</span>
+                          </button>
+                        )}
                       </div>
 
                       {/* Barres d'ajout rapide par type de question (Exigence du brief) */}

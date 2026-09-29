@@ -199,67 +199,25 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   // Print view modal
   const [showPrintModal, setShowPrintModal] = useState(false);
 
-  // Restaurer session élève depuis localStorage si existante
+  // Synchroniser le code d'accès si fourni par l'URL (ex: ?code=EVAL-1234)
   useEffect(() => {
-    try {
-      const permanentMatricule = localStorage.getItem('ib_permanent_matricule');
-      const permanentName = localStorage.getItem('ib_permanent_student_name');
-      if (permanentMatricule) setStudentNumber(permanentMatricule);
-      if (permanentName) setStudentName(permanentName);
-
-      const savedStudent = localStorage.getItem('ib_student_session');
-      if (savedStudent) {
-        const parsed = JSON.parse(savedStudent);
-        if (parsed.studentNumber) setStudentNumber(parsed.studentNumber);
-        if (parsed.studentName) setStudentName(parsed.studentName);
-        const code = (initialAccessCode || parsed.accessCode || '').trim().toUpperCase();
-        if (code) {
-          setAccessCode(code);
-          const studentNum = (parsed.studentNumber || permanentMatricule || '').trim();
-          if (studentNum) {
-            const lockKey = `ib_locked_${code}_${studentNum}`;
-            const isLocallyLocked = localStorage.getItem(lockKey) === 'true';
-
-            // Auto-check si copie déjà soumise
-            getEvaluationByAccessCode(code).then(ev => {
-              if (ev) {
-                setEvaluation(ev);
-                getStudentSubmission(code, studentNum).then(prevSub => {
-                  if (prevSub || isLocallyLocked) {
-                    setExistingSubmission(prevSub || {
-                      id: `locked_${studentNum}`,
-                      evaluationId: ev.id,
-                      accessCode: code,
-                      studentNumber: studentNum,
-                      studentName: parsed.studentName || permanentName || 'Élève',
-                      submittedAt: new Date().toISOString(),
-                      status: 'submitted',
-                      isLocked: true,
-                      answers: [],
-                    });
-                    setIsLockedAlready(true);
-                  } else {
-                    // Charger le brouillon local si existant
-                    const draftKey = `draft_eval_${code}_${studentNum}`;
-                    const savedDraft = localStorage.getItem(draftKey);
-                    if (savedDraft) {
-                      try {
-                        const parsedDraft = JSON.parse(savedDraft);
-                        if (parsedDraft.answers) setAnswers(parsedDraft.answers);
-                        if (parsedDraft.drawings) setDrawings(parsedDraft.drawings);
-                      } catch {}
-                    }
-                  }
-                });
-              }
-            });
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('Erreur lecture session élève locale:', err);
+    if (initialAccessCode) {
+      setAccessCode(initialAccessCode.trim().toUpperCase());
     }
   }, [initialAccessCode]);
+
+  // Déconnexion manuelle pour permettre à un autre élève de s'identifier
+  const handleLogoutStudent = () => {
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    setEvaluation(null);
+    setExistingSubmission(null);
+    setIsLockedAlready(false);
+    setStudentNumber('');
+    setStudentName('');
+    setAnswers({});
+    setDrawings({});
+    setLoginError('');
+  };
 
   // Gestion du chronomètre 45 minutes
   useEffect(() => {
@@ -597,6 +555,14 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               </div>
             )}
 
+            <div className="mb-4 bg-amber-50/90 border border-amber-200 text-amber-900 p-3 rounded-xl text-xs flex items-start gap-2">
+              <ShieldCheck size={16} className="text-amber-700 flex-shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                <span className="font-bold text-amber-950 block">Identification obligatoire</span>
+                Chaque élève doit impérativement renseigner son nom, prénom et numéro d'inscription pour accéder à l'épreuve.
+              </div>
+            </div>
+
             <form onSubmit={handleValidateAccess} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">
@@ -704,6 +670,13 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition"
             >
               <Printer size={15} /> Imprimer ma copie (A4)
+            </button>
+            <button
+              onClick={handleLogoutStudent}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold rounded-lg transition border border-purple-200"
+              title="Se déconnecter pour permettre à un autre élève de s'identifier"
+            >
+              <User size={14} /> Changer d'élève
             </button>
             <button
               onClick={() => {
@@ -965,6 +938,20 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
             >
               <Send size={14} /> Soumettre ma copie
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('Voulez-vous vous déconnecter pour changer d\'élève ? Vos réponses saisies sont conservées en brouillon sur cet appareil.')) {
+                  handleLogoutStudent();
+                }
+              }}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold rounded-xl transition border border-slate-200"
+              title="Changer d'élève / Déconnexion"
+            >
+              <LogOut size={13} />
+              <span>Changer d'élève</span>
             </button>
           </div>
         </div>
