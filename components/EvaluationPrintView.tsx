@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Printer, Award, Clock, Download } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../types';
 
@@ -9,11 +10,90 @@ interface EvaluationPrintViewProps {
 }
 
 const CRITERION_COLORS: Record<string, { bg: string; border: string; text: string; badge: string }> = {
-  A: { bg: '#eff6ff', border: '#93c5fd', text: '#1e40af', badge: '#2563eb' },
-  B: { bg: '#f0fdf4', border: '#86efac', text: '#166534', badge: '#16a34a' },
-  C: { bg: '#fffbeb', border: '#fde68a', text: '#92400e', badge: '#d97706' },
-  D: { bg: '#fff1f2', border: '#fecdd3', text: '#9f1239', badge: '#e11d48' },
+  A: { bg: '#f8fafc', border: '#cbd5e1', text: '#1e3a8a', badge: '#1e40af' },
+  B: { bg: '#f8fafc', border: '#cbd5e1', text: '#14532d', badge: '#15803d' },
+  C: { bg: '#f8fafc', border: '#cbd5e1', text: '#78350f', badge: '#b45309' },
+  D: { bg: '#f8fafc', border: '#cbd5e1', text: '#881337', badge: '#be123c' },
 };
+
+// Helper: Nettoyer le texte des artefacts d'espace réponse (ex: "Réponse : .........")
+function sanitizeText(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/(?:^|\n)\s*Réponse\s*:\s*[\.\_\-\s]{2,}.*$/gi, '')
+    .replace(/\s*Réponse\s*:\s*[\.\_\-\s]{2,}.*$/gi, '')
+    .trim();
+}
+
+// Helper: Extraire le texte support (stimulus) et les sous-questions proprement sans duplication
+interface ParsedExercise {
+  stimulusText: string;
+  subQuestions: AssessmentSubQuestion[];
+}
+
+function parseExerciseContent(
+  exercise: any,
+  criterionLetter: string,
+  strands: string[] = []
+): ParsedExercise {
+  const content = exercise.content || '';
+
+  // 1. Si des sous-questions explicites sont déjà fournies
+  if (exercise.subQuestions && exercise.subQuestions.length > 0) {
+    return {
+      stimulusText: sanitizeText(content),
+      subQuestions: exercise.subQuestions.map((sq: AssessmentSubQuestion) => ({
+        ...sq,
+        content: sanitizeText(sq.content),
+      })),
+    };
+  }
+
+  // 2. Détection du schéma de questions numérotées : 1) ... 2) ... ou 1. ... 2. ...
+  const pattern = /(?:^|\n)\s*(?:([0-9]+|[a-d])\s*[\)\.]\s+)/gi;
+  const matches = Array.from(content.matchAll(pattern)) as RegExpExecArray[];
+
+  if (matches.length >= 2) {
+    const firstMatchPos = matches[0].index || 0;
+    const stimulus = sanitizeText(content.substring(0, firstMatchPos));
+    const subQuestions: AssessmentSubQuestion[] = [];
+    const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+
+    for (let i = 0; i < matches.length; i++) {
+      const match = matches[i];
+      const nextMatch = matches[i + 1];
+      const startPos = (match.index || 0) + match[0].length;
+      const endPos = nextMatch ? nextMatch.index : content.length;
+      const rawSubText = content.substring(startPos, endPos).trim();
+      const subText = sanitizeText(rawSubText);
+      const label = match[1] + ')';
+      const roman = romanNumerals[i % romanNumerals.length];
+      const matchedStrand = strands.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
+
+      subQuestions.push({
+        id: `sub_${i + 1}`,
+        label,
+        content: subText,
+        strandIndex: roman,
+        strandText: matchedStrand || '',
+        type: exercise.type || 'open',
+        options: exercise.options,
+        correctAnswer: exercise.correctAnswer,
+      });
+    }
+
+    return {
+      stimulusText: stimulus,
+      subQuestions,
+    };
+  }
+
+  // 3. Question unique
+  return {
+    stimulusText: '',
+    subQuestions: [],
+  };
+}
 
 // Helper: résoudre le sous-aspect individuel précis pour chaque question (i, ii, iii, etc.)
 function getQuestionStrandLabel(
@@ -109,51 +189,6 @@ function getSubQuestionStrandLabel(
   };
 }
 
-// Helper: Extraire les sous-questions d'un exercice (soit explicites, soit par détection 1) ... 2) ...)
-function getExerciseSubQuestions(
-  exercise: any,
-  criterionLetter: string,
-  strands: string[] = []
-): AssessmentSubQuestion[] {
-  if (exercise.subQuestions && exercise.subQuestions.length > 0) {
-    return exercise.subQuestions;
-  }
-
-  const content = exercise.content || '';
-  const pattern = /(?:^|\n)\s*(?:([0-9]+|[a-d])\s*[\)\.]\s+)/gi;
-  const matches = Array.from(content.matchAll(pattern)) as RegExpExecArray[];
-
-  if (matches.length >= 2) {
-    const subQuestions: AssessmentSubQuestion[] = [];
-    const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
-
-    for (let i = 0; i < matches.length; i++) {
-      const match = matches[i];
-      const nextMatch = matches[i + 1];
-      const startPos = (match.index || 0) + match[0].length;
-      const endPos = nextMatch ? nextMatch.index : content.length;
-      const subText = content.substring(startPos, endPos).trim();
-      const label = match[1] + ')';
-      const roman = romanNumerals[i % romanNumerals.length];
-      const matchedStrand = strands.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
-
-      subQuestions.push({
-        id: `sub_${i + 1}`,
-        label,
-        content: subText,
-        strandIndex: roman,
-        strandText: matchedStrand || '',
-        type: exercise.type || 'open',
-        options: exercise.options,
-        correctAnswer: exercise.correctAnswer,
-      });
-    }
-    return subQuestions;
-  }
-
-  return [];
-}
-
 const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, submission, onClose }) => {
   const isCorrectedCopy = Boolean(submission);
   const printContentRef = useRef<HTMLDivElement>(null);
@@ -245,7 +280,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
       }
     }
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       background-color: #f1f5f9;
       margin: 0;
       padding: 16px;
@@ -300,8 +335,8 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
   const totalScoreObtained = submission?.totalScore ?? 0;
   const duration = evaluation.durationMinutes || 45;
 
-  return (
-    <div className="print-modal-container fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm overflow-y-auto flex flex-col items-center p-0 sm:p-4">
+  const modalContent = (
+    <div className="print-modal-container fixed inset-0 z-[9999] bg-slate-900/85 backdrop-blur-sm overflow-y-auto flex flex-col items-center p-0 sm:p-4">
       {/* ── BARRE D'OUTILS D'IMPRESSION (MASQUÉE SUR IMPRIMANTE) ── */}
       <div className="no-print sticky top-0 z-50 w-full max-w-4xl bg-white border-b border-slate-200 px-6 py-3 shadow-md flex items-center justify-between rounded-t-none sm:rounded-t-2xl">
         <div className="flex items-center gap-3">
@@ -312,10 +347,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
             <h3 className="font-bold text-slate-800 text-sm">
               {isCorrectedCopy
                 ? `Copie Corrigée — ${submission?.studentName} (${submission?.studentNumber})`
-                : `Sujet d'Évaluation — ${evaluation.title}`}
+                : `Sujet d'Évaluation Officiel — ${evaluation.title}`}
             </h3>
             <p className="text-xs text-slate-500">
-              Format A4 portrait · Marges 1 cm · Pied de page automatique (date et n° de page)
+              Mise en page officielle PEI IB · Format A4 · Marges 1 cm · Aucune coupure de questions
             </p>
           </div>
         </div>
@@ -324,7 +359,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           <button
             onClick={handleDownloadHtml}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition"
-            title="Télécharger directement la copie sous format HTML autonome (A4, marges 1 cm)"
+            title="Télécharger la version autonome HTML"
           >
             <Download size={15} /> Télécharger HTML
           </button>
@@ -345,10 +380,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
         </div>
       </div>
 
-      {/* ── PAGE D'IMPRESSION A4 SANS ENCADREMENT GLOBAL ─────────────────────── */}
+      {/* ── PAGE D'IMPRESSION A4 STRICTE (SANS ENCADREMENT ET ISOLÉE DU FOND DE L'APP) ── */}
       <div
         ref={printContentRef}
-        className="print-sheet bg-white w-full max-w-[190mm] my-0 sm:my-4 p-[10mm] text-slate-900 font-sans shadow-xl sm:rounded-sm border-0"
+        className="print-sheet bg-white w-full max-w-[190mm] my-0 sm:my-4 p-[10mm] text-slate-900 font-sans shadow-2xl sm:rounded-sm border-0"
         style={{ boxSizing: 'border-box' }}
       >
         <style>{`
@@ -357,18 +392,29 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
             margin: 10mm;
           }
           @media print {
+            /* 1. CACHER COMPLÈTEMENT LE RESTE DU PORTAIL / APPLICATION EN ARRIÈRE-PLAN */
+            #root {
+              display: none !important;
+            }
+            body > *:not(.print-modal-container) {
+              display: none !important;
+            }
             .no-print {
               display: none !important;
             }
+
+            /* 2. RÉINITIALISER LE CORPS DE PAGE POUR L'IMPRESSION */
             html, body {
               background: #ffffff !important;
               color: #0f172a !important;
               margin: 0 !important;
               padding: 0 !important;
               width: 100% !important;
+              height: auto !important;
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
             }
+
             .print-modal-container {
               position: static !important;
               inset: auto !important;
@@ -381,6 +427,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
               width: 100% !important;
               height: auto !important;
             }
+
             .print-sheet {
               box-shadow: none !important;
               margin: 0 !important;
@@ -391,15 +438,19 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
               outline: none !important;
               background: #ffffff !important;
             }
+
             table, tr, td, th {
               page-break-inside: avoid !important;
               break-inside: avoid !important;
             }
+
             .avoid-break {
               page-break-inside: avoid !important;
               break-inside: avoid !important;
               break-inside: avoid-page !important;
             }
+
+            /* PIED DE PAGE FIXE EN BAS DE CHAQUE PAGE A4 */
             .print-footer-fixed {
               position: fixed;
               bottom: 0;
@@ -416,10 +467,12 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
               padding-top: 1mm;
               z-index: 9999;
             }
+
             .print-page-num::after {
               content: counter(page);
             }
           }
+
           @media screen {
             .print-footer-fixed {
               display: flex;
@@ -433,130 +486,133 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           }
         `}</style>
 
-        {/* ── 1. EN-TÊTE OFFICIEL ÉCOLE AL-KAWTHAR & PEI ── */}
-        <header className="border-b-2 border-slate-800 pb-3 mb-3 avoid-break">
+        {/* ── 1. EN-TÊTE ACADÉMIQUE OFFICIEL ÉCOLES AL-KAWTHAR & PEI IB ── */}
+        <header className="border-b-2 border-slate-900 pb-2.5 mb-2.5 avoid-break">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <img
                 src="/logo-alkawtar.png"
                 alt="Logo Al-Kawthar"
-                className="w-14 h-14 object-contain"
+                className="w-14 h-14 object-contain shrink-0"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
               <div>
-                <h1 className="text-base font-black tracking-tight text-slate-900 uppercase">
+                <h1 className="text-[15px] font-black tracking-tight text-slate-900 uppercase font-sans">
                   Les Écoles Internationales Al-Kawthar
                 </h1>
-                <p className="text-xs font-bold text-purple-900 uppercase tracking-wide">
+                <p className="text-[11px] font-bold text-purple-900 uppercase tracking-wide">
                   Programme d'Éducation Intermédiaire (PEI) · Baccalauréat International (IB)
                 </p>
                 <div className="flex items-center gap-3 mt-0.5">
-                  <span className="text-[11px] text-slate-600 font-semibold">
-                    Évaluation Critériée Sommative
+                  <span className="text-[11px] text-slate-700 font-bold uppercase tracking-wider">
+                    Épreuve Sommative Critériée
                   </span>
-                  <span className="text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded flex items-center gap-1">
+                  <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 flex items-center gap-1">
                     <Clock size={11} /> Durée : {duration} minutes
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Note globale si copie corrigée */}
-            {isCorrectedCopy && (
-              <div className="border-2 border-purple-600 bg-purple-50 rounded-xl px-4 py-2 text-center flex-shrink-0">
-                <span className="block text-[10px] font-bold text-purple-700 uppercase">Note Finale</span>
-                <span className="text-xl font-black text-purple-900">{totalScoreObtained} / {totalMaxPoints}</span>
-                <span className="block text-[9px] text-purple-600">Niveau PEI</span>
+            {/* Note finale si copie corrigée */}
+            {isCorrectedCopy ? (
+              <div className="border-2 border-purple-800 bg-purple-50 rounded-lg px-3.5 py-1.5 text-center min-w-[95px] shrink-0">
+                <span className="block text-[9px] font-bold text-purple-800 uppercase tracking-wider">Note Finale</span>
+                <span className="text-xl font-black text-purple-950 leading-tight">{totalScoreObtained} / {totalMaxPoints}</span>
+                <span className="block text-[9px] font-semibold text-purple-700">Niveau PEI</span>
+              </div>
+            ) : (
+              <div className="border border-slate-300 bg-slate-50 rounded-lg px-3.5 py-1.5 text-center min-w-[95px] shrink-0">
+                <span className="block text-[9px] font-bold text-slate-500 uppercase">Barème Total</span>
+                <span className="text-lg font-black text-slate-800 leading-tight">/ {totalMaxPoints}</span>
+                <span className="block text-[9px] text-slate-500">PEI Barème 8</span>
               </div>
             )}
           </div>
 
-          {/* Cartouche d'identification élève & examen (organisé, net, sans encadrement excessif) */}
-          <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs">
-            <div>
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Matière</span>
-              <span className="font-bold text-slate-900">{evaluation.subject}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Niveau / Classe</span>
-              <span className="font-bold text-slate-900">{evaluation.grade}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Enseignant(e)</span>
-              <span className="font-medium text-slate-800">{evaluation.teacherName || '—'}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Date</span>
-              <span className="font-medium text-slate-800">{examDateFormatted}</span>
+          {/* Cartouche d'identification élève & examen */}
+          <div className="mt-2.5 border border-slate-400 text-[11px] divide-y divide-slate-300">
+            <div className="grid grid-cols-4 divide-x divide-slate-300 bg-slate-50/70">
+              <div className="p-1.5">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">Matière</span>
+                <span className="font-bold text-slate-900">{evaluation.subject}</span>
+              </div>
+              <div className="p-1.5">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">Classe / Niveau</span>
+                <span className="font-bold text-slate-900">{evaluation.grade}</span>
+              </div>
+              <div className="p-1.5">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">Enseignant(e)</span>
+                <span className="font-medium text-slate-800">{evaluation.teacherName || '—'}</span>
+              </div>
+              <div className="p-1.5">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">Date</span>
+                <span className="font-medium text-slate-800">{examDateFormatted}</span>
+              </div>
             </div>
 
-            {/* Ligne 2 : Identification élève */}
-            <div className="col-span-2 pt-1.5 border-t border-slate-200">
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Nom & Prénom de l'élève</span>
-              <span className="font-bold text-sm text-slate-900">
-                {submission?.studentName || '________________________________________'}
-              </span>
-            </div>
-            <div className="pt-1.5 border-t border-slate-200">
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">N° d'inscription (Matricule)</span>
-              <span className="font-bold text-slate-900 font-mono">
-                {submission?.studentNumber || '________________'}
-              </span>
-            </div>
-            <div className="pt-1.5 border-t border-slate-200">
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Code Évaluation</span>
-              <span className="font-bold text-purple-700 font-mono">{evaluation.accessCode}</span>
+            <div className="grid grid-cols-4 divide-x divide-slate-300">
+              <div className="p-1.5 col-span-2">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">Nom & Prénom de l'élève</span>
+                <span className="font-bold text-sm text-slate-900">
+                  {submission?.studentName || '________________________________________'}
+                </span>
+              </div>
+              <div className="p-1.5">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">N° Matricule</span>
+                <span className="font-mono font-bold text-slate-900">
+                  {submission?.studentNumber || '________________'}
+                </span>
+              </div>
+              <div className="p-1.5">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">Code Examen</span>
+                <span className="font-mono font-bold text-purple-700">{evaluation.accessCode}</span>
+              </div>
             </div>
           </div>
         </header>
 
-        {/* ── 2. TITRE ET CADRE DE RECHERCHE PEI ── */}
-        <section className="mb-3 bg-purple-50/50 border border-purple-200 rounded-lg p-2.5 text-xs avoid-break">
-          <h2 className="text-sm font-black text-purple-950 uppercase mb-1.5 flex items-center gap-1.5">
-            <Award size={14} className="text-purple-700" />
-            {evaluation.title}
-          </h2>
+        {/* ── 2. CADRE DE RECHERCHE PEI & ÉNONCÉ DE RECHERCHE ── */}
+        <section className="mb-3 p-2.5 border border-slate-300 bg-slate-50/50 rounded text-xs avoid-break">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Award size={14} className="text-purple-700 shrink-0" />
+            <span className="font-black text-slate-900 uppercase text-xs">
+              {evaluation.title}
+            </span>
+          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
-            {evaluation.statementOfInquiry && (
-              <div className="sm:col-span-3 bg-white p-2 rounded border border-purple-100">
-                <span className="font-bold text-purple-900 block text-[10px] uppercase">Énoncé de recherche :</span>
-                <span className="italic text-slate-700">"{evaluation.statementOfInquiry}"</span>
-              </div>
-            )}
+          {evaluation.statementOfInquiry && (
+            <div className="text-slate-800 italic text-[11px] mb-1.5 bg-white p-1.5 rounded border border-slate-200">
+              <strong className="not-italic text-purple-900 font-bold uppercase text-[10px] mr-1">Énoncé de recherche :</strong>
+              « {evaluation.statementOfInquiry} »
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-600">
             {evaluation.keyConcept && (
-              <div className="bg-white p-1.5 rounded border border-purple-100">
-                <span className="font-bold text-purple-900 block text-[10px] uppercase">Concept clé :</span>
-                <span className="text-slate-800">{evaluation.keyConcept}</span>
-              </div>
+              <span><strong>Concept clé :</strong> {evaluation.keyConcept}</span>
             )}
             {evaluation.globalContext && (
-              <div className="bg-white p-1.5 rounded border border-purple-100">
-                <span className="font-bold text-purple-900 block text-[10px] uppercase">Contexte mondial :</span>
-                <span className="text-slate-800">{evaluation.globalContext}</span>
-              </div>
+              <span><strong>Contexte mondial :</strong> {evaluation.globalContext}</span>
             )}
             {evaluation.relatedConcepts && evaluation.relatedConcepts.length > 0 && (
-              <div className="bg-white p-1.5 rounded border border-purple-100">
-                <span className="font-bold text-purple-900 block text-[10px] uppercase">Concepts connexes :</span>
-                <span className="text-slate-800">{evaluation.relatedConcepts.join(', ')}</span>
-              </div>
+              <span><strong>Concepts connexes :</strong> {evaluation.relatedConcepts.join(', ')}</span>
             )}
           </div>
         </section>
 
-        {/* ── 3. TABLEAU RÉCAPITULATIF DES CRITÈRES ÉVALUÉS ── */}
-        <section className="mb-4 avoid-break">
-          <table className="w-full text-[11px] border-collapse border border-slate-300" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+        {/* ── 3. TABLEAU SYNTHÉTIQUE DES CRITÈRES ÉVALUÉS ── */}
+        <section className="mb-3.5 avoid-break">
+          <table className="w-full text-[10px] border-collapse border border-slate-300" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
             <thead>
-              <tr className="bg-slate-100 text-slate-700" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                <th className="border border-slate-300 px-2 py-1.5 text-center w-16">Critère</th>
-                <th className="border border-slate-300 px-2 py-1.5 text-left">Intitulé de la compétence</th>
-                <th className="border border-slate-300 px-2 py-1.5 text-left">Aspects spécifiques évalués</th>
-                <th className="border border-slate-300 px-2 py-1.5 text-center w-20">Barème</th>
+              <tr className="bg-slate-100 text-slate-700 uppercase" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                <th className="border border-slate-300 px-2 py-1 text-center w-16">Critère</th>
+                <th className="border border-slate-300 px-2 py-1 text-left">Intitulé de la compétence</th>
+                <th className="border border-slate-300 px-2 py-1 text-left">Aspects spécifiques évalués</th>
+                <th className="border border-slate-300 px-2 py-1 text-center w-16">Barème</th>
                 {isCorrectedCopy && (
-                  <th className="border border-slate-300 px-2 py-1.5 text-center w-24 bg-purple-100 text-purple-900 font-bold">
-                    Note obtenue
+                  <th className="border border-slate-300 px-2 py-1 text-center w-20 bg-purple-100 text-purple-900 font-bold">
+                    Note
                   </th>
                 )}
               </tr>
@@ -567,20 +623,20 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                 const score = submission?.criteriaScores?.[a.criterion];
                 return (
                   <tr key={a.criterion} style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                    <td className="border border-slate-300 px-2 py-1.5 text-center font-black" style={{ color: color.badge }}>
+                    <td className="border border-slate-300 px-2 py-1 text-center font-black" style={{ color: color.badge }}>
                       Critère {a.criterion}
                     </td>
-                    <td className="border border-slate-300 px-2 py-1.5 font-bold text-slate-800">
+                    <td className="border border-slate-300 px-2 py-1 font-bold text-slate-800">
                       {a.criterionName}
                     </td>
-                    <td className="border border-slate-300 px-2 py-1.5 text-slate-600 text-[10px]">
+                    <td className="border border-slate-300 px-2 py-1 text-slate-600 text-[9.5px]">
                       {(a.strands || []).join(' ; ')}
                     </td>
-                    <td className="border border-slate-300 px-2 py-1.5 text-center font-semibold text-slate-700">
+                    <td className="border border-slate-300 px-2 py-1 text-center font-semibold text-slate-700">
                       0 - {a.maxPoints || 8}
                     </td>
                     {isCorrectedCopy && (
-                      <td className="border border-slate-300 px-2 py-1.5 text-center font-black text-purple-900 bg-purple-50 text-xs">
+                      <td className="border border-slate-300 px-2 py-1 text-center font-black text-purple-900 bg-purple-50 text-[11px]">
                         {score !== undefined ? `${score} / ${a.maxPoints || 8}` : '—'}
                       </td>
                     )}
@@ -591,33 +647,27 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           </table>
         </section>
 
-        {/* ── 4. TÂCHES ET QUESTIONS AVEC SOUS-ASPECTS PRÉCIS ÉCRITS EN ROUGE ── */}
+        {/* ── 4. TÂCHES D'ÉVALUATION ET QUESTIONS (SANS DUPLICATION, STYLE EXAMEN PRO) ── */}
         <main className="space-y-4">
           {evaluation.assessments.map((crit) => {
-            const color = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
             return (
               <div key={crit.criterion} className="space-y-3">
-                {/* Bandeau critère */}
+                {/* Bandeau d'intitulé de Critère */}
                 <div
-                  className="px-3 py-1.5 rounded font-bold text-xs flex items-center justify-between avoid-break"
-                  style={{ backgroundColor: color.bg, borderLeft: `4px solid ${color.badge}` }}
+                  className="py-1 px-2.5 bg-slate-800 text-white font-bold text-xs uppercase tracking-wide flex items-center justify-between rounded-xs avoid-break"
                 >
-                  <span className="uppercase text-slate-900">
-                    Critère {crit.criterion} : {crit.criterionName}
-                  </span>
-                  <span className="text-[10px] font-semibold" style={{ color: color.text }}>
-                    Échelle 1 - {crit.maxPoints || 8}
-                  </span>
+                  <span>Critère {crit.criterion} : {crit.criterionName}</span>
+                  <span className="text-[10px] text-slate-300 font-normal">Barème de réalisation : 1 - {crit.maxPoints || 8}</span>
                 </div>
 
-                {/* Rubrique des niveaux si présente */}
+                {/* Rubrique descriptive succincte si présente */}
                 {crit.rubricRows && crit.rubricRows.length > 0 && (
                   <div className="avoid-break overflow-x-auto" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                    <table className="w-full text-[10px] border-collapse border border-slate-200" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                    <table className="w-full text-[9.5px] border-collapse border border-slate-200" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                       <thead>
                         <tr className="bg-slate-50 text-slate-600" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                          <th className="border border-slate-200 px-2 py-0.5 text-center w-14">Niveau</th>
-                          <th className="border border-slate-200 px-2 py-0.5 text-left">Descripteur de niveau de réalisation</th>
+                          <th className="border border-slate-200 px-2 py-0.5 text-center w-12">Niveau</th>
+                          <th className="border border-slate-200 px-2 py-0.5 text-left">Descripteur de réalisation</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -636,48 +686,46 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                   </div>
                 )}
 
-                {/* Exercices du critère */}
+                {/* Exercices / Tâches du critère */}
                 {(crit.exercises || []).map((ex, exIdx) => {
                   const studentAns = submission?.answers.find(
                     ans => ans.criterion === crit.criterion && ans.exerciseIndex === exIdx
                   );
 
-                  const subQuestions = getExerciseSubQuestions(ex, crit.criterion, crit.strands);
+                  // Décomposition propre du stimulus et des sous-questions sans duplication
+                  const { stimulusText, subQuestions } = parseExerciseContent(ex, crit.criterion, crit.strands);
                   const hasSubQuestions = subQuestions.length > 0;
                   const strandInfo = getQuestionStrandLabel(crit.criterion, crit.strands, ex, exIdx);
 
                   return (
                     <div
                       key={exIdx}
-                      className="avoid-break border border-slate-300 rounded-lg p-3 text-xs bg-white space-y-2.5"
-                      style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
+                      className="border border-slate-300 rounded p-3 text-xs bg-white space-y-2.5"
                     >
-                      <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                      {/* Entête de tâche */}
+                      <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 avoid-break">
                         <div className="flex items-center gap-2">
-                          <span
-                            className="px-2 py-0.5 rounded text-[10px] font-bold text-white"
-                            style={{ backgroundColor: color.badge }}
-                          >
+                          <span className="px-2 py-0.5 bg-slate-700 text-white font-bold text-[10px] rounded-xs uppercase">
                             Tâche {exIdx + 1}
                           </span>
-                          <span className="font-bold text-slate-900">{ex.title}</span>
+                          <span className="font-bold text-slate-900 text-xs">{ex.title}</span>
                         </div>
 
                         {/* Note de la tâche si corrigé */}
                         {isCorrectedCopy && studentAns?.score !== undefined && (
-                          <span className="text-[11px] font-black text-purple-800 bg-purple-100 px-2 py-0.5 rounded">
-                            Niveau : {studentAns.score} / {crit.maxPoints || 8}
+                          <span className="text-[11px] font-black text-purple-900 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
+                            Note : {studentAns.score} / {crit.maxPoints || 8}
                           </span>
                         )}
                       </div>
 
                       {/* Illustration / Image si présente */}
                       {ex.imageUrl && (
-                        <div className="my-2 p-2 bg-slate-50 border border-slate-200 rounded-lg text-center avoid-break">
+                        <div className="my-2 p-2 bg-slate-50 border border-slate-200 rounded text-center avoid-break">
                           <img
                             src={ex.imageUrl}
                             alt={ex.imageCaption || 'Illustration exercice'}
-                            className="max-h-52 max-w-full mx-auto object-contain rounded shadow-xs"
+                            className="max-h-52 max-w-full mx-auto object-contain rounded"
                           />
                           {ex.imageCaption && (
                             <p className="text-[10px] text-slate-600 italic mt-1 font-medium">
@@ -687,10 +735,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         </div>
                       )}
 
-                      {/* Énoncé global */}
-                      {ex.content && (
-                        <div className="text-slate-800 whitespace-pre-wrap leading-relaxed font-normal bg-slate-50/70 p-2.5 rounded border border-slate-100">
-                          {ex.content}
+                      {/* TEXTE SUPPORT / STIMULUS (NON DUPLIQUÉ) */}
+                      {stimulusText && (
+                        <div className="my-1.5 p-3 bg-slate-50/80 border-l-3 border-purple-700 text-slate-800 text-[11px] leading-relaxed italic avoid-break">
+                          {stimulusText}
                         </div>
                       )}
 
@@ -707,19 +755,19 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                             return (
                               <div
                                 key={subId}
-                                className="border border-purple-200/80 rounded-lg p-2.5 bg-purple-50/20 space-y-2 avoid-break"
+                                className="border-t border-slate-200 pt-2 space-y-1.5 avoid-break"
                                 style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
                               >
                                 <div className="flex items-baseline gap-2">
-                                  <span className="font-bold text-xs text-purple-900 bg-purple-100 px-1.5 py-0.5 rounded">
+                                  <span className="font-bold text-xs text-purple-950 bg-purple-100 px-1.5 py-0.5 rounded">
                                     {sub.label}
                                   </span>
                                   <span className="font-bold text-slate-900 text-xs">{sub.content}</span>
                                 </div>
 
-                                {/* 🔴 SOUS-ASPECT EN ROUGE SOUS LA SOUS-QUESTION */}
-                                <div className="text-red-600 font-bold text-[11px] flex items-center gap-1.5 bg-red-50/70 px-2 py-0.5 rounded border border-red-200">
-                                  <span className="text-red-700 font-black">● {subStrand.fullText}</span>
+                                {/* 🔴 SOUS-ASPECT EN ROUGE BIEN MIS EN VALEUR */}
+                                <div className="text-red-700 font-bold text-[10px] flex items-center gap-1.5 bg-red-50/80 px-2 py-0.5 rounded border border-red-200 w-fit">
+                                  <span>● {subStrand.fullText}</span>
                                 </div>
 
                                 {/* QCM */}
@@ -729,8 +777,8 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                       const isChosen = subResponseText === opt;
                                       return (
                                         <div key={oIdx} className="flex items-center gap-2 text-xs">
-                                          <span className={`w-4 h-4 rounded border flex items-center justify-center font-bold text-[10px] ${
-                                            isChosen ? 'bg-purple-600 text-white border-purple-600' : 'border-slate-400 bg-white'
+                                          <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center font-bold text-[9px] ${
+                                            isChosen ? 'bg-purple-700 text-white border-purple-700' : 'border-slate-400 bg-white'
                                           }`}>
                                             {isChosen ? '✓' : ''}
                                           </span>
@@ -744,27 +792,33 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                 {/* Réponse libre */}
                                 {sub.type !== 'multiple_choice' && (
                                   isCorrectedCopy ? (
-                                    <div className="bg-white border border-slate-200 rounded p-2 text-xs">
-                                      <span className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
-                                        Réponse de l'élève ({sub.label}) :
-                                      </span>
-                                      <p className="text-slate-900 font-mono text-[11px] whitespace-pre-wrap">
-                                        {subResponseText || '(Aucune réponse saisie)'}
-                                      </p>
-                                      {subDrawing && (
-                                        <div className="mt-2 pt-1 border-t border-slate-200 text-center">
-                                          <span className="text-[10px] font-bold text-slate-500 block mb-0.5">Tracé / Dessin rattaché :</span>
-                                          <img src={subDrawing} alt="Figure élève" className="max-h-36 max-w-full mx-auto border rounded bg-white" />
-                                        </div>
-                                      )}
-                                    </div>
+                                    subResponseText ? (
+                                      <div className="mt-1 bg-slate-50 border border-slate-200 rounded p-2 text-xs">
+                                        <span className="text-[9.5px] font-bold text-slate-500 uppercase block mb-0.5">
+                                          Réponse de l'élève ({sub.label}) :
+                                        </span>
+                                        <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
+                                          {subResponseText}
+                                        </p>
+                                        {subDrawing && (
+                                          <div className="mt-2 pt-1 border-t border-slate-200 text-center">
+                                            <span className="text-[9.5px] font-bold text-slate-500 block mb-0.5">Tracé / Dessin rattaché :</span>
+                                            <img src={subDrawing} alt="Figure élève" className="max-h-36 max-w-full mx-auto border rounded bg-white" />
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="mt-1 px-2.5 py-1 bg-slate-50 border border-dashed border-slate-200 rounded text-[10px] text-slate-400 italic">
+                                        Non répondu par l'élève
+                                      </div>
+                                    )
                                   ) : (
-                                    <div className="p-2.5 border border-slate-300 rounded bg-slate-50/30">
-                                      <span className="text-[9px] font-semibold text-slate-400 block uppercase mb-1">
-                                        Zone de réponse réservée à l'élève ({sub.label}) :
-                                      </span>
-                                      <div className="border-b border-dashed border-slate-300 h-5"></div>
-                                      <div className="border-b border-dashed border-slate-300 h-5"></div>
+                                    <div className="mt-1.5 p-2 border border-slate-300 rounded bg-slate-50/20">
+                                      <div className="text-[9px] font-semibold text-slate-400 uppercase mb-1">
+                                        Espace réponse pour {sub.label} :
+                                      </div>
+                                      <div className="border-b border-dotted border-slate-300 h-5"></div>
+                                      <div className="border-b border-dotted border-slate-300 h-5"></div>
                                     </div>
                                   )
                                 )}
@@ -773,22 +827,29 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                           })}
                         </div>
                       ) : (
-                        /* CAS 2 : QUESTION UNIQUE */
-                        <div className="space-y-2">
-                          {/* 🔴 SOUS-ASPECT SPÉCIFIQUE EN ROUGE SOUS LA QUESTION */}
-                          <div className="text-red-600 font-bold text-[11px] flex items-center gap-1.5 bg-red-50/70 px-2 py-0.5 rounded border border-red-200">
-                            <span className="text-red-700 font-black">● {strandInfo.fullText}</span>
+                        /* CAS 2 : QUESTION UNIQUE (SANS SOUS-QUESTIONS) */
+                        <div className="space-y-2 avoid-break" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                          {/* Énoncé de la question si pas de sous-questions */}
+                          {ex.content && (
+                            <div className="text-slate-900 font-medium text-xs leading-relaxed">
+                              {sanitizeText(ex.content)}
+                            </div>
+                          )}
+
+                          {/* 🔴 SOUS-ASPECT EN ROUGE BIEN MIS EN VALEUR */}
+                          <div className="text-red-700 font-bold text-[10px] flex items-center gap-1.5 bg-red-50/80 px-2 py-0.5 rounded border border-red-200 w-fit">
+                            <span>● {strandInfo.fullText}</span>
                           </div>
 
                           {/* QCM simple */}
                           {ex.type === 'multiple_choice' && (
-                            <div className="space-y-1.5 pt-1">
+                            <div className="space-y-1 pt-1">
                               {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, oIdx) => {
                                 const isChosen = studentAns?.studentResponse === opt;
                                 return (
                                   <div key={oIdx} className="flex items-center gap-2 text-xs">
-                                    <span className={`w-4 h-4 rounded border flex items-center justify-center font-bold text-[10px] ${
-                                      isChosen ? 'bg-purple-600 text-white border-purple-600' : 'border-slate-400 bg-white'
+                                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center font-bold text-[9px] ${
+                                      isChosen ? 'bg-purple-700 text-white border-purple-700' : 'border-slate-400 bg-white'
                                     }`}>
                                       {isChosen ? '✓' : ''}
                                     </span>
@@ -802,49 +863,53 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                           {/* Réponse libre */}
                           {ex.type !== 'multiple_choice' && (
                             isCorrectedCopy ? (
-                              <div className="mt-2 space-y-2">
-                                <div className="bg-slate-50 border border-slate-200 rounded p-2.5">
-                                  <span className="text-[10px] font-bold text-slate-600 block uppercase mb-1">
+                              studentAns?.studentResponse ? (
+                                <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-xs">
+                                  <span className="text-[9.5px] font-bold text-slate-500 uppercase block mb-0.5">
                                     Réponse rédigée par l'élève :
                                   </span>
-                                  <p className="text-slate-900 whitespace-pre-wrap leading-relaxed font-mono text-[11px]">
-                                    {studentAns?.studentResponse || '(Aucune réponse saisie)'}
+                                  <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
+                                    {studentAns.studentResponse}
                                   </p>
 
-                                  {studentAns?.drawingDataUrl && (
-                                    <div className="mt-2 pt-2 border-t border-slate-200 text-center">
-                                      <span className="text-[10px] font-bold text-slate-500 block mb-1">
-                                        📐 Figure géométrique / tracé de l'élève :
+                                  {studentAns.drawingDataUrl && (
+                                    <div className="mt-2 pt-1 border-t border-slate-200 text-center">
+                                      <span className="text-[9.5px] font-bold text-slate-500 block mb-0.5">
+                                        Figure / Tracé de l'élève :
                                       </span>
                                       <img
                                         src={studentAns.drawingDataUrl}
-                                        alt="Figure géométrique élève"
-                                        className="max-h-48 max-w-full mx-auto border border-slate-300 rounded shadow-xs bg-white"
+                                        alt="Figure élève"
+                                        className="max-h-44 max-w-full mx-auto border border-slate-300 rounded bg-white"
                                       />
                                     </div>
                                   )}
-                                </div>
 
-                                {/* Commentaire enseignant / IA */}
-                                {(studentAns?.teacherComment || studentAns?.aiFeedback) && (
-                                  <div className="bg-purple-50/70 border border-purple-200 rounded p-2 text-[11px]">
-                                    <span className="text-[10px] font-bold text-purple-900 block uppercase">
-                                      Feedback / Commentaire de l'enseignant :
-                                    </span>
-                                    <p className="text-purple-950 italic">
-                                      {studentAns.teacherComment || studentAns.aiFeedback}
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
+                                  {/* Commentaire enseignant */}
+                                  {(studentAns.teacherComment || studentAns.aiFeedback) && (
+                                    <div className="mt-2 p-1.5 bg-purple-50 border border-purple-200 rounded text-[10.5px]">
+                                      <span className="text-[9px] font-bold text-purple-900 block uppercase">
+                                        Commentaire de l'enseignant :
+                                      </span>
+                                      <p className="text-purple-950 italic">
+                                        {studentAns.teacherComment || studentAns.aiFeedback}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="mt-1 px-2.5 py-1 bg-slate-50 border border-dashed border-slate-200 rounded text-[10px] text-slate-400 italic">
+                                  Non répondu par l'élève
+                                </div>
+                              )
                             ) : (
-                              <div className="mt-2 p-2.5 border border-slate-300 rounded-lg bg-slate-50/30">
-                                <span className="text-[9px] font-semibold text-slate-400 block uppercase mb-1">
+                              <div className="mt-1.5 p-2 border border-slate-300 rounded bg-slate-50/20">
+                                <div className="text-[9px] font-semibold text-slate-400 uppercase mb-1">
                                   Zone réservée pour la réponse rédigée de l'élève :
-                                </span>
-                                <div className="border-b border-dashed border-slate-300 h-6"></div>
-                                <div className="border-b border-dashed border-slate-300 h-6"></div>
-                                <div className="border-b border-dashed border-slate-300 h-6"></div>
+                                </div>
+                                <div className="border-b border-dotted border-slate-300 h-6"></div>
+                                <div className="border-b border-dotted border-slate-300 h-6"></div>
+                                <div className="border-b border-dotted border-slate-300 h-6"></div>
                               </div>
                             )
                           )}
@@ -859,10 +924,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
         </main>
 
         {/* ── 5. BILAN DE L'ÉVALUATION ET SIGNATURES OFFICIELLES ── */}
-        <footer className="mt-6 pt-3 border-t-2 border-slate-800 avoid-break text-xs space-y-3">
+        <footer className="mt-6 pt-3 border-t-2 border-slate-900 avoid-break text-xs space-y-2.5">
           {isCorrectedCopy && submission?.overallFeedback && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-              <span className="text-xs font-bold text-purple-900 block uppercase mb-1">
+            <div className="bg-purple-50/80 border border-purple-200 rounded p-2.5">
+              <span className="text-[10px] font-bold text-purple-900 block uppercase mb-0.5">
                 💬 Appréciation globale de l'enseignant :
               </span>
               <p className="text-slate-800 italic leading-relaxed text-[11px]">
@@ -871,23 +936,23 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
             </div>
           )}
 
-          {/* Grille de signature */}
+          {/* Grille de signature officielle */}
           <div className="grid grid-cols-3 gap-3 pt-1">
-            <div className="border border-slate-300 rounded p-2 h-20 bg-slate-50/30">
-              <span className="text-[10px] font-bold text-slate-700 block uppercase">Signature de l'enseignant(e)</span>
-              <div className="mt-6 text-[9px] text-slate-400 italic">Date et signature</div>
+            <div className="border border-slate-400 rounded p-2 h-20 bg-slate-50/40">
+              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">Signature de l'enseignant(e)</span>
+              <div className="mt-6 text-[8.5px] text-slate-400 italic">Date et signature</div>
             </div>
-            <div className="border border-slate-300 rounded p-2 h-20 bg-slate-50/30">
-              <span className="text-[10px] font-bold text-slate-700 block uppercase">Visa Direction / Coordonnateur PEI</span>
-              <div className="mt-6 text-[9px] text-slate-400 italic">Signature et cachet</div>
+            <div className="border border-slate-400 rounded p-2 h-20 bg-slate-50/40">
+              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">Visa Direction / Coordonnateur PEI</span>
+              <div className="mt-6 text-[8.5px] text-slate-400 italic">Signature et cachet</div>
             </div>
-            <div className="border border-slate-300 rounded p-2 h-20 bg-slate-50/30">
-              <span className="text-[10px] font-bold text-slate-700 block uppercase">Signature des parents</span>
-              <div className="mt-6 text-[9px] text-slate-400 italic">Vu et pris connaissance</div>
+            <div className="border border-slate-400 rounded p-2 h-20 bg-slate-50/40">
+              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">Signature des parents</span>
+              <div className="mt-6 text-[8.5px] text-slate-400 italic">Vu et pris connaissance</div>
             </div>
           </div>
 
-          <div className="text-center text-[10px] text-slate-500 pt-1.5 border-t border-slate-200">
+          <div className="text-center text-[9.5px] text-slate-500 pt-1 border-t border-slate-200">
             Document officiel d'évaluation · Les Écoles Internationales Al-Kawthar · Système PEI IB
           </div>
         </footer>
@@ -897,7 +962,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           <div>
             <span>Écoles Al-Kawthar · PEI IB</span>
             <span className="mx-1.5 text-slate-300">|</span>
-            <span>Date : {currentDateFormatted}</span>
+            <span>Date : {examDateFormatted}</span>
           </div>
           <div className="font-semibold text-slate-700">
             {evaluation.title} (Code : {evaluation.accessCode})
@@ -910,6 +975,8 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 };
 
 export default EvaluationPrintView;
