@@ -532,9 +532,19 @@ export interface UnitGroupingPreference {
 
 // ===== ÉVALUATION CRITÉRIÉE ÉLECTRONIQUE (PORTAIL ÉLÈVE & ENSEIGNANT) =====
 
+export interface IndividualAccessCode {
+  code: string; // e.g. "EVAL-8492-01" ou token unique
+  studentName?: string;
+  studentNumber?: string;
+  isUsed: boolean;
+  usedAt?: string;
+  allowedRetake?: boolean; // L'enseignant a réouvert l'accès pour un nouvel essai
+  createdAt?: string;
+}
+
 export interface OnlineEvaluation {
   id: string; // e.g. "eval_17112345678"
-  accessCode: string; // e.g. "EVAL-8492"
+  accessCode: string; // e.g. "EVAL-8492" (code principal / groupe)
   title: string;
   subject: string;
   grade: string;
@@ -552,6 +562,7 @@ export interface OnlineEvaluation {
   relatedConcepts?: string[];
   assessments: AssessmentData[];
   allowStudentFeedbackView?: boolean;
+  studentAccessCodes?: IndividualAccessCode[]; // Codes individuels à usage unique par élève
 }
 
 export interface StudentAnswer {

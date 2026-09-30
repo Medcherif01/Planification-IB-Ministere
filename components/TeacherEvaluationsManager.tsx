@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon } from 'lucide-react';
-import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion } from '../types';
+import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users } from 'lucide-react';
+import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
 
@@ -98,6 +98,15 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   // Print view
   const [printEvaluation, setPrintEvaluation] = useState<OnlineEvaluation | null>(null);
   const [printSubmission, setPrintSubmission] = useState<StudentSubmission | null>(null);
+
+  // Gestion des codes d'accès individuels des élèves
+  const [studentCodesCountToCreate, setStudentCodesCountToCreate] = useState('25');
+  const [managingCodesEval, setManagingCodesEval] = useState<OnlineEvaluation | null>(null);
+  const [newCustomCode, setNewCustomCode] = useState('');
+  const [newCustomStudentName, setNewCustomStudentName] = useState('');
+  const [newCustomStudentNumber, setNewCustomStudentNumber] = useState('');
+  const [showPrintCodesModal, setShowPrintCodesModal] = useState(false);
+  const [isSavingCodes, setIsSavingCodes] = useState(false);
 
   // Charger les évaluations
   const loadEvaluationsList = async () => {
@@ -513,6 +522,20 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const title = customTitle.trim() || `Évaluation : ${selectedPlanForCreate.title}`;
     const code = `EVAL-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    // 🔑 Génération automatique des codes d'accès individuels à usage unique pour chaque élève
+    const count = Math.max(1, parseInt(studentCodesCountToCreate) || 25);
+    const initialStudentCodes: IndividualAccessCode[] = [];
+    for (let i = 1; i <= count; i++) {
+      initialStudentCodes.push({
+        code: `${code}-${String(i).padStart(2, '0')}`,
+        studentName: '',
+        studentNumber: '',
+        isUsed: false,
+        allowedRetake: false,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
     const newEval = await createOrUpdateEvaluation({
       accessCode: code,
       title,
@@ -530,11 +553,215 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       durationMinutes: parseInt(customDuration) || 0,
       instructions: customInstructions,
       status: 'active',
+      studentAccessCodes: initialStudentCodes,
     });
 
     setEvaluations(prev => [newEval, ...prev]);
     setShowCreateModal(false);
-    alert(`✅ Évaluation créée avec succès !\n\nCritère(s) retenu(s) : ${chosenAssessments.map(a => `Critère ${a.criterion}`).join(', ')}\nCode d'accès pour les élèves : ${newEval.accessCode}\nDonnez ce code à vos élèves pour qu'ils puissent composer.`);
+    alert(`✅ Évaluation créée avec succès !\n\nCritère(s) retenu(s) : ${chosenAssessments.map(a => `Critère ${a.criterion}`).join(', ')}\n${initialStudentCodes.length} codes d'accès individuels à usage unique ont été générés pour vos élèves (ex: ${code}-01, ${code}-02...). Cliquez sur "Codes d'accès élèves" pour les gérer ou les imprimer.`);
+  };
+
+  // ── GESTION DES CODES D'ACCÈS INDIVIDUELS ÉLÈVES ─────────────────────────────
+  // Réouvrir l'accès pour un deuxième essai (ou reverrouiller)
+  const handleToggleCodeRetake = async (targetCode: string) => {
+    if (!managingCodesEval) return;
+    setIsSavingCodes(true);
+    try {
+      const currentCodes = managingCodesEval.studentAccessCodes || [];
+      const updatedCodes = currentCodes.map(c => {
+        if (c.code === targetCode) {
+          const nextAllowed = !c.allowedRetake;
+          return {
+            ...c,
+            allowedRetake: nextAllowed,
+          };
+        }
+        return c;
+      });
+
+      const updatedEval: OnlineEvaluation = {
+        ...managingCodesEval,
+        studentAccessCodes: updatedCodes,
+      };
+
+      const saved = await createOrUpdateEvaluation(updatedEval);
+      setManagingCodesEval(saved);
+      setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
+      if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
+    } catch (err: any) {
+      alert(`Erreur : ${err.message || 'Impossible de modifier le statut du code'}`);
+    } finally {
+      setIsSavingCodes(false);
+    }
+  };
+
+  // Réinitialiser complètement un code (efface l'utilisation pour le remettre à neuf)
+  const handleResetCodeUsage = async (targetCode: string) => {
+    if (!managingCodesEval) return;
+    if (!window.confirm(`Voulez-vous réinitialiser le code ${targetCode} ?\n\nIl redeviendra utilisable par n'importe quel élève et son statut redeviendra disponible.`)) return;
+
+    setIsSavingCodes(true);
+    try {
+      const currentCodes = managingCodesEval.studentAccessCodes || [];
+      const updatedCodes = currentCodes.map(c => {
+        if (c.code === targetCode) {
+          return {
+            ...c,
+            isUsed: false,
+            usedAt: undefined,
+            studentName: '',
+            studentNumber: '',
+            allowedRetake: false,
+          };
+        }
+        return c;
+      });
+
+      const updatedEval: OnlineEvaluation = {
+        ...managingCodesEval,
+        studentAccessCodes: updatedCodes,
+      };
+
+      const saved = await createOrUpdateEvaluation(updatedEval);
+      setManagingCodesEval(saved);
+      setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
+      if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
+    } catch (err: any) {
+      alert(`Erreur : ${err.message || 'Impossible de réinitialiser le code'}`);
+    } finally {
+      setIsSavingCodes(false);
+    }
+  };
+
+  // Supprimer un code
+  const handleDeleteCode = async (targetCode: string) => {
+    if (!managingCodesEval) return;
+    if (!window.confirm(`Supprimer définitivement le code d'accès ${targetCode} ?`)) return;
+
+    setIsSavingCodes(true);
+    try {
+      const currentCodes = managingCodesEval.studentAccessCodes || [];
+      const updatedCodes = currentCodes.filter(c => c.code !== targetCode);
+
+      const updatedEval: OnlineEvaluation = {
+        ...managingCodesEval,
+        studentAccessCodes: updatedCodes,
+      };
+
+      const saved = await createOrUpdateEvaluation(updatedEval);
+      setManagingCodesEval(saved);
+      setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
+      if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
+    } catch (err: any) {
+      alert(`Erreur : ${err.message || 'Impossible de supprimer le code'}`);
+    } finally {
+      setIsSavingCodes(false);
+    }
+  };
+
+  // Ajouter un code personnalisé ou assigné
+  const handleAddCustomCode = async () => {
+    if (!managingCodesEval) return;
+    const cleanCode = (newCustomCode.trim() || `${managingCodesEval.accessCode}-${Math.floor(100 + Math.random() * 900)}`).toUpperCase();
+    const currentCodes = managingCodesEval.studentAccessCodes || [];
+
+    if (currentCodes.some(c => c.code.toUpperCase() === cleanCode)) {
+      alert('Ce code d\'accès existe déjà dans cette évaluation.');
+      return;
+    }
+
+    setIsSavingCodes(true);
+    try {
+      const newCodeObj: IndividualAccessCode = {
+        code: cleanCode,
+        studentName: newCustomStudentName.trim(),
+        studentNumber: newCustomStudentNumber.trim(),
+        isUsed: false,
+        allowedRetake: false,
+        createdAt: new Date().toISOString(),
+      };
+
+      const updatedCodes = [...currentCodes, newCodeObj];
+      const updatedEval: OnlineEvaluation = {
+        ...managingCodesEval,
+        studentAccessCodes: updatedCodes,
+      };
+
+      const saved = await createOrUpdateEvaluation(updatedEval);
+      setManagingCodesEval(saved);
+      setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
+      if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
+
+      setNewCustomCode('');
+      setNewCustomStudentName('');
+      setNewCustomStudentNumber('');
+    } catch (err: any) {
+      alert(`Erreur : ${err.message || 'Impossible d\'ajouter le code'}`);
+    } finally {
+      setIsSavingCodes(false);
+    }
+  };
+
+  // Générer un lot de N codes supplémentaires
+  const handleGenerateBatchCodes = async (qty: number) => {
+    if (!managingCodesEval) return;
+    setIsSavingCodes(true);
+    try {
+      const currentCodes = managingCodesEval.studentAccessCodes || [];
+      const existingNumbers = currentCodes
+        .map(c => {
+          const m = c.code.match(/-([0-9]+)$/);
+          return m ? parseInt(m[1]) : 0;
+        })
+        .filter(n => n > 0);
+      let nextNum = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : currentCodes.length + 1;
+
+      const newCodes: IndividualAccessCode[] = [];
+      for (let i = 0; i < qty; i++) {
+        newCodes.push({
+          code: `${managingCodesEval.accessCode}-${String(nextNum + i).padStart(2, '0')}`,
+          studentName: '',
+          studentNumber: '',
+          isUsed: false,
+          allowedRetake: false,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      const updatedCodes = [...currentCodes, ...newCodes];
+      const updatedEval: OnlineEvaluation = {
+        ...managingCodesEval,
+        studentAccessCodes: updatedCodes,
+      };
+
+      const saved = await createOrUpdateEvaluation(updatedEval);
+      setManagingCodesEval(saved);
+      setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
+      if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
+    } catch (err: any) {
+      alert(`Erreur : ${err.message || 'Impossible de générer les codes'}`);
+    } finally {
+      setIsSavingCodes(false);
+    }
+  };
+
+  // Copier tous les codes avec statut
+  const handleCopyAllCodes = () => {
+    if (!managingCodesEval) return;
+    const codes = managingCodesEval.studentAccessCodes || [];
+    if (codes.length === 0) {
+      alert('Aucun code individuel à copier.');
+      return;
+    }
+    const lines = codes.map((c, i) => {
+      const statusText = c.isUsed ? (c.allowedRetake ? 'Accès réouvert (2e essai)' : 'Utilisé / Verrouillé') : 'Disponible';
+      const studentText = c.studentName ? `Élève: ${c.studentName} (${c.studentNumber || '—'})` : 'Non assigné';
+      return `${i + 1}. Code: ${c.code} | Statut: ${statusText} | ${studentText} | Lien direct: ${window.location.origin}?mode=student&code=${encodeURIComponent(c.code)}`;
+    });
+    navigator.clipboard.writeText(lines.join('\n'));
+    setCopiedCode('all_codes');
+    setTimeout(() => setCopiedCode(null), 3000);
+    alert(`📋 ${codes.length} codes d'accès copiés dans le presse-papiers avec statuts et liens !`);
   };
 
   // ── CORRECTION AUTOMATIQUE PAR IA (GEMINI) ─────────────────────────────────
@@ -777,6 +1004,39 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
                       {/* Boutons actions principales */}
                       <div className="flex flex-col gap-2 pt-1">
+                        {/* 🔑 GESTION DES CODES D'ACCÈS INDIVIDUELS ÉLÈVES (Usage unique & 2e essai) */}
+                        {(() => {
+                          const codes = ev.studentAccessCodes || [];
+                          const totalCodes = codes.length;
+                          const usedCodes = codes.filter(c => c.isUsed).length;
+                          const retakeCodes = codes.filter(c => c.isUsed && c.allowedRetake).length;
+
+                          return (
+                            <button
+                              onClick={() => setManagingCodesEval(ev)}
+                              className="w-full flex items-center justify-between px-3 py-2 bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 text-purple-900 rounded-xl text-xs font-bold transition border border-purple-200 shadow-2xs"
+                              title="Gérer les codes individuels uniques des élèves, autoriser un 2e essai ou en générer d'autres"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <Key size={14} className="text-purple-600 flex-shrink-0" />
+                                <span className="truncate">Codes d'accès élèves</span>
+                              </div>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                {retakeCodes > 0 && (
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-amber-100 text-amber-800 rounded font-black border border-amber-300">
+                                    {retakeCodes} réouvert(s)
+                                  </span>
+                                )}
+                                <span className={`text-[10px] px-2 py-0.5 rounded-lg font-black ${
+                                  usedCodes > 0 ? 'bg-purple-600 text-white' : 'bg-white text-purple-700 border border-purple-200'
+                                }`}>
+                                  {usedCodes} / {totalCodes} utilisé(s)
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })()}
+
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleOpenSubmissions(ev)}
@@ -1096,6 +1356,53 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     Cette unité n'a pas encore de critères générés. Vous pourrez ajouter les questions manuellement ensuite.
                   </div>
                 )}
+
+                {/* 🔑 Configuration des codes d'accès individuels à usage unique */}
+                <div className="bg-purple-50/70 border border-purple-200 rounded-2xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-purple-950 uppercase tracking-wide flex items-center gap-1.5">
+                      <Key size={14} className="text-purple-700" />
+                      Codes d'accès individuels (Usage unique)
+                    </label>
+                    <span className="text-[10px] font-bold text-purple-700 bg-white px-2 py-0.5 rounded-lg border border-purple-200">
+                      Sécurité & 2e essai contrôlé
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Chaque élève recevra un code unique (ex: <code>EVAL-XXXX-01</code>). Dès qu'un élève soumet, son code est <strong>verrouillé</strong> pour un 2ème essai, sauf si vous lui réouvrez l'accès.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <label className="text-[10px] text-slate-500 font-bold block uppercase mb-1">
+                        Nombre de codes à générer :
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={studentCodesCountToCreate}
+                        onChange={e => setStudentCodesCountToCreate(e.target.value)}
+                        className="w-full p-2 bg-white border border-purple-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-purple-400"
+                      />
+                    </div>
+                    <div className="flex gap-1.5 pt-4">
+                      {['15', '25', '30', '35'].map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => setStudentCodesCountToCreate(n)}
+                          className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition ${
+                            studentCodesCountToCreate === n
+                              ? 'bg-purple-600 text-white border-purple-600'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-purple-50'
+                          }`}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
 
                 <div className="flex items-center gap-3 pt-2">
                   <button
@@ -2107,6 +2414,464 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 </div>
               </div>
 
+            </div>
+          </div>
+        )}
+
+        {/* ═════════════════════════════════════════════════════════════════
+            MODALE DE GESTION DES CODES D'ACCÈS INDIVIDUELS ÉLÈVES
+            ═════════════════════════════════════════════════════════════════ */}
+        {managingCodesEval && (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-fadeIn my-auto border border-purple-200">
+              
+              {/* Header */}
+              <div className="bg-gradient-to-r from-purple-800 via-indigo-800 to-violet-900 p-5 text-white flex items-center justify-between gap-4 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+                    <Key size={22} className="text-yellow-300" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black tracking-tight">
+                      Codes d'Accès Individuels à Usage Unique
+                    </h3>
+                    <p className="text-xs text-purple-200">
+                      {managingCodesEval.title} · Code de base : <strong className="text-white">{managingCodesEval.accessCode}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowPrintCodesModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-400 hover:bg-yellow-300 text-yellow-950 rounded-xl text-xs font-black shadow transition"
+                    title="Imprimer les coupons de codes d'accès individuels (Format A4 à découper pour les élèves)"
+                  >
+                    <Printer size={14} /> Imprimer fiches A4
+                  </button>
+                  <button
+                    onClick={() => setManagingCodesEval(null)}
+                    className="p-1.5 text-white/70 hover:text-white rounded-xl hover:bg-white/10 transition"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Contenu */}
+              <div className="p-6 space-y-5 overflow-y-auto flex-1">
+                {/* Cartes statistiques */}
+                {(() => {
+                  const codes = managingCodesEval.studentAccessCodes || [];
+                  const total = codes.length;
+                  const used = codes.filter(c => c.isUsed).length;
+                  const available = codes.filter(c => !c.isUsed).length;
+                  const retakes = codes.filter(c => c.isUsed && c.allowedRetake).length;
+
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div className="bg-purple-50 border border-purple-200 rounded-2xl p-3">
+                        <span className="text-[10px] font-bold text-purple-700 uppercase block">Total Codes</span>
+                        <span className="text-xl font-black text-purple-950">{total}</span>
+                        <span className="text-[10px] text-purple-600 block mt-0.5">élèves prévus</span>
+                      </div>
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3">
+                        <span className="text-[10px] font-bold text-emerald-700 uppercase block">Disponibles</span>
+                        <span className="text-xl font-black text-emerald-950">{available}</span>
+                        <span className="text-[10px] text-emerald-600 block mt-0.5">prêts pour passation</span>
+                      </div>
+                      <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3">
+                        <span className="text-[10px] font-bold text-rose-700 uppercase block">Utilisés (Verrouillés)</span>
+                        <span className="text-xl font-black text-rose-950">{used - retakes}</span>
+                        <span className="text-[10px] text-rose-600 block mt-0.5">2e essai bloqué</span>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3">
+                        <span className="text-[10px] font-bold text-amber-700 uppercase block">2e Essai Réautorisé</span>
+                        <span className="text-xl font-black text-amber-950">{retakes}</span>
+                        <span className="text-[10px] text-amber-600 block mt-0.5">accès réouvert par vous</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Explication règles */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-xs text-slate-600 flex items-start gap-2.5">
+                  <ShieldCheck size={18} className="text-purple-600 flex-shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-semibold text-slate-800">
+                      Règle de sécurité des codes d'accès :
+                    </p>
+                    <p className="text-[11px] leading-relaxed">
+                      Chaque élève se connecte avec son <strong>code unique</strong>. Dès qu'un code est utilisé pour soumettre l'évaluation, il est automatiquement <strong>verrouillé</strong>. L'élève ne peut plus composer une 2ème fois, <strong>sauf si vous cliquez sur « 🔓 Réouvrir l'accès »</strong> pour lui accorder une nouvelle tentative.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Barre d'outils d'ajout & génération en lot */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                        Générer ou ajouter des codes
+                      </h4>
+                      <p className="text-[11px] text-slate-500">Ajoutez des codes supplémentaires ou assignez des élèves spécifiques</p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-slate-600">Génération rapide :</span>
+                      <button
+                        onClick={() => handleGenerateBatchCodes(5)}
+                        disabled={isSavingCodes}
+                        className="px-2.5 py-1 bg-white hover:bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-xs font-bold transition"
+                      >
+                        +5 codes
+                      </button>
+                      <button
+                        onClick={() => handleGenerateBatchCodes(10)}
+                        disabled={isSavingCodes}
+                        className="px-2.5 py-1 bg-white hover:bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-xs font-bold transition"
+                      >
+                        +10 codes
+                      </button>
+                      <button
+                        onClick={() => handleGenerateBatchCodes(25)}
+                        disabled={isSavingCodes}
+                        className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition shadow-xs"
+                      >
+                        +25 codes
+                      </button>
+                      <button
+                        onClick={handleCopyAllCodes}
+                        className="flex items-center gap-1 px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold transition"
+                        title="Copier toute la liste des codes dans le presse-papiers"
+                      >
+                        <Copy size={13} /> Copier la liste
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Formulaire ajout personnalisé */}
+                  <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row items-center gap-2">
+                    <input
+                      type="text"
+                      value={newCustomCode}
+                      onChange={e => setNewCustomCode(e.target.value.toUpperCase())}
+                      placeholder={`Code (ex: ${managingCodesEval.accessCode}-09)`}
+                      className="w-full sm:w-44 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold uppercase focus:ring-2 focus:ring-purple-400 outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={newCustomStudentName}
+                      onChange={e => setNewCustomStudentName(e.target.value)}
+                      placeholder="Nom de l'élève (optionnel)"
+                      className="w-full sm:flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-purple-400 outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={newCustomStudentNumber}
+                      onChange={e => setNewCustomStudentNumber(e.target.value)}
+                      placeholder="Matricule (optionnel)"
+                      className="w-full sm:w-32 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-purple-400 outline-none"
+                    />
+                    <button
+                      onClick={handleAddCustomCode}
+                      disabled={isSavingCodes}
+                      className="w-full sm:w-auto px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition shadow-xs whitespace-nowrap flex items-center justify-center gap-1"
+                    >
+                      <Plus size={14} /> Ajouter ce code
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tableau de tous les codes d'accès */}
+                {(!managingCodesEval.studentAccessCodes || managingCodesEval.studentAccessCodes.length === 0) ? (
+                  <div className="p-8 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 space-y-3">
+                    <Key size={36} className="mx-auto text-slate-300" />
+                    <div>
+                      <p className="font-bold text-slate-700 text-sm">Aucun code d'accès individuel configuré</p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Générez automatiquement un jeu de codes pour chaque élève de votre classe.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleGenerateBatchCodes(25)}
+                      className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
+                    >
+                      ⚡ Générer 25 codes d'accès pour la classe
+                    </button>
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-slate-100 text-slate-700 uppercase text-[10px] font-bold border-b border-slate-200">
+                        <tr>
+                          <th className="px-3 py-2.5 w-12 text-center">N°</th>
+                          <th className="px-4 py-2.5">Code d'Accès Unique</th>
+                          <th className="px-4 py-2.5">Élève assigné / Ayant composé</th>
+                          <th className="px-4 py-2.5">Statut de validité</th>
+                          <th className="px-4 py-2.5 text-right">Actions de l'enseignant</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {managingCodesEval.studentAccessCodes.map((codeObj, idx) => {
+                          const isCopied = copiedCode === codeObj.code;
+                          const isLinkCopied = copiedCode === `link_${codeObj.code}`;
+                          const isUsed = Boolean(codeObj.isUsed);
+                          const isRetakeAllowed = Boolean(codeObj.allowedRetake);
+
+                          return (
+                            <tr key={codeObj.code} className="hover:bg-slate-50/80 transition">
+                              <td className="px-3 py-2.5 text-center font-mono text-slate-400 text-[11px]">
+                                {idx + 1}
+                              </td>
+
+                              <td className="px-4 py-2.5 font-mono">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-black text-purple-900 bg-purple-50 px-2 py-0.5 rounded border border-purple-200 text-xs">
+                                    {codeObj.code}
+                                  </span>
+                                  <button
+                                    onClick={() => handleCopyCode(codeObj.code)}
+                                    className="p-1 text-slate-400 hover:text-purple-700 rounded transition"
+                                    title="Copier ce code"
+                                  >
+                                    {isCopied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
+                                  </button>
+                                  <button
+                                    onClick={() => handleCopyStudentLink(codeObj.code)}
+                                    className="p-1 text-slate-400 hover:text-indigo-700 rounded transition"
+                                    title="Copier le lien direct avec ce code individuel"
+                                  >
+                                    {isLinkCopied ? <Check size={13} className="text-green-600" /> : <ExternalLink size={13} />}
+                                  </button>
+                                </div>
+                              </td>
+
+                              <td className="px-4 py-2.5">
+                                {codeObj.studentName ? (
+                                  <div>
+                                    <span className="font-bold text-slate-800 block text-xs">{codeObj.studentName}</span>
+                                    {codeObj.studentNumber && (
+                                      <span className="text-[10px] text-slate-500 font-mono">
+                                        Matricule : {codeObj.studentNumber}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 italic text-[11px]">Non assigné (saisi à la connexion)</span>
+                                )}
+                              </td>
+
+                              <td className="px-4 py-2.5">
+                                {isUsed && !isRetakeAllowed && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                    <Lock size={11} className="text-rose-600" />
+                                    <span>Utilisé (2e essai bloqué)</span>
+                                  </span>
+                                )}
+                                {isUsed && isRetakeAllowed && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                    <Unlock size={11} className="text-amber-700" />
+                                    <span>Accès réouvert (2e essai autorisé)</span>
+                                  </span>
+                                )}
+                                {!isUsed && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    <CheckCircle size={11} className="text-emerald-600" />
+                                    <span>Disponible (Jamais utilisé)</span>
+                                  </span>
+                                )}
+                                {codeObj.usedAt && (
+                                  <span className="block text-[9px] text-slate-400 mt-0.5">
+                                    {new Date(codeObj.usedAt).toLocaleString('fr-FR')}
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="px-4 py-2.5 text-right space-x-1.5 whitespace-nowrap">
+                                {/* Bouton de déblocage / réouverture du code pour un deuxième essai */}
+                                {isUsed && (
+                                  <button
+                                    onClick={() => handleToggleCodeRetake(codeObj.code)}
+                                    className={`px-3 py-1 rounded-lg text-xs font-bold transition shadow-2xs ${
+                                      isRetakeAllowed
+                                        ? 'bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300'
+                                        : 'bg-amber-400 hover:bg-amber-300 text-amber-950 font-black'
+                                    }`}
+                                    title={isRetakeAllowed ? "Reverrouiller le code" : "Autoriser l'élève à repasser l'épreuve avec ce même code"}
+                                  >
+                                    {isRetakeAllowed ? '🔒 Reverrouiller' : '🔓 Réouvrir l\'accès (2e essai)'}
+                                  </button>
+                                )}
+
+                                {/* Réinitialiser le code à neuf */}
+                                {isUsed && (
+                                  <button
+                                    onClick={() => handleResetCodeUsage(codeObj.code)}
+                                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+                                    title="Réinitialiser ce code (effacer l'usage précédent et le rendre réutilisable)"
+                                  >
+                                    <RefreshCw size={13} />
+                                  </button>
+                                )}
+
+                                {/* Supprimer */}
+                                <button
+                                  onClick={() => handleDeleteCode(codeObj.code)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                  title="Supprimer ce code"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3 flex-shrink-0">
+                <span className="text-xs text-slate-500">
+                  {managingCodesEval.studentAccessCodes?.length || 0} code(s) configuré(s) au total.
+                </span>
+
+                <button
+                  onClick={() => setManagingCodesEval(null)}
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
+                >
+                  Fermer
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ═════════════════════════════════════════════════════════════════
+            MODALE D'IMPRESSION A4 DES FICHES / COUPONS DE CODES ÉLÈVES
+            ═════════════════════════════════════════════════════════════════ */}
+        {showPrintCodesModal && managingCodesEval && (
+          <div className="fixed inset-0 z-[90] bg-slate-900/80 backdrop-blur-sm overflow-y-auto flex flex-col items-center p-0 sm:p-4">
+            {/* Barre d'action */}
+            <div className="no-print sticky top-0 z-50 w-full max-w-4xl bg-white border-b border-slate-200 px-6 py-3 shadow-md flex items-center justify-between rounded-t-none sm:rounded-t-2xl">
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">
+                  Fiches d'Accès Élèves — Format A4 Prêt à Découper
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {managingCodesEval.studentAccessCodes?.length || 0} coupons élèves avec codes individuels à usage unique
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
+                >
+                  <Printer size={16} /> Imprimer les fiches
+                </button>
+                <button
+                  onClick={() => setShowPrintCodesModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Feuilles A4 imprimables */}
+            <div className="bg-white w-full max-w-[190mm] shadow-2xl my-0 sm:my-4 p-[10mm] text-slate-900 font-sans">
+              <style>{`
+                @page {
+                  size: A4 portrait;
+                  margin: 10mm;
+                }
+                @media print {
+                  html, body {
+                    background: #ffffff !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                  }
+                  .no-print {
+                    display: none !important;
+                  }
+                  .avoid-break-coupon {
+                    page-break-inside: avoid !important;
+                    break-inside: avoid !important;
+                  }
+                }
+              `}</style>
+
+              <div className="text-center pb-3 border-b-2 border-slate-800 mb-4 avoid-break-coupon">
+                <h2 className="text-base font-black uppercase text-slate-900 tracking-tight">
+                  Les Écoles Internationales Al-Kawthar · PEI IB
+                </h2>
+                <p className="text-xs font-bold text-purple-800 uppercase mt-0.5">
+                  Fiches Individuelles de Passation d'Évaluation en Ligne
+                </p>
+                <p className="text-[11px] text-slate-600 mt-1">
+                  Évaluation : <strong>{managingCodesEval.title}</strong> ({managingCodesEval.subject} - {managingCodesEval.grade})
+                </p>
+              </div>
+
+              {/* Grille de coupons découpables */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {(managingCodesEval.studentAccessCodes || []).map((codeObj, cIdx) => (
+                  <div
+                    key={codeObj.code}
+                    className="avoid-break-coupon border-2 border-dashed border-slate-400 rounded-2xl p-4 bg-slate-50/50 flex flex-col justify-between space-y-2.5 relative"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 text-[10px] text-slate-500 font-bold uppercase">
+                      <span>✂️ Découper</span>
+                      <span className="text-purple-700">Coupon N° {cIdx + 1}</span>
+                    </div>
+
+                    <div>
+                      <h4 className="font-black text-xs text-slate-900 truncate">
+                        {managingCodesEval.title}
+                      </h4>
+                      <p className="text-[10px] text-slate-500">
+                        {managingCodesEval.subject} · {managingCodesEval.grade}
+                      </p>
+                    </div>
+
+                    <div className="space-y-1 text-xs">
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase block">Nom de l'élève :</span>
+                        <span className="font-bold text-slate-800 block border-b border-slate-300 pb-0.5 min-h-[18px]">
+                          {codeObj.studentName || ''}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase block">N° d'inscription (Matricule) :</span>
+                        <span className="font-mono font-bold text-slate-800 block border-b border-slate-300 pb-0.5 min-h-[18px]">
+                          {codeObj.studentNumber || ''}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Cadre Code Unique */}
+                    <div className="bg-purple-100/80 border-2 border-purple-500 rounded-xl p-2.5 text-center my-1">
+                      <span className="block text-[9px] font-black uppercase tracking-wider text-purple-900">
+                        Votre Code d'Accès Unique
+                      </span>
+                      <span className="text-xl font-mono font-black text-purple-950 tracking-wider">
+                        {codeObj.code}
+                      </span>
+                      <span className="block text-[9px] font-bold text-purple-700 mt-0.5">
+                        Usage Unique · Verrouillage après soumission
+                      </span>
+                    </div>
+
+                    <div className="text-[9px] text-slate-500 leading-tight">
+                      <strong>Consignes :</strong> Accédez au lien d'examen, saisissez votre nom, matricule et ce code. En mode examen plein écran strict. Aucun 2e essai sans accord du professeur.
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}

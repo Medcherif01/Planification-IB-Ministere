@@ -95,10 +95,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(200).json(filtered);
         }
 
-        // Obtenir une évaluation par accessCode (pour les élèves)
+        // Obtenir une évaluation par accessCode (pour les élèves : code principal ou code individuel)
         if (req.query.accessCode) {
           const code = String(req.query.accessCode).trim().toUpperCase();
-          const found = inMemoryEvaluations.find(e => e.accessCode?.trim().toUpperCase() === code);
+          const found = inMemoryEvaluations.find(e =>
+            e.accessCode?.trim().toUpperCase() === code ||
+            (e.studentAccessCodes && e.studentAccessCodes.some((sc: any) => sc.code?.trim().toUpperCase() === code))
+          );
           if (!found) return res.status(404).json({ error: 'Évaluation non trouvée avec ce code' });
           return res.status(200).json(found);
         }
@@ -240,7 +243,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (req.query.accessCode) {
         const code = String(req.query.accessCode).trim().toUpperCase();
-        const found = await evalCol.findOne({ accessCode: code });
+        const found = await evalCol.findOne({
+          $or: [
+            { accessCode: code },
+            { 'studentAccessCodes.code': code }
+          ]
+        });
         if (!found) return res.status(404).json({ error: 'Évaluation non trouvée avec ce code' });
         return res.status(200).json(found);
       }

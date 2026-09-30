@@ -190,6 +190,17 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
+      thead.print-header-repeat {
+        display: table-header-group !important;
+      }
+      tfoot.print-footer-repeat {
+        display: table-footer-group !important;
+      }
+      table, thead, tbody, tfoot, tr, td, th {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        break-inside: avoid-page !important;
+      }
       .no-print {
         display: none !important;
       }
@@ -201,13 +212,14 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
         width: 100% !important;
         border: none !important;
       }
-      .avoid-break {
+      .avoid-break, .task-card, .rubric-box {
         page-break-inside: avoid !important;
         break-inside: avoid !important;
+        break-inside: avoid-page !important;
       }
     }
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background-color: #f8fafc;
       margin: 0;
       padding: 10mm;
@@ -221,8 +233,16 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
       box-sizing: border-box;
     }
     .avoid-break {
-      page-break-inside: avoid;
-      break-inside: avoid;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    table {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    tr {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
     }
   </style>
 </head>
@@ -296,7 +316,8 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
       {/* ── PAGE D'IMPRESSION A4 ────────────────────────────────────────────── */}
       <div
         ref={printContentRef}
-        className="print-page bg-white w-full max-w-[210mm] shadow-2xl my-0 sm:my-4 p-[10mm] text-slate-900 font-sans"
+        className="print-page bg-white w-full max-w-[190mm] shadow-2xl my-0 sm:my-4 p-[10mm] text-slate-900 font-sans"
+        style={{ boxSizing: 'border-box' }}
       >
         <style>{`
           @page {
@@ -323,15 +344,65 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
               width: 100% !important;
               border: none !important;
             }
-            .avoid-break {
+            thead.print-header-repeat {
+              display: table-header-group !important;
+            }
+            tfoot.print-footer-repeat {
+              display: table-footer-group !important;
+            }
+            table, thead, tbody, tfoot, tr, td, th {
               page-break-inside: avoid !important;
               break-inside: avoid !important;
+              break-inside: avoid-page !important;
+            }
+            .avoid-break, .task-card, .rubric-box {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+              break-inside: avoid-page !important;
             }
           }
         `}</style>
 
-        {/* ── EN-TÊTE OFFICIEL ÉCOLE AL-KAWTAR & PEI ── */}
-        <header className="border-b-2 border-slate-800 pb-3 mb-3 avoid-break">
+        <table className="w-full border-collapse">
+          {/* Haut de page répété sur chaque page A4 */}
+          <thead className="print-header-repeat hidden print:table-header-group">
+            <tr>
+              <td className="pb-2.5 border-b-2 border-slate-700">
+                <div className="flex items-center justify-between text-[10px] text-slate-700 font-semibold">
+                  <div className="flex items-center gap-2">
+                    <span className="font-black text-slate-900 uppercase">Écoles Al-Kawthar</span>
+                    <span className="text-slate-400">·</span>
+                    <span className="text-purple-800">PEI IB</span>
+                  </div>
+                  <div className="text-center font-bold text-slate-800 truncate max-w-sm">
+                    {evaluation.title} ({evaluation.subject} - {evaluation.grade})
+                  </div>
+                  <div className="font-mono text-purple-700 font-bold">
+                    Code : {evaluation.accessCode}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </thead>
+
+          {/* Pied de page répété sur chaque page A4 */}
+          <tfoot className="print-footer-repeat hidden print:table-footer-group">
+            <tr>
+              <td className="pt-2.5 border-t border-slate-300">
+                <div className="flex items-center justify-between text-[9px] text-slate-500">
+                  <span>Portail d'Évaluation Critériée Électronique · Système PEI IB</span>
+                  <span className="italic font-medium text-slate-400">Copie officielle d'examen · Ne pas couper les tableaux</span>
+                  <span>Marges 1 cm · Format A4</span>
+                </div>
+              </td>
+            </tr>
+          </tfoot>
+
+          <tbody>
+            <tr>
+              <td className="pt-2">
+                {/* ── EN-TÊTE OFFICIEL ÉCOLE AL-KAWTAR & PEI ── */}
+                <header className="border-b-2 border-slate-800 pb-3 mb-3 avoid-break">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <img
@@ -448,9 +519,9 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
 
         {/* ── TABLEAU RÉCAPITULATIF DES CRITÈRES ÉVALUÉS ── */}
         <div className="mb-4 avoid-break">
-          <table className="w-full text-[11px] border-collapse border border-slate-300">
+          <table className="w-full text-[11px] border-collapse border border-slate-300" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
             <thead>
-              <tr className="bg-slate-100 text-slate-700">
+              <tr className="bg-slate-100 text-slate-700" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                 <th className="border border-slate-300 px-2 py-1 text-center w-16">Critère</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Intitulé de la compétence</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Aspects spécifiques évalués</th>
@@ -467,7 +538,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                 const color = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
                 const score = submission?.criteriaScores?.[a.criterion];
                 return (
-                  <tr key={a.criterion}>
+                  <tr key={a.criterion} style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                     <td className="border border-slate-300 px-2 py-1 text-center font-black" style={{ color: color.badge }}>
                       Critère {a.criterion}
                     </td>
@@ -497,7 +568,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           {evaluation.assessments.map((crit) => {
             const color = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
             return (
-              <div key={crit.criterion} className="space-y-3">
+              <div key={crit.criterion} className="space-y-3 avoid-break" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                 {/* Bandeau critère */}
                 <div
                   className="px-3 py-1.5 rounded-md font-bold text-xs flex items-center justify-between avoid-break"
@@ -513,17 +584,17 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
 
                 {/* Rubrique des niveaux */}
                 {crit.rubricRows && crit.rubricRows.length > 0 && (
-                  <div className="avoid-break overflow-x-auto">
-                    <table className="w-full text-[10px] border-collapse border border-slate-200">
+                  <div className="avoid-break overflow-x-auto" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                    <table className="w-full text-[10px] border-collapse border border-slate-200" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                       <thead>
-                        <tr className="bg-slate-50 text-slate-600">
+                        <tr className="bg-slate-50 text-slate-600" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                           <th className="border border-slate-200 px-2 py-0.5 text-center w-14">Niveau</th>
                           <th className="border border-slate-200 px-2 py-0.5 text-left">Descripteur de niveau de réalisation</th>
                         </tr>
                       </thead>
                       <tbody>
                         {crit.rubricRows.map((r, ri) => (
-                          <tr key={ri}>
+                          <tr key={ri} style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                             <td className="border border-slate-200 px-2 py-0.5 text-center font-bold text-slate-700">
                               {r.level}
                             </td>
@@ -784,6 +855,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
             Document officiel · Les Écoles Internationales Al-Kawthar · Système PEI IB
           </div>
         </footer>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   );

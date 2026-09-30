@@ -121,7 +121,10 @@ export async function getEvaluationByAccessCode(accessCode: string): Promise<Onl
   }
 
   const locals = getLocalEvaluations();
-  const found = locals.find(e => e.accessCode?.trim().toUpperCase() === code);
+  const found = locals.find(e =>
+    e.accessCode?.trim().toUpperCase() === code ||
+    (e.studentAccessCodes && e.studentAccessCodes.some(sc => sc.code?.trim().toUpperCase() === code))
+  );
   return found || null;
 }
 

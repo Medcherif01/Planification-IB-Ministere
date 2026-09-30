@@ -5,7 +5,7 @@ import {
   Square, Circle, Triangle, Edit3
 } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
-import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation } from '../services/onlineEvaluationService';
+import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation, createOrUpdateEvaluation } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GeometricDrawingModal from './GeometricDrawingModal';
 
@@ -322,27 +322,46 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         return;
       }
 
-      // 3. Vérifier si une copie a DÉJÀ été soumise par ce matricule pour ce code
-      const lockKey = `ib_locked_${cleanCode}_${cleanNum}`;
-      const isLocallyLocked = localStorage.getItem(lockKey) === 'true';
+      // 3. Vérifier si cleanCode est un code d'accès individuel à usage unique
+      const individualCode = evalData.studentAccessCodes?.find(sc => sc.code.trim().toUpperCase() === cleanCode);
 
-      const prevSub = await getStudentSubmission(cleanCode, cleanNum);
-      if (prevSub || isLocallyLocked) {
-        setEvaluation(evalData);
-        setExistingSubmission(prevSub || {
-          id: `locked_${cleanNum}`,
-          evaluationId: evalData.id,
-          accessCode: cleanCode,
-          studentNumber: cleanNum,
-          studentName: cleanName,
-          submittedAt: new Date().toISOString(),
-          status: 'submitted',
-          isLocked: true,
-          answers: [],
-        });
-        setIsLockedAlready(true);
-        setIsValidating(false);
-        return;
+      if (individualCode) {
+        // Cas A : Code déjà utilisé ET non réautorisé par l'enseignant
+        if (individualCode.isUsed && !individualCode.allowedRetake) {
+          setLoginError(`❌ Ce code d'accès individuel (${cleanCode}) a déjà été utilisé pour composer${individualCode.studentName ? ` par ${individualCode.studentName}` : ''}. Il est à usage unique et n'est plus valide pour un deuxième essai, sauf si votre enseignant vous réautorise l'accès.`);
+          setIsValidating(false);
+          return;
+        }
+
+        // Cas B : Code déjà utilisé MAIS réautorisé par l'enseignant pour un nouvel essai
+        if (individualCode.isUsed && individualCode.allowedRetake) {
+          // Lever le verrou local pour autoriser le nouvel essai
+          localStorage.removeItem(`ib_locked_${cleanCode}_${cleanNum}`);
+          localStorage.removeItem(`ib_locked_${evalData.accessCode}_${cleanNum}`);
+        }
+      } else {
+        // Code d'évaluation général : vérifier si une copie a DÉJÀ été soumise par ce matricule pour ce code
+        const lockKey = `ib_locked_${cleanCode}_${cleanNum}`;
+        const isLocallyLocked = localStorage.getItem(lockKey) === 'true';
+
+        const prevSub = await getStudentSubmission(cleanCode, cleanNum);
+        if (prevSub || isLocallyLocked) {
+          setEvaluation(evalData);
+          setExistingSubmission(prevSub || {
+            id: `locked_${cleanNum}`,
+            evaluationId: evalData.id,
+            accessCode: cleanCode,
+            studentNumber: cleanNum,
+            studentName: cleanName,
+            submittedAt: new Date().toISOString(),
+            status: 'submitted',
+            isLocked: true,
+            answers: [],
+          });
+          setIsLockedAlready(true);
+          setIsValidating(false);
+          return;
+        }
       }
 
       // 4. Charger l'évaluation et le brouillon existant
@@ -357,7 +376,32 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         } catch {}
       }
 
-      // 5. Réinitialiser la surveillance et activer le mode plein écran obligatoire (Exigence brief)
+      // 5. Si code individuel, marquer le code comme utilisé par cet élève
+      if (evalData.studentAccessCodes && evalData.studentAccessCodes.length > 0) {
+        const hasMatch = evalData.studentAccessCodes.some(sc => sc.code.trim().toUpperCase() === cleanCode);
+        if (hasMatch) {
+          const updatedCodes = evalData.studentAccessCodes.map(sc => {
+            if (sc.code.trim().toUpperCase() === cleanCode) {
+              return {
+                ...sc,
+                studentName: cleanName,
+                studentNumber: cleanNum,
+                isUsed: true,
+                usedAt: sc.usedAt || new Date().toISOString(),
+                allowedRetake: sc.allowedRetake, // Conservé durant la passation pour autoriser le rechargement de page si besoin
+              };
+            }
+            return sc;
+          });
+          evalData.studentAccessCodes = updatedCodes;
+          createOrUpdateEvaluation({
+            ...evalData,
+            studentAccessCodes: updatedCodes,
+          }).catch(console.error);
+        }
+      }
+
+      // 6. Réinitialiser la surveillance et activer le mode plein écran obligatoire (Exigence brief)
       hasTriggeredViolationRef.current = false;
       await enterFullscreen();
     } catch (err: any) {
@@ -616,11 +660,37 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         answers: formattedAnswers,
       });
 
-      // VERROUILLAGE DÉFINITIF EN LOCAL
+      // ── VERROUILLAGE DÉFINITIF DU CODE D'ACCÈS INDIVIDUEL ──
       const cleanNum = studentNumber.trim();
+      const cleanCode = accessCode.trim().toUpperCase();
+
+      if (evaluation.studentAccessCodes && evaluation.studentAccessCodes.length > 0) {
+        const updatedCodes = evaluation.studentAccessCodes.map(sc => {
+          if (sc.code.trim().toUpperCase() === cleanCode) {
+            return {
+              ...sc,
+              isUsed: true,
+              allowedRetake: false, // Usage unique consommé
+              usedAt: new Date().toISOString(),
+              studentName: studentName.trim(),
+              studentNumber: cleanNum,
+            };
+          }
+          return sc;
+        });
+
+        createOrUpdateEvaluation({
+          ...evaluation,
+          studentAccessCodes: updatedCodes,
+        }).catch(err => console.warn('Erreur verrouillage code individuel:', err));
+      }
+
+      // VERROUILLAGE DÉFINITIF EN LOCAL
       const lockKey = `ib_locked_${evaluation.accessCode}_${cleanNum}`;
       localStorage.setItem(lockKey, 'true');
+      localStorage.setItem(`ib_locked_${cleanCode}_${cleanNum}`, 'true');
       localStorage.removeItem(`draft_eval_${evaluation.accessCode}_${cleanNum}`);
+      localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
       localStorage.removeItem(`timer_${evaluation.accessCode}_${cleanNum}`);
 
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
