@@ -2755,7 +2755,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             MODALE D'IMPRESSION A4 DES FICHES / COUPONS DE CODES ÉLÈVES
             ═════════════════════════════════════════════════════════════════ */}
         {showPrintCodesModal && managingCodesEval && (
-          <div className="fixed inset-0 z-[90] bg-slate-900/80 backdrop-blur-sm overflow-y-auto flex flex-col items-center p-0 sm:p-4">
+          <div className="print-modal-container fixed inset-0 z-[90] bg-slate-900/80 backdrop-blur-sm overflow-y-auto flex flex-col items-center p-0 sm:p-4">
             {/* Barre d'action */}
             <div className="no-print sticky top-0 z-50 w-full max-w-4xl bg-white border-b border-slate-200 px-6 py-3 shadow-md flex items-center justify-between rounded-t-none sm:rounded-t-2xl">
               <div>
@@ -2783,20 +2783,41 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             </div>
 
             {/* Feuilles A4 imprimables */}
-            <div className="bg-white w-full max-w-[190mm] shadow-2xl my-0 sm:my-4 p-[10mm] text-slate-900 font-sans">
+            <div className="print-sheet bg-white w-full max-w-[190mm] my-0 sm:my-4 p-[10mm] text-slate-900 font-sans shadow-xl border-0">
               <style>{`
                 @page {
                   size: A4 portrait;
                   margin: 10mm;
                 }
                 @media print {
+                  .no-print {
+                    display: none !important;
+                  }
                   html, body {
                     background: #ffffff !important;
                     margin: 0 !important;
                     padding: 0 !important;
+                    width: 100% !important;
                   }
-                  .no-print {
-                    display: none !important;
+                  .print-modal-container {
+                    position: static !important;
+                    inset: auto !important;
+                    background: transparent !important;
+                    backdrop-filter: none !important;
+                    overflow: visible !important;
+                    display: block !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                    width: 100% !important;
+                  }
+                  .print-sheet {
+                    box-shadow: none !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    max-width: 100% !important;
+                    width: 100% !important;
+                    border: none !important;
+                    outline: none !important;
                   }
                   .avoid-break-coupon {
                     page-break-inside: avoid !important;

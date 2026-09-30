@@ -158,6 +158,18 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
   const isCorrectedCopy = Boolean(submission);
   const printContentRef = useRef<HTMLDivElement>(null);
 
+  const currentDateFormatted = new Date().toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+
+  const examDateFormatted = submission?.submittedAt
+    ? new Date(submission.submittedAt).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : evaluation.createdAt
+    ? new Date(evaluation.createdAt).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : currentDateFormatted;
+
   const handlePrint = () => {
     window.print();
   };
@@ -187,50 +199,74 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
         color: #0f172a !important;
         margin: 0 !important;
         padding: 0 !important;
+        width: 100% !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
-      }
-      thead.print-header-repeat {
-        display: table-header-group !important;
-      }
-      tfoot.print-footer-repeat {
-        display: table-footer-group !important;
-      }
-      table, thead, tbody, tfoot, tr, td, th {
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
-        break-inside: avoid-page !important;
       }
       .no-print {
         display: none !important;
       }
-      .print-page {
+      .print-sheet {
         box-shadow: none !important;
         margin: 0 !important;
         padding: 0 !important;
         max-width: 100% !important;
         width: 100% !important;
         border: none !important;
+        outline: none !important;
       }
-      .avoid-break, .task-card, .rubric-box {
+      table, tr, td, th {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      .avoid-break {
         page-break-inside: avoid !important;
         break-inside: avoid !important;
         break-inside: avoid-page !important;
       }
+      .print-footer-fixed {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 6mm;
+        font-size: 8pt;
+        color: #64748b;
+        border-top: 1px solid #cbd5e1;
+        display: flex !important;
+        justify-content: space-between;
+        align-items: center;
+        background: #ffffff !important;
+        padding-top: 1mm;
+        z-index: 9999;
+      }
+      .print-page-num::after {
+        content: counter(page);
+      }
     }
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background-color: #f8fafc;
+      background-color: #f1f5f9;
       margin: 0;
-      padding: 10mm;
+      padding: 16px;
       display: flex;
       justify-content: center;
     }
-    .print-page {
+    .print-sheet {
       background: #ffffff;
       width: 100%;
       max-width: 190mm;
       box-sizing: border-box;
+      padding: 10mm;
+    }
+    .print-footer-fixed {
+      display: flex;
+      justify-content: space-between;
+      border-top: 1px solid #cbd5e1;
+      padding-top: 6px;
+      margin-top: 20px;
+      font-size: 10px;
+      color: #64748b;
     }
     .avoid-break {
       page-break-inside: avoid !important;
@@ -240,14 +276,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
       page-break-inside: avoid !important;
       break-inside: avoid !important;
     }
-    tr {
-      page-break-inside: avoid !important;
-      break-inside: avoid !important;
-    }
   </style>
 </head>
 <body>
-  <div class="print-page">
+  <div class="print-sheet">
     ${content}
   </div>
 </body>
@@ -269,7 +301,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
   const duration = evaluation.durationMinutes || 45;
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm overflow-y-auto flex flex-col items-center p-0 sm:p-4">
+    <div className="print-modal-container fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm overflow-y-auto flex flex-col items-center p-0 sm:p-4">
       {/* ── BARRE D'OUTILS D'IMPRESSION (MASQUÉE SUR IMPRIMANTE) ── */}
       <div className="no-print sticky top-0 z-50 w-full max-w-4xl bg-white border-b border-slate-200 px-6 py-3 shadow-md flex items-center justify-between rounded-t-none sm:rounded-t-2xl">
         <div className="flex items-center gap-3">
@@ -283,7 +315,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                 : `Sujet d'Évaluation — ${evaluation.title}`}
             </h3>
             <p className="text-xs text-slate-500">
-              Format A4 portrait · Marges 1 cm sans coupure de questions · Durée : {duration} min
+              Format A4 portrait · Marges 1 cm · Pied de page automatique (date et n° de page)
             </p>
           </div>
         </div>
@@ -313,10 +345,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
         </div>
       </div>
 
-      {/* ── PAGE D'IMPRESSION A4 ────────────────────────────────────────────── */}
+      {/* ── PAGE D'IMPRESSION A4 SANS ENCADREMENT GLOBAL ─────────────────────── */}
       <div
         ref={printContentRef}
-        className="print-page bg-white w-full max-w-[190mm] shadow-2xl my-0 sm:my-4 p-[10mm] text-slate-900 font-sans"
+        className="print-sheet bg-white w-full max-w-[190mm] my-0 sm:my-4 p-[10mm] text-slate-900 font-sans shadow-xl sm:rounded-sm border-0"
         style={{ boxSizing: 'border-box' }}
       >
         <style>{`
@@ -325,102 +357,102 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
             margin: 10mm;
           }
           @media print {
+            .no-print {
+              display: none !important;
+            }
             html, body {
               background: #ffffff !important;
               color: #0f172a !important;
               margin: 0 !important;
               padding: 0 !important;
+              width: 100% !important;
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
             }
-            .no-print {
-              display: none !important;
+            .print-modal-container {
+              position: static !important;
+              inset: auto !important;
+              background: transparent !important;
+              backdrop-filter: none !important;
+              overflow: visible !important;
+              display: block !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              width: 100% !important;
+              height: auto !important;
             }
-            .print-page {
+            .print-sheet {
               box-shadow: none !important;
               margin: 0 !important;
               padding: 0 !important;
               max-width: 100% !important;
               width: 100% !important;
               border: none !important;
+              outline: none !important;
+              background: #ffffff !important;
             }
-            thead.print-header-repeat {
-              display: table-header-group !important;
+            table, tr, td, th {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
             }
-            tfoot.print-footer-repeat {
-              display: table-footer-group !important;
-            }
-            table, thead, tbody, tfoot, tr, td, th {
+            .avoid-break {
               page-break-inside: avoid !important;
               break-inside: avoid !important;
               break-inside: avoid-page !important;
             }
-            .avoid-break, .task-card, .rubric-box {
-              page-break-inside: avoid !important;
-              break-inside: avoid !important;
-              break-inside: avoid-page !important;
+            .print-footer-fixed {
+              position: fixed;
+              bottom: 0;
+              left: 0;
+              right: 0;
+              height: 6mm;
+              font-size: 8pt;
+              color: #64748b;
+              border-top: 1px solid #cbd5e1;
+              display: flex !important;
+              justify-content: space-between;
+              align-items: center;
+              background: #ffffff !important;
+              padding-top: 1mm;
+              z-index: 9999;
+            }
+            .print-page-num::after {
+              content: counter(page);
+            }
+          }
+          @media screen {
+            .print-footer-fixed {
+              display: flex;
+              justify-content: space-between;
+              border-top: 1px solid #e2e8f0;
+              padding-top: 8px;
+              margin-top: 24px;
+              font-size: 10px;
+              color: #64748b;
             }
           }
         `}</style>
 
-        <table className="w-full border-collapse">
-          {/* Haut de page répété sur chaque page A4 */}
-          <thead className="print-header-repeat hidden print:table-header-group">
-            <tr>
-              <td className="pb-2.5 border-b-2 border-slate-700">
-                <div className="flex items-center justify-between text-[10px] text-slate-700 font-semibold">
-                  <div className="flex items-center gap-2">
-                    <span className="font-black text-slate-900 uppercase">Écoles Al-Kawthar</span>
-                    <span className="text-slate-400">·</span>
-                    <span className="text-purple-800">PEI IB</span>
-                  </div>
-                  <div className="text-center font-bold text-slate-800 truncate max-w-sm">
-                    {evaluation.title} ({evaluation.subject} - {evaluation.grade})
-                  </div>
-                  <div className="font-mono text-purple-700 font-bold">
-                    Code : {evaluation.accessCode}
-                  </div>
-                </div>
-              </td>
-            </tr>
-          </thead>
-
-          {/* Pied de page répété sur chaque page A4 */}
-          <tfoot className="print-footer-repeat hidden print:table-footer-group">
-            <tr>
-              <td className="pt-2.5 border-t border-slate-300">
-                <div className="flex items-center justify-between text-[9px] text-slate-500">
-                  <span>Portail d'Évaluation Critériée Électronique · Système PEI IB</span>
-                  <span className="italic font-medium text-slate-400">Copie officielle d'examen · Ne pas couper les tableaux</span>
-                  <span>Marges 1 cm · Format A4</span>
-                </div>
-              </td>
-            </tr>
-          </tfoot>
-
-          <tbody>
-            <tr>
-              <td className="pt-2">
-                {/* ── EN-TÊTE OFFICIEL ÉCOLE AL-KAWTAR & PEI ── */}
-                <header className="border-b-2 border-slate-800 pb-3 mb-3 avoid-break">
+        {/* ── 1. EN-TÊTE OFFICIEL ÉCOLE AL-KAWTHAR & PEI ── */}
+        <header className="border-b-2 border-slate-800 pb-3 mb-3 avoid-break">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <img
                 src="/logo-alkawtar.png"
                 alt="Logo Al-Kawthar"
-                className="w-16 h-16 object-contain"
+                className="w-14 h-14 object-contain"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
               <div>
                 <h1 className="text-base font-black tracking-tight text-slate-900 uppercase">
                   Les Écoles Internationales Al-Kawthar
                 </h1>
-                <p className="text-xs font-semibold text-purple-800 uppercase tracking-wide">
+                <p className="text-xs font-bold text-purple-900 uppercase tracking-wide">
                   Programme d'Éducation Intermédiaire (PEI) · Baccalauréat International (IB)
                 </p>
                 <div className="flex items-center gap-3 mt-0.5">
-                  <span className="text-[11px] text-slate-600 font-medium">
-                    Évaluation Critériée Sommative Électronique
+                  <span className="text-[11px] text-slate-600 font-semibold">
+                    Évaluation Critériée Sommative
                   </span>
                   <span className="text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded flex items-center gap-1">
                     <Clock size={11} /> Durée : {duration} minutes
@@ -439,57 +471,53 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
             )}
           </div>
 
-          {/* Cartouche d'identification élève & examen */}
-          <div className="mt-2.5 grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs">
+          {/* Cartouche d'identification élève & examen (organisé, net, sans encadrement excessif) */}
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs">
             <div>
               <span className="text-slate-500 font-semibold block text-[10px] uppercase">Matière</span>
-              <span className="font-bold text-slate-800">{evaluation.subject}</span>
+              <span className="font-bold text-slate-900">{evaluation.subject}</span>
             </div>
             <div>
               <span className="text-slate-500 font-semibold block text-[10px] uppercase">Niveau / Classe</span>
-              <span className="font-bold text-slate-800">{evaluation.grade}</span>
+              <span className="font-bold text-slate-900">{evaluation.grade}</span>
             </div>
             <div>
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Enseignant</span>
+              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Enseignant(e)</span>
               <span className="font-medium text-slate-800">{evaluation.teacherName || '—'}</span>
             </div>
             <div>
-              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Date de composition</span>
-              <span className="font-medium text-slate-800">
-                {submission?.submittedAt
-                  ? new Date(submission.submittedAt).toLocaleDateString('fr-FR')
-                  : new Date(evaluation.createdAt).toLocaleDateString('fr-FR')}
-              </span>
+              <span className="text-slate-500 font-semibold block text-[10px] uppercase">Date</span>
+              <span className="font-medium text-slate-800">{examDateFormatted}</span>
             </div>
 
             {/* Ligne 2 : Identification élève */}
-            <div className="col-span-2 pt-1 border-t border-slate-200">
+            <div className="col-span-2 pt-1.5 border-t border-slate-200">
               <span className="text-slate-500 font-semibold block text-[10px] uppercase">Nom & Prénom de l'élève</span>
               <span className="font-bold text-sm text-slate-900">
                 {submission?.studentName || '________________________________________'}
               </span>
             </div>
-            <div className="pt-1 border-t border-slate-200">
+            <div className="pt-1.5 border-t border-slate-200">
               <span className="text-slate-500 font-semibold block text-[10px] uppercase">N° d'inscription (Matricule)</span>
               <span className="font-bold text-slate-900 font-mono">
                 {submission?.studentNumber || '________________'}
               </span>
             </div>
-            <div className="pt-1 border-t border-slate-200">
+            <div className="pt-1.5 border-t border-slate-200">
               <span className="text-slate-500 font-semibold block text-[10px] uppercase">Code Évaluation</span>
               <span className="font-bold text-purple-700 font-mono">{evaluation.accessCode}</span>
             </div>
           </div>
         </header>
 
-        {/* ── TITRE ET CADRE DE RECHERCHE PEI ── */}
-        <div className="mb-3 bg-purple-50/60 border border-purple-200 rounded-lg p-2.5 text-xs avoid-break">
-          <h2 className="text-sm font-black text-purple-950 uppercase mb-1 flex items-center gap-1.5">
+        {/* ── 2. TITRE ET CADRE DE RECHERCHE PEI ── */}
+        <section className="mb-3 bg-purple-50/50 border border-purple-200 rounded-lg p-2.5 text-xs avoid-break">
+          <h2 className="text-sm font-black text-purple-950 uppercase mb-1.5 flex items-center gap-1.5">
             <Award size={14} className="text-purple-700" />
             {evaluation.title}
           </h2>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] mt-1.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
             {evaluation.statementOfInquiry && (
               <div className="sm:col-span-3 bg-white p-2 rounded border border-purple-100">
                 <span className="font-bold text-purple-900 block text-[10px] uppercase">Énoncé de recherche :</span>
@@ -515,19 +543,19 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
               </div>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* ── TABLEAU RÉCAPITULATIF DES CRITÈRES ÉVALUÉS ── */}
-        <div className="mb-4 avoid-break">
+        {/* ── 3. TABLEAU RÉCAPITULATIF DES CRITÈRES ÉVALUÉS ── */}
+        <section className="mb-4 avoid-break">
           <table className="w-full text-[11px] border-collapse border border-slate-300" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
             <thead>
               <tr className="bg-slate-100 text-slate-700" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                <th className="border border-slate-300 px-2 py-1 text-center w-16">Critère</th>
-                <th className="border border-slate-300 px-2 py-1 text-left">Intitulé de la compétence</th>
-                <th className="border border-slate-300 px-2 py-1 text-left">Aspects spécifiques évalués</th>
-                <th className="border border-slate-300 px-2 py-1 text-center w-20">Barème</th>
+                <th className="border border-slate-300 px-2 py-1.5 text-center w-16">Critère</th>
+                <th className="border border-slate-300 px-2 py-1.5 text-left">Intitulé de la compétence</th>
+                <th className="border border-slate-300 px-2 py-1.5 text-left">Aspects spécifiques évalués</th>
+                <th className="border border-slate-300 px-2 py-1.5 text-center w-20">Barème</th>
                 {isCorrectedCopy && (
-                  <th className="border border-slate-300 px-2 py-1 text-center w-24 bg-purple-100 text-purple-900 font-bold">
+                  <th className="border border-slate-300 px-2 py-1.5 text-center w-24 bg-purple-100 text-purple-900 font-bold">
                     Note obtenue
                   </th>
                 )}
@@ -539,20 +567,20 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                 const score = submission?.criteriaScores?.[a.criterion];
                 return (
                   <tr key={a.criterion} style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                    <td className="border border-slate-300 px-2 py-1 text-center font-black" style={{ color: color.badge }}>
+                    <td className="border border-slate-300 px-2 py-1.5 text-center font-black" style={{ color: color.badge }}>
                       Critère {a.criterion}
                     </td>
-                    <td className="border border-slate-300 px-2 py-1 font-bold text-slate-800">
+                    <td className="border border-slate-300 px-2 py-1.5 font-bold text-slate-800">
                       {a.criterionName}
                     </td>
-                    <td className="border border-slate-300 px-2 py-1 text-slate-600 text-[10px]">
+                    <td className="border border-slate-300 px-2 py-1.5 text-slate-600 text-[10px]">
                       {(a.strands || []).join(' ; ')}
                     </td>
-                    <td className="border border-slate-300 px-2 py-1 text-center font-semibold text-slate-700">
+                    <td className="border border-slate-300 px-2 py-1.5 text-center font-semibold text-slate-700">
                       0 - {a.maxPoints || 8}
                     </td>
                     {isCorrectedCopy && (
-                      <td className="border border-slate-300 px-2 py-1 text-center font-black text-purple-900 bg-purple-50 text-xs">
+                      <td className="border border-slate-300 px-2 py-1.5 text-center font-black text-purple-900 bg-purple-50 text-xs">
                         {score !== undefined ? `${score} / ${a.maxPoints || 8}` : '—'}
                       </td>
                     )}
@@ -561,20 +589,20 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
               })}
             </tbody>
           </table>
-        </div>
+        </section>
 
-        {/* ── QUESTIONS ET RÉPONSES AVEC SOUS-ASPECTS PRÉCIS ÉCRITS EN ROUGE ── */}
-        <div className="space-y-4">
+        {/* ── 4. TÂCHES ET QUESTIONS AVEC SOUS-ASPECTS PRÉCIS ÉCRITS EN ROUGE ── */}
+        <main className="space-y-4">
           {evaluation.assessments.map((crit) => {
             const color = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
             return (
-              <div key={crit.criterion} className="space-y-3 avoid-break" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+              <div key={crit.criterion} className="space-y-3">
                 {/* Bandeau critère */}
                 <div
-                  className="px-3 py-1.5 rounded-md font-bold text-xs flex items-center justify-between avoid-break"
+                  className="px-3 py-1.5 rounded font-bold text-xs flex items-center justify-between avoid-break"
                   style={{ backgroundColor: color.bg, borderLeft: `4px solid ${color.badge}` }}
                 >
-                  <span className="uppercase text-slate-800">
+                  <span className="uppercase text-slate-900">
                     Critère {crit.criterion} : {crit.criterionName}
                   </span>
                   <span className="text-[10px] font-semibold" style={{ color: color.text }}>
@@ -582,7 +610,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                   </span>
                 </div>
 
-                {/* Rubrique des niveaux */}
+                {/* Rubrique des niveaux si présente */}
                 {crit.rubricRows && crit.rubricRows.length > 0 && (
                   <div className="avoid-break overflow-x-auto" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                     <table className="w-full text-[10px] border-collapse border border-slate-200" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
@@ -619,7 +647,11 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                   const strandInfo = getQuestionStrandLabel(crit.criterion, crit.strands, ex, exIdx);
 
                   return (
-                    <div key={exIdx} className="avoid-break border border-slate-300 rounded-lg p-3 text-xs bg-white space-y-2">
+                    <div
+                      key={exIdx}
+                      className="avoid-break border border-slate-300 rounded-lg p-3 text-xs bg-white space-y-2.5"
+                      style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
+                    >
                       <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
                         <div className="flex items-center gap-2">
                           <span
@@ -639,13 +671,13 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         )}
                       </div>
 
-                      {/* OEUVRE D'ART / PHOTO / ILLUSTRATION (SI PRÉSENTE) */}
+                      {/* Illustration / Image si présente */}
                       {ex.imageUrl && (
                         <div className="my-2 p-2 bg-slate-50 border border-slate-200 rounded-lg text-center avoid-break">
                           <img
                             src={ex.imageUrl}
-                            alt={ex.imageCaption || 'Illustration oeuvre d\'art'}
-                            className="max-h-56 max-w-full mx-auto object-contain rounded shadow-xs"
+                            alt={ex.imageCaption || 'Illustration exercice'}
+                            className="max-h-52 max-w-full mx-auto object-contain rounded shadow-xs"
                           />
                           {ex.imageCaption && (
                             <p className="text-[10px] text-slate-600 italic mt-1 font-medium">
@@ -655,17 +687,14 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         </div>
                       )}
 
-                      {/* Énoncé global de la question */}
+                      {/* Énoncé global */}
                       {ex.content && (
-                        <div className="text-slate-800 whitespace-pre-wrap leading-relaxed font-normal bg-slate-50/60 p-2.5 rounded border border-slate-100">
+                        <div className="text-slate-800 whitespace-pre-wrap leading-relaxed font-normal bg-slate-50/70 p-2.5 rounded border border-slate-100">
                           {ex.content}
                         </div>
                       )}
 
-                      {/* ═══════════════════════════════════════════════════════════
-                          CAS 1 : SOUS-QUESTIONS 1), 2), 3)...
-                          Chaque sous-question a son sous-aspect en rouge et sa réponse
-                          ═══════════════════════════════════════════════════════════ */}
+                      {/* CAS 1 : SOUS-QUESTIONS */}
                       {hasSubQuestions ? (
                         <div className="space-y-3 pt-1">
                           {subQuestions.map((sub, sIdx) => {
@@ -676,9 +705,13 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                             const subDrawing = subAnswerData?.drawingDataUrl;
 
                             return (
-                              <div key={subId} className="border border-purple-200 rounded-lg p-2.5 bg-purple-50/20 space-y-2 avoid-break">
+                              <div
+                                key={subId}
+                                className="border border-purple-200/80 rounded-lg p-2.5 bg-purple-50/20 space-y-2 avoid-break"
+                                style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
+                              >
                                 <div className="flex items-baseline gap-2">
-                                  <span className="font-bold text-xs text-purple-800 bg-purple-100 px-1.5 py-0.5 rounded">
+                                  <span className="font-bold text-xs text-purple-900 bg-purple-100 px-1.5 py-0.5 rounded">
                                     {sub.label}
                                   </span>
                                   <span className="font-bold text-slate-900 text-xs">{sub.content}</span>
@@ -689,7 +722,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                   <span className="text-red-700 font-black">● {subStrand.fullText}</span>
                                 </div>
 
-                                {/* Si QCM pour cette sous-question */}
+                                {/* QCM */}
                                 {sub.type === 'multiple_choice' && (
                                   <div className="space-y-1 pt-1">
                                     {(sub.options || ex.options || ['Proposition A', 'Proposition B', 'Proposition C']).map((opt, oIdx) => {
@@ -708,7 +741,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                   </div>
                                 )}
 
-                                {/* Si Rédaction libre */}
+                                {/* Réponse libre */}
                                 {sub.type !== 'multiple_choice' && (
                                   isCorrectedCopy ? (
                                     <div className="bg-white border border-slate-200 rounded p-2 text-xs">
@@ -726,10 +759,12 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                       )}
                                     </div>
                                   ) : (
-                                    <div className="p-2 border border-slate-300 rounded min-h-[50px] bg-white">
-                                      <span className="text-[9px] font-semibold text-slate-400 block uppercase">
-                                        [ Espace réponse pour {sub.label} ]
+                                    <div className="p-2.5 border border-slate-300 rounded bg-slate-50/30">
+                                      <span className="text-[9px] font-semibold text-slate-400 block uppercase mb-1">
+                                        Zone de réponse réservée à l'élève ({sub.label}) :
                                       </span>
+                                      <div className="border-b border-dashed border-slate-300 h-5"></div>
+                                      <div className="border-b border-dashed border-slate-300 h-5"></div>
                                     </div>
                                   )
                                 )}
@@ -738,16 +773,14 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                           })}
                         </div>
                       ) : (
-                        /* ═══════════════════════════════════════════════════════════
-                            CAS 2 : QUESTION UNIQUE SANS SOUS-QUESTIONS
-                            ═══════════════════════════════════════════════════════════ */
+                        /* CAS 2 : QUESTION UNIQUE */
                         <div className="space-y-2">
                           {/* 🔴 SOUS-ASPECT SPÉCIFIQUE EN ROUGE SOUS LA QUESTION */}
-                          <div className="text-red-600 font-bold text-[11px] flex items-center gap-1.5 bg-red-50/60 px-2 py-1 rounded border border-red-200">
+                          <div className="text-red-600 font-bold text-[11px] flex items-center gap-1.5 bg-red-50/70 px-2 py-0.5 rounded border border-red-200">
                             <span className="text-red-700 font-black">● {strandInfo.fullText}</span>
                           </div>
 
-                          {/* Si QCM simple */}
+                          {/* QCM simple */}
                           {ex.type === 'multiple_choice' && (
                             <div className="space-y-1.5 pt-1">
                               {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, oIdx) => {
@@ -766,7 +799,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                             </div>
                           )}
 
-                          {/* SECTION RÉPONSE */}
+                          {/* Réponse libre */}
                           {ex.type !== 'multiple_choice' && (
                             isCorrectedCopy ? (
                               <div className="mt-2 space-y-2">
@@ -805,10 +838,13 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                 )}
                               </div>
                             ) : (
-                              <div className="mt-2 p-3 border border-slate-300 rounded-lg min-h-[90px] bg-white">
-                                <span className="text-[10px] font-semibold text-slate-400 block uppercase">
-                                  [ Espace réservé pour la réponse rédigée de l'élève ]
+                              <div className="mt-2 p-2.5 border border-slate-300 rounded-lg bg-slate-50/30">
+                                <span className="text-[9px] font-semibold text-slate-400 block uppercase mb-1">
+                                  Zone réservée pour la réponse rédigée de l'élève :
                                 </span>
+                                <div className="border-b border-dashed border-slate-300 h-6"></div>
+                                <div className="border-b border-dashed border-slate-300 h-6"></div>
+                                <div className="border-b border-dashed border-slate-300 h-6"></div>
                               </div>
                             )
                           )}
@@ -820,10 +856,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
               </div>
             );
           })}
-        </div>
+        </main>
 
-        {/* ── BILAN DE L'ÉVALUATION ET SIGNATURES ── */}
-        <footer className="mt-5 pt-3 border-t-2 border-slate-800 avoid-break text-xs space-y-3">
+        {/* ── 5. BILAN DE L'ÉVALUATION ET SIGNATURES OFFICIELLES ── */}
+        <footer className="mt-6 pt-3 border-t-2 border-slate-800 avoid-break text-xs space-y-3">
           {isCorrectedCopy && submission?.overallFeedback && (
             <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
               <span className="text-xs font-bold text-purple-900 block uppercase mb-1">
@@ -837,28 +873,40 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
 
           {/* Grille de signature */}
           <div className="grid grid-cols-3 gap-3 pt-1">
-            <div className="border border-slate-300 rounded p-2 h-20">
-              <span className="text-[10px] font-bold text-slate-600 block uppercase">Signature de l'enseignant</span>
-              <div className="mt-4 text-[9px] text-slate-400 italic">Signature et date</div>
+            <div className="border border-slate-300 rounded p-2 h-20 bg-slate-50/30">
+              <span className="text-[10px] font-bold text-slate-700 block uppercase">Signature de l'enseignant(e)</span>
+              <div className="mt-6 text-[9px] text-slate-400 italic">Date et signature</div>
             </div>
-            <div className="border border-slate-300 rounded p-2 h-20">
-              <span className="text-[10px] font-bold text-slate-600 block uppercase">Visa Direction / Coordonnateur PEI</span>
-              <div className="mt-4 text-[9px] text-slate-400 italic">Signature et cachet</div>
+            <div className="border border-slate-300 rounded p-2 h-20 bg-slate-50/30">
+              <span className="text-[10px] font-bold text-slate-700 block uppercase">Visa Direction / Coordonnateur PEI</span>
+              <div className="mt-6 text-[9px] text-slate-400 italic">Signature et cachet</div>
             </div>
-            <div className="border border-slate-300 rounded p-2 h-20">
-              <span className="text-[10px] font-bold text-slate-600 block uppercase">Signature des parents</span>
-              <div className="mt-4 text-[9px] text-slate-400 italic">Vu et pris connaissance</div>
+            <div className="border border-slate-300 rounded p-2 h-20 bg-slate-50/30">
+              <span className="text-[10px] font-bold text-slate-700 block uppercase">Signature des parents</span>
+              <div className="mt-6 text-[9px] text-slate-400 italic">Vu et pris connaissance</div>
             </div>
           </div>
 
-          <div className="text-center text-[10px] text-slate-400 pt-1 border-t border-slate-200">
-            Document officiel · Les Écoles Internationales Al-Kawthar · Système PEI IB
+          <div className="text-center text-[10px] text-slate-500 pt-1.5 border-t border-slate-200">
+            Document officiel d'évaluation · Les Écoles Internationales Al-Kawthar · Système PEI IB
           </div>
         </footer>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+
+        {/* ── 6. PIED DE PAGE (DATE & NUMÉRO DE PAGE) ── */}
+        <div className="print-footer-fixed">
+          <div>
+            <span>Écoles Al-Kawthar · PEI IB</span>
+            <span className="mx-1.5 text-slate-300">|</span>
+            <span>Date : {currentDateFormatted}</span>
+          </div>
+          <div className="font-semibold text-slate-700">
+            {evaluation.title} (Code : {evaluation.accessCode})
+          </div>
+          <div>
+            <span>Page </span>
+            <span className="print-page-num font-bold">1</span>
+          </div>
+        </div>
       </div>
     </div>
   );
