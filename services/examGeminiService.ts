@@ -30,6 +30,8 @@ const callGeminiViaProxy = async (
 
       const msg = errData?.message
         ? errData.message
+        : errData?.error
+        ? (typeof errData.error === 'string' ? errData.error : JSON.stringify(errData.error))
         : errData?.details
         ? (() => {
             try { return JSON.parse(errData.details)?.error?.message || 'Erreur API'; }

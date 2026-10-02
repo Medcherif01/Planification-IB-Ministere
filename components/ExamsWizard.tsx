@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Exam, ExamGrade } from '../types';
-import { Check, ChevronRight, Loader2, Download, ArrowLeft, FileText, Calendar, BookOpen, User, ClipboardCheck } from 'lucide-react';
+import { Check, ChevronRight, Loader2, Download, ArrowLeft, FileText, Calendar, BookOpen, User, ClipboardCheck, Printer, Eye } from 'lucide-react';
 import { generateExam } from '../services/examGeminiService';
 import { exportExamToWord, exportExamCorrectionToWord } from '../services/examWordExportService';
+import { downloadExamHtml } from '../services/examHtmlExportService';
 import { saveExamToDatabase } from '../services/examDatabaseService';
+import ExamPrintModal from './ExamPrintModal';
 
 interface ExamsWizardProps {
   onBack: () => void;
@@ -73,6 +75,8 @@ const ExamsWizard: React.FC<ExamsWizardProps> = ({ onBack }) => {
   const [generatedExam, setGeneratedExam] = useState<Exam | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportingCorrection, setExportingCorrection] = useState(false);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [printModalMode, setPrintModalMode] = useState<'exam' | 'correction'>('exam');
 
   const availableSubjects = grade ? getSubjectsForGrade(grade) : [];
 
@@ -549,52 +553,135 @@ const ExamsWizard: React.FC<ExamsWizardProps> = ({ onBack }) => {
                 </div>
               </div>
 
-              <div className="mt-8 flex justify-between items-center">
-                <button
-                  onClick={handleReset}
-                  className="flex items-center gap-2 px-6 py-3 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition"
-                >
-                  Créer un nouvel {examType?.toLowerCase() || 'examen'}
-                </button>
-                
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleExport}
-                    disabled={exporting || exportingCorrection}
-                    className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition"
-                  >
-                    {exporting ? (
-                      <>
-                        <Loader2 className="animate-spin" size={18} />
-                        Export en cours...
-                      </>
-                    ) : (
-                      <>
-                        <Download size={18} />
-                        Télécharger l'examen
-                      </>
-                    )}
-                  </button>
-                  
-                  <button
-                    onClick={handleExportCorrection}
-                    disabled={exporting || exportingCorrection}
-                    className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition"
-                  >
-                    {exportingCorrection ? (
-                      <>
-                        <Loader2 className="animate-spin" size={18} />
-                        Export correction...
-                      </>
-                    ) : (
-                      <>
-                        <Download size={18} />
-                        Télécharger la correction
-                      </>
-                    )}
-                  </button>
+              {/* Section d'Exportation : Deux versions au choix (Modèle Word et HTML Imprimable A4) */}
+              <div className="mt-8 bg-slate-50 p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base md:text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <Download className="text-violet-600" size={22} />
+                    Options de Téléchargement & Impression
+                  </h3>
+                  <span className="text-xs font-semibold px-2.5 py-1 bg-violet-100 text-violet-700 rounded-full">
+                    2 formats disponibles
+                  </span>
+                </div>
+                <p className="text-xs md:text-sm text-slate-600">
+                  Téléchargez selon la méthode actuelle sur le modèle officiel Word (.docx), ou sous format HTML imprimable en A4 (avec aperçu immédiat et même design).
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                  {/* Version 1 : Modèle Word (.docx) */}
+                  <div className="p-4 rounded-xl border-2 border-blue-200 bg-white hover:border-blue-400 transition flex flex-col justify-between shadow-sm">
+                    <div>
+                      <div className="flex items-center gap-2 font-bold text-blue-900 mb-1">
+                        <FileText className="text-blue-600" size={20} />
+                        Version 1 : Modèle Word (.docx)
+                      </div>
+                      <p className="text-xs text-slate-600 mb-4">
+                        Modèle officiel Word de l'école (éditable dans Microsoft Word / LibreOffice).
+                      </p>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <button
+                        onClick={handleExport}
+                        disabled={exporting || exportingCorrection}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 text-xs shadow-sm transition"
+                      >
+                        {exporting ? (
+                          <>
+                            <Loader2 className="animate-spin" size={15} />
+                            Export Word...
+                          </>
+                        ) : (
+                          <>
+                            <Download size={15} />
+                            Télécharger Sujet (.docx)
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={handleExportCorrection}
+                        disabled={exporting || exportingCorrection}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 text-xs shadow-sm transition"
+                      >
+                        {exportingCorrection ? (
+                          <>
+                            <Loader2 className="animate-spin" size={15} />
+                            Export Corrigé...
+                          </>
+                        ) : (
+                          <>
+                            <Download size={15} />
+                            Télécharger Corrigé (.docx)
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Version 2 : Modèle HTML Imprimable en A4 */}
+                  <div className="p-4 rounded-xl border-2 border-emerald-200 bg-white hover:border-emerald-400 transition flex flex-col justify-between shadow-sm">
+                    <div>
+                      <div className="flex items-center gap-2 font-bold text-emerald-900 mb-1">
+                        <Printer className="text-emerald-600" size={20} />
+                        Version 2 : HTML Imprimable A4
+                      </div>
+                      <p className="text-xs text-slate-600 mb-4">
+                        Conserve exactement le même design que le modèle Word. Prêt pour impression A4 ou export PDF direct.
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => {
+                          setPrintModalMode('exam');
+                          setIsPrintModalOpen(true);
+                        }}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 text-xs shadow-sm transition"
+                      >
+                        <Eye size={15} />
+                        Aperçu & Imprimer en A4 (PDF)
+                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => downloadExamHtml(generatedExam, false)}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-lg font-medium hover:bg-emerald-100 text-xs transition"
+                          title="Télécharger le fichier .html autonome du sujet"
+                        >
+                          <Download size={14} />
+                          Fichier HTML (Sujet)
+                        </button>
+                        <button
+                          onClick={() => downloadExamHtml(generatedExam, true)}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-800 border border-rose-300 rounded-lg font-medium hover:bg-rose-100 text-xs transition"
+                          title="Télécharger le fichier .html autonome du corrigé"
+                        >
+                          <Download size={14} />
+                          Fichier HTML (Corrigé)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
+
+              <div className="mt-6 flex justify-between items-center">
+                <button
+                  onClick={handleReset}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 text-sm font-medium transition"
+                >
+                  <ArrowLeft size={16} />
+                  Créer un nouvel {examType?.toLowerCase() || 'examen'}
+                </button>
+              </div>
+
+              {/* Modale d'aperçu A4 & impression */}
+              {generatedExam && (
+                <ExamPrintModal
+                  exam={generatedExam}
+                  isOpen={isPrintModalOpen}
+                  defaultMode={printModalMode}
+                  onClose={() => setIsPrintModalOpen(false)}
+                />
+              )}
             </div>
           )}
         </div>

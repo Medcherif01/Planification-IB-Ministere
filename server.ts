@@ -2,18 +2,18 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 
-import generateHandler from './api/generate';
-import planificationsHandler from './api/planifications';
-import examsHandler from './api/exams';
-import ibCriteriaHandler from './api/ib-criteria';
-import modRequestsHandler from './api/modification-requests';
-import templateHandler from './api/template';
-import usersHandler from './api/users';
-import onlineEvaluationsHandler from './api/online-evaluations';
+import generateHandler from './api/generate.ts';
+import planificationsHandler from './api/planifications.ts';
+import examsHandler from './api/exams.ts';
+import ibCriteriaHandler from './api/ib-criteria.ts';
+import modRequestsHandler from './api/modification-requests.ts';
+import templateHandler from './api/template.ts';
+import usersHandler from './api/users.ts';
+import onlineEvaluationsHandler from './api/online-evaluations.ts';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT || '3000', 10);
 
   // Body parsers
   app.use(express.json({ limit: '50mb' }));
