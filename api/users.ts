@@ -4,8 +4,10 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 const MONGO_URL = (process.env.MONGO_URL || process.env.MONGODB_URI || '').trim();
 const DB_NAME = 'planpei';
 const COLLECTION = 'users';
+const STUDENTS_COLLECTION = 'class_students';
 
 let cachedClient: MongoClient | null = null;
+let inMemoryStudents: any[] = [];
 
 // Simple password hash (SHA-256 via Web Crypto — available in Node 18+)
 async function hashPassword(password: string): Promise<string> {
@@ -88,6 +90,100 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const db = await getDB();
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // GESTION DES ÉLÈVES PAR CLASSE (/api/users?entity=students)
+    // ══════════════════════════════════════════════════════════════════════════
+    if (req.query.entity === 'students') {
+      const gradeFilter = typeof req.query.grade === 'string' ? req.query.grade.trim() : '';
+
+      if (!db) {
+        res.setHeader('X-Storage-Mode', 'in-memory');
+        if (req.method === 'GET') {
+          const list = gradeFilter
+            ? inMemoryStudents.filter(s => s.grade === gradeFilter)
+            : inMemoryStudents;
+          return res.status(200).json(list);
+        }
+        if (req.method === 'POST') {
+          const { students, grade, replaceGrade } = req.body || {};
+          if (Array.isArray(students)) {
+            if (replaceGrade && grade) {
+              inMemoryStudents = inMemoryStudents.filter(s => s.grade !== grade);
+            }
+            for (const st of students) {
+              if (!st || !st.name) continue;
+              const id = st.id || `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              const existingIdx = inMemoryStudents.findIndex(x => x.id === id);
+              const record = {
+                id,
+                name: String(st.name).trim(),
+                studentNumber: String(st.studentNumber || '').trim(),
+                grade: String(st.grade || grade || 'PEI 1').trim(),
+                createdAt: st.createdAt || new Date().toISOString(),
+              };
+              if (existingIdx >= 0) inMemoryStudents[existingIdx] = record;
+              else inMemoryStudents.push(record);
+            }
+            return res.status(200).json({ success: true, count: inMemoryStudents.length, students: inMemoryStudents });
+          }
+          return res.status(400).json({ error: 'Tableau students requis' });
+        }
+        if (req.method === 'DELETE') {
+          const { id, grade } = req.query;
+          if (id) {
+            inMemoryStudents = inMemoryStudents.filter(s => s.id !== id);
+          } else if (grade) {
+            inMemoryStudents = inMemoryStudents.filter(s => s.grade !== grade);
+          }
+          return res.status(200).json({ success: true });
+        }
+        return res.status(200).json({ success: true });
+      }
+
+      const stuCol = db.collection(STUDENTS_COLLECTION);
+      if (req.method === 'GET') {
+        const query = gradeFilter ? { grade: gradeFilter } : {};
+        const docs = await stuCol.find(query).toArray();
+        return res.status(200).json(docs.map(d => ({ ...d, id: d.id || d._id.toString() })));
+      }
+      if (req.method === 'POST') {
+        const { students, grade, replaceGrade } = req.body || {};
+        if (!Array.isArray(students)) {
+          return res.status(400).json({ error: 'Tableau students requis' });
+        }
+        if (replaceGrade && grade) {
+          await stuCol.deleteMany({ grade });
+        }
+        for (const st of students) {
+          if (!st || !st.name) continue;
+          const id = st.id || `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const record = {
+            id,
+            name: String(st.name).trim(),
+            studentNumber: String(st.studentNumber || '').trim(),
+            grade: String(st.grade || grade || 'PEI 1').trim(),
+            createdAt: st.createdAt || new Date().toISOString(),
+          };
+          await stuCol.updateOne({ id }, { $set: record }, { upsert: true });
+        }
+        const updated = await stuCol.find(grade ? { grade } : {}).toArray();
+        return res.status(200).json({
+          success: true,
+          students: updated.map(d => ({ ...d, id: d.id || d._id.toString() })),
+        });
+      }
+      if (req.method === 'DELETE') {
+        const { id, grade } = req.query;
+        if (id) {
+          await stuCol.deleteOne({ id: String(id) });
+        } else if (grade) {
+          await stuCol.deleteMany({ grade: String(grade) });
+        }
+        return res.status(200).json({ success: true });
+      }
+      return res.status(405).json({ error: 'Méthode non autorisée' });
+    }
     
     // In-memory fallback
     if (!db) {

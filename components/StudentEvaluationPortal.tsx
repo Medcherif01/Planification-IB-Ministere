@@ -213,12 +213,36 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   const hasTriggeredViolationRef = useRef(false);
   const handleSubmitRef = useRef<((forceAutoSubmit?: boolean, reason?: string) => Promise<void>) | null>(null);
 
-  // Synchroniser le code d'accès si fourni par l'URL (ex: ?code=EVAL-1234)
+  // Synchroniser le code d'accès si fourni par l'URL (ex: ?code=EVAL-1234-01)
   useEffect(() => {
     if (initialAccessCode) {
       setAccessCode(initialAccessCode.trim().toUpperCase());
     }
   }, [initialAccessCode]);
+
+  // Pré-remplir automatiquement le nom et le matricule si le code saisi est un code nominatif propre à un élève
+  useEffect(() => {
+    const clean = accessCode.trim().toUpperCase();
+    if (clean.length < 8 || !clean.includes('-')) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const evalData = await getEvaluationByAccessCode(clean);
+        if (cancelled || !evalData || !evalData.studentAccessCodes) return;
+        const matched = evalData.studentAccessCodes.find(
+          sc => sc.code.trim().toUpperCase() === clean
+        );
+        if (matched) {
+          if (matched.studentName) setStudentName(matched.studentName);
+          if (matched.studentNumber) setStudentNumber(matched.studentNumber);
+        }
+      } catch {}
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [accessCode]);
 
   // Demander le mode plein écran au navigateur
   const enterFullscreen = async () => {
@@ -293,30 +317,17 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     setLoginError('');
 
     const cleanCode = accessCode.trim().toUpperCase();
-    const cleanNum = studentNumber.trim();
-    const cleanName = studentName.trim();
+    let cleanNum = studentNumber.trim();
+    let cleanName = studentName.trim();
 
     if (!cleanCode) {
       setLoginError('Veuillez saisir le code d\'accès fourni par votre enseignant.');
       return;
     }
-    if (!cleanNum) {
-      setLoginError('Veuillez saisir votre N° d\'inscription / Matricule.');
-      return;
-    }
-    if (!cleanName) {
-      setLoginError('Veuillez saisir votre nom et prénom complets.');
-      return;
-    }
 
     setIsValidating(true);
     try {
-      // 1. Sauvegarder l'identité permanente de l'élève
-      localStorage.setItem('ib_permanent_matricule', cleanNum);
-      localStorage.setItem('ib_permanent_student_name', cleanName);
-      localStorage.setItem('ib_student_session', JSON.stringify({ accessCode: cleanCode, studentNumber: cleanNum, studentName: cleanName }));
-
-      // 2. Vérifier si l'évaluation existe
+      // Vérifier d'abord si l'évaluation existe et si le code est nominatif
       const evalData = await getEvaluationByAccessCode(cleanCode);
       if (!evalData) {
         setLoginError(`Aucune évaluation trouvée pour le code "${cleanCode}". Vérifiez avec votre professeur.`);
@@ -330,9 +341,36 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         return;
       }
 
-      // 3. Vérifier si cleanCode est un code d'accès individuel à usage unique
+      // Vérifier si cleanCode est un code d'accès individuel pré-assigné à un élève
       const individualCode = evalData.studentAccessCodes?.find(sc => sc.code.trim().toUpperCase() === cleanCode);
+      if (individualCode) {
+        if (!cleanName && individualCode.studentName) {
+          cleanName = individualCode.studentName;
+          setStudentName(cleanName);
+        }
+        if (!cleanNum && individualCode.studentNumber) {
+          cleanNum = individualCode.studentNumber;
+          setStudentNumber(cleanNum);
+        }
+      }
 
+      if (!cleanNum) {
+        setLoginError('Veuillez saisir votre N° d\'inscription / Matricule.');
+        setIsValidating(false);
+        return;
+      }
+      if (!cleanName) {
+        setLoginError('Veuillez saisir votre nom et prénom complets.');
+        setIsValidating(false);
+        return;
+      }
+
+      // 1. Sauvegarder l'identité permanente de l'élève
+      localStorage.setItem('ib_permanent_matricule', cleanNum);
+      localStorage.setItem('ib_permanent_student_name', cleanName);
+      localStorage.setItem('ib_student_session', JSON.stringify({ accessCode: cleanCode, studentNumber: cleanNum, studentName: cleanName }));
+
+      // 2. Vérifier le statut du code individuel
       if (individualCode) {
         // Cas A : Code déjà utilisé ET non réautorisé par l'enseignant
         if (individualCode.isUsed && !individualCode.allowedRetake) {

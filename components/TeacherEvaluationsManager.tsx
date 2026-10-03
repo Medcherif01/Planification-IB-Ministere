@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini } from '../services/onlineEvaluationService';
+import { generateCleanStudentCodesForEvaluation, fetchAllStudents } from '../services/studentRosterService';
+import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 
@@ -82,6 +84,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [editingCriterionIdx, setEditingCriterionIdx] = useState(0);
   const [isSavingEvalChanges, setIsSavingEvalChanges] = useState(false);
   const [showAiGenModal, setShowAiGenModal] = useState(false);
+  const [aiTargetQuestionIdx, setAiTargetQuestionIdx] = useState<number | null>(null);
+  const [aiInitialStrand, setAiInitialStrand] = useState<string>('i');
+  const [aiInitialType, setAiInitialType] = useState<GenerateQuestionOptions['questionType']>('multiple_choice');
+  const [classRosterCountForCreate, setClassRosterCountForCreate] = useState<number>(0);
 
   // Submissions view & correction
   const [selectedEvaluation, setSelectedEvaluation] = useState<OnlineEvaluation | null>(null);
@@ -148,7 +154,14 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     } else {
       setSelectedCriteriaForCreate([]);
     }
-  }, [selectedPlanForCreate]);
+    const targetGrade = selectedPlanForCreate?.gradeLevel || currentGrade || 'PEI 1';
+    fetchAllStudents(targetGrade).then(list => {
+      setClassRosterCountForCreate(list.length);
+      if (list.length > 0) {
+        setStudentCodesCountToCreate(String(list.length));
+      }
+    }).catch(() => {});
+  }, [selectedPlanForCreate, currentGrade]);
 
   // Charger les soumissions pour l'évaluation sélectionnée
   const handleOpenSubmissions = async (evaluation: OnlineEvaluation) => {
@@ -354,6 +367,46 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     setEditingEvaluation(newEval);
   };
 
+  // Remplacer une question existante par une question générée par l'IA
+  const handleReplaceAiGeneratedQuestion = (targetIdx: number, generatedQuestion: AssessmentExercise) => {
+    if (!editingEvaluation) return;
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    const targetCrit = newEval.assessments[editingCriterionIdx];
+    if (!targetCrit || !targetCrit.exercises) return;
+
+    targetCrit.exercises[targetIdx] = generatedQuestion;
+    setEditingEvaluation(newEval);
+  };
+
+  // Ouvrir le générateur IA pour une question existante (exIdx) ou pour une nouvelle question (null)
+  const openAiModalForQuestion = (exIdx: number | null) => {
+    if (!editingEvaluation) return;
+    const activeCrit = editingEvaluation.assessments[editingCriterionIdx];
+    if (!activeCrit) return;
+
+    if (exIdx !== null && activeCrit.exercises?.[exIdx]) {
+      const ex = activeCrit.exercises[exIdx];
+      const hasSub = Boolean(ex.subQuestions && ex.subQuestions.length > 0);
+      const qType: GenerateQuestionOptions['questionType'] = hasSub
+        ? 'subquestions'
+        : ex.type === 'multiple_choice'
+        ? 'multiple_choice'
+        : ex.type === 'true_false'
+        ? 'true_false'
+        : 'open';
+      setAiTargetQuestionIdx(exIdx);
+      setAiInitialStrand(ex.strandIndex || 'i');
+      setAiInitialType(qType);
+    } else {
+      const count = activeCrit.exercises?.length || 0;
+      const romans = ['i', 'ii', 'iii', 'iv'];
+      setAiTargetQuestionIdx(null);
+      setAiInitialStrand(romans[count % romans.length]);
+      setAiInitialType('multiple_choice');
+    }
+    setShowAiGenModal(true);
+  };
+
   // Mettre à jour une question
   const handleUpdateEditingExercise = (
     critIdx: number,
@@ -535,26 +588,21 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
     const title = customTitle.trim() || `Évaluation : ${selectedPlanForCreate.title}`;
     const code = `EVAL-${Math.floor(1000 + Math.random() * 9000)}`;
+    const targetGrade = selectedPlanForCreate.gradeLevel || currentGrade || 'PEI 1';
 
-    // 🔑 Génération automatique des codes d'accès individuels à usage unique pour chaque élève
+    // 🔑 Génération automatique des codes d'accès propres pour chaque élève de la classe (depuis la liste Admin)
     const count = Math.max(1, parseInt(studentCodesCountToCreate) || 25);
-    const initialStudentCodes: IndividualAccessCode[] = [];
-    for (let i = 1; i <= count; i++) {
-      initialStudentCodes.push({
-        code: `${code}-${String(i).padStart(2, '0')}`,
-        studentName: '',
-        studentNumber: '',
-        isUsed: false,
-        allowedRetake: false,
-        createdAt: new Date().toISOString(),
-      });
-    }
+    const { codes: initialStudentCodes, fromClassRoster, rosterCount } = await generateCleanStudentCodesForEvaluation(
+      code,
+      targetGrade,
+      count
+    );
 
     const newEval = await createOrUpdateEvaluation({
       accessCode: code,
       title,
       subject: selectedPlanForCreate.subject || currentSubject || 'Matière',
-      grade: selectedPlanForCreate.gradeLevel || currentGrade || 'PEI',
+      grade: targetGrade,
       unitId: selectedPlanForCreate.id,
       unitTitle: selectedPlanForCreate.title,
       teacherName: currentUser?.displayName || selectedPlanForCreate.teacherName || 'Enseignant',
@@ -572,7 +620,42 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
     setEvaluations(prev => [newEval, ...prev]);
     setShowCreateModal(false);
-    alert(`✅ Évaluation créée avec succès !\n\nCritère(s) retenu(s) : ${chosenAssessments.map(a => `Critère ${a.criterion}`).join(', ')}\n${initialStudentCodes.length} codes d'accès individuels à usage unique ont été générés pour vos élèves (ex: ${code}-01, ${code}-02...). Cliquez sur "Codes d'accès élèves" pour les gérer ou les imprimer.`);
+    // Ouvrir directement l'éditeur de l'évaluation créée pour voir/modifier/ajouter les questions
+    setEditingEvaluation(JSON.parse(JSON.stringify(newEval)));
+    setEditingCriterionIdx(0);
+    if (fromClassRoster) {
+      alert(`✅ Évaluation créée avec succès !\n\n🎓 ${rosterCount} codes d'accès nominatifs propres ont été générés automatiquement pour chaque élève de la classe ${targetGrade}.\n\nVous pouvez maintenant vérifier, modifier ou générer vos questions par IA.`);
+    }
+  };
+
+  // Synchroniser / Régénérer les codes propres pour chaque élève de la classe depuis la liste Admin
+  const handleSyncCodesWithClassRoster = async () => {
+    if (!managingCodesEval) return;
+    setIsSavingCodes(true);
+    try {
+      const { codes, fromClassRoster, rosterCount } = await generateCleanStudentCodesForEvaluation(
+        managingCodesEval.accessCode,
+        managingCodesEval.grade || currentGrade || 'PEI 1',
+        managingCodesEval.studentAccessCodes?.length || 25,
+        managingCodesEval.studentAccessCodes || []
+      );
+      if (!fromClassRoster || rosterCount === 0) {
+        alert(`Aucun élève n'est encore enregistré dans la classe ${managingCodesEval.grade} par l'Administrateur.\n\nOuvrez le Panneau Admin → onglet "Élèves par classe" pour ajouter la liste des élèves.`);
+        return;
+      }
+      const updatedEval: OnlineEvaluation = {
+        ...managingCodesEval,
+        studentAccessCodes: codes,
+      };
+      const saved = await createOrUpdateEvaluation(updatedEval);
+      setManagingCodesEval(saved);
+      setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
+      if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
+    } catch (err: any) {
+      alert(`Erreur : ${err.message || 'Impossible de synchroniser les codes avec la classe'}`);
+    } finally {
+      setIsSavingCodes(false);
+    }
   };
 
   // ── GESTION DES CODES D'ACCÈS INDIVIDUELS ÉLÈVES ─────────────────────────────
@@ -979,7 +1062,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                         {ev.subject} · {ev.grade} · {ev.assessments?.length || 0} critère(s) ({totalPoints} pts)
                       </p>
 
-                      {/* Critères badges */}
+                       {/* Critères badges */}
                       <div className="flex gap-1.5 mt-3 flex-wrap">
                         {ev.assessments.map(a => {
                           const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
@@ -988,14 +1071,52 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               key={a.criterion}
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${col.light} ${col.text}`}
                             >
-                              Critère {a.criterion} (/{a.maxPoints || 8})
+                              Critère {a.criterion} ({a.exercises?.length || 0} Q · /{a.maxPoints || 8})
                             </span>
                           );
                         })}
                       </div>
+
+                      {/* Aperçu direct des questions existantes sur la carte */}
+                      <div className="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-1.5 max-h-36 overflow-y-auto">
+                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase">
+                          <span>Questions existantes ({ev.assessments.reduce((sum, a) => sum + (a.exercises?.length || 0), 0)})</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
+                              setEditingCriterionIdx(0);
+                            }}
+                            className="text-indigo-600 hover:underline font-extrabold"
+                          >
+                            Modifier / + IA →
+                          </button>
+                        </div>
+                        {ev.assessments.map(a =>
+                          (a.exercises || []).map((ex, qIdx) => (
+                            <div key={`${a.criterion}_${qIdx}`} className="text-[11px] text-slate-700 truncate flex items-center gap-1.5">
+                              <span className="font-bold text-indigo-700 flex-shrink-0">[{a.criterion}.{qIdx + 1}]</span>
+                              <span className="truncate font-medium">{ex.title || ex.content}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
 
                     <div className="pt-3 border-t border-slate-100 space-y-2">
+                      {/* BOUTON PRINCIPAL : Voir & Modifier l'évaluation existante et ses questions (avec IA par question) */}
+                      <button
+                        onClick={() => {
+                          setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
+                          setEditingCriterionIdx(0);
+                        }}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition shadow-xs"
+                        title="Ouvrir l'évaluation existante avec toutes ses questions pour les modifier, changer leur nature, en ajouter ou générer chaque question par IA"
+                      >
+                        <Edit3 size={14} />
+                        <span>Voir & Modifier les Questions (IA)</span>
+                      </button>
+
                       {/* Boutons de copie de code et lien */}
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         <button
@@ -1024,16 +1145,19 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           const totalCodes = codes.length;
                           const usedCodes = codes.filter(c => c.isUsed).length;
                           const retakeCodes = codes.filter(c => c.isUsed && c.allowedRetake).length;
+                          const namedCodes = codes.filter(c => c.studentName && c.studentName.trim().length > 0).length;
 
                           return (
                             <button
                               onClick={() => setManagingCodesEval(ev)}
                               className="w-full flex items-center justify-between px-3 py-2 bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 text-purple-900 rounded-xl text-xs font-bold transition border border-purple-200 shadow-2xs"
-                              title="Gérer les codes individuels uniques des élèves, autoriser un 2e essai ou en générer d'autres"
+                              title="Gérer les codes individuels propres à chaque élève, autoriser un 2e essai ou synchroniser avec la classe"
                             >
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <Key size={14} className="text-purple-600 flex-shrink-0" />
-                                <span className="truncate">Codes d'accès élèves</span>
+                                <span className="truncate">
+                                  Codes élèves {namedCodes > 0 ? `(${namedCodes} nominatifs)` : ''}
+                                </span>
                               </div>
                               <div className="flex items-center gap-1 flex-shrink-0">
                                 {retakeCodes > 0 && (
@@ -1069,18 +1193,6 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                             <Printer size={15} />
                           </button>
                         </div>
-
-                        {/* Personnalisation des questions, types et oeuvres d'art */}
-                        <button
-                          onClick={() => {
-                            setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
-                            setEditingCriterionIdx(0);
-                          }}
-                          className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition border border-indigo-200"
-                          title="Modifier les questions, types (Vrai/Faux, QCM), oeuvres d'art et sous-aspects"
-                        >
-                          <Edit3 size={13} /> Modifier questions & types (Vrai/Faux, QCM, Art)
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -1371,20 +1483,28 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </div>
                 )}
 
-                {/* 🔑 Configuration des codes d'accès individuels à usage unique */}
+                 {/* 🔑 Configuration des codes d'accès individuels à usage unique */}
                 <div className="bg-purple-50/70 border border-purple-200 rounded-2xl p-3.5 space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold text-purple-950 uppercase tracking-wide flex items-center gap-1.5">
                       <Key size={14} className="text-purple-700" />
-                      Codes d'accès individuels (Usage unique)
+                      Codes d'accès propres par élève ({selectedPlanForCreate?.gradeLevel || currentGrade || 'PEI'})
                     </label>
                     <span className="text-[10px] font-bold text-purple-700 bg-white px-2 py-0.5 rounded-lg border border-purple-200">
-                      Sécurité & 2e essai contrôlé
+                      {classRosterCountForCreate > 0
+                        ? `🎓 ${classRosterCountForCreate} élèves dans la classe`
+                        : 'Sécurité & Usage unique'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Chaque élève recevra un code unique (ex: <code>EVAL-XXXX-01</code>). Dès qu'un élève soumet, son code est <strong>verrouillé</strong> pour un 2ème essai, sauf si vous lui réouvrez l'accès.
-                  </p>
+                  {classRosterCountForCreate > 0 ? (
+                    <p className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-2 font-semibold">
+                      ✔ Liste de classe détectée ({classRosterCountForCreate} élèves en {selectedPlanForCreate?.gradeLevel || currentGrade}). Chaque élève recevra automatiquement son code nominatif propre !
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      Chaque élève recevra un code unique (ex: <code>EVAL-XXXX-01</code>). Astuce : ajoutez les noms des élèves par classe dans le <strong>Panneau Admin → Élèves par classe</strong> pour générer des codes nominatifs propres à chaque élève.
+                    </p>
+                  )}
                   <div className="flex items-center gap-3">
                     <div className="flex-1">
                       <label className="text-[10px] text-slate-500 font-bold block uppercase mb-1">
@@ -1811,15 +1931,15 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           ➕ Ajouter une question (choisissez la modalité) :
                         </span>
                         <div className="flex gap-2 flex-wrap items-center">
-                          {/* BOUTON IA EN VEDETTE : Génération selon la nature & sous-aspect */}
+                           {/* BOUTON IA EN VEDETTE : Génération d'une nouvelle question selon la nature & sous-aspect */}
                           <button
                             type="button"
-                            onClick={() => setShowAiGenModal(true)}
+                            onClick={() => openAiModalForQuestion(null)}
                             className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 hover:from-purple-700 hover:to-indigo-800 text-white rounded-xl font-bold text-xs shadow-md transition transform active:scale-95"
-                            title="Générer une question ciblée avec l'IA en choisissant la nature (QCM, Vrai/Faux, etc.) et le sous-aspect"
+                            title="Générer une nouvelle question ciblée avec l'IA en choisissant la nature (QCM, Vrai/Faux, etc.) et le sous-aspect"
                           >
                             <Sparkles size={14} className="text-yellow-300 animate-pulse" />
-                            <span>Générer avec l'IA</span>
+                            <span>+ Générer nouvelle question par IA</span>
                           </button>
 
                           <button
@@ -1891,28 +2011,40 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                             key={exIdx}
                             className="bg-white rounded-3xl p-5 sm:p-6 border-2 border-slate-300 shadow-sm space-y-5 hover:border-purple-300 transition"
                           >
-                            {/* Titre & suppression de la tâche */}
-                            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                              <div className="flex items-center gap-3 flex-1 mr-3">
-                                <span className={`px-2.5 py-1 rounded-xl text-xs font-black text-white ${colors.badge}`}>
-                                  Tâche {exIdx + 1}
+                             {/* Titre, bouton Générer par IA pour cette question & suppression de la tâche */}
+                            <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-3 flex-wrap">
+                              <div className="flex items-center gap-3 flex-1 min-w-[220px]">
+                                <span className={`px-2.5 py-1 rounded-xl text-xs font-black text-white flex-shrink-0 ${colors.badge}`}>
+                                  Question {exIdx + 1}
                                 </span>
                                 <input
                                   type="text"
                                   value={ex.title}
                                   onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { title: e.target.value })}
-                                  placeholder="Titre de la tâche..."
+                                  placeholder="Titre de la question..."
                                   className="font-bold text-sm text-slate-800 border-b border-dashed border-slate-300 focus:border-purple-600 focus:outline-none px-2 py-0.5 w-full"
                                 />
                               </div>
 
-                              <button
-                                onClick={() => handleDeleteEditingExercise(editingCriterionIdx, exIdx)}
-                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition"
-                                title="Supprimer cette tâche"
-                              >
-                                <Trash2 size={16} />
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => openAiModalForQuestion(exIdx)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs shadow-xs transition"
+                                  title="Générer ou remplacer cette question avec l'IA"
+                                >
+                                  <Sparkles size={13} className="text-yellow-300" />
+                                  <span>Générer cette question par IA</span>
+                                </button>
+
+                                <button
+                                  onClick={() => handleDeleteEditingExercise(editingCriterionIdx, exIdx)}
+                                  className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition"
+                                  title="Supprimer cette question"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
                             </div>
 
                             {/* ⚙️ SÉLECTEUR DE TYPE DE QUESTION (AVEC OPTION SOUS-QUESTIONS 1, 2, 3...) */}
@@ -2542,7 +2674,16 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                       <p className="text-[11px] text-slate-500">Ajoutez des codes supplémentaires ou assignez des élèves spécifiques</p>
                     </div>
 
-                    <div className="flex items-center gap-2 flex-wrap">
+                     <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={handleSyncCodesWithClassRoster}
+                        disabled={isSavingCodes}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-xs"
+                        title="Attribuer un code propre nominatif à chaque élève enregistré dans cette classe par l'Admin"
+                      >
+                        <Users size={13} />
+                        <span>🎓 Générer codes propres par élève ({managingCodesEval.grade})</span>
+                      </button>
                       <span className="text-xs font-semibold text-slate-600">Génération rapide :</span>
                       <button
                         onClick={() => handleGenerateBatchCodes(5)}
@@ -2922,12 +3063,19 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           </div>
         )}
 
-        {/* Modal de génération de questions ciblées avec l'IA */}
+         {/* Modal de génération de questions ciblées avec l'IA (ajout ou remplacement d'une question existante) */}
         {showAiGenModal && editingEvaluation && editingEvaluation.assessments[editingCriterionIdx] && (
           <GenerateCriterialQuestionModal
             isOpen={showAiGenModal}
-            onClose={() => setShowAiGenModal(false)}
+            onClose={() => {
+              setShowAiGenModal(false);
+              setAiTargetQuestionIdx(null);
+            }}
             onAddQuestion={handleAddAiGeneratedQuestion}
+            onReplaceQuestion={handleReplaceAiGeneratedQuestion}
+            targetQuestionIndex={aiTargetQuestionIdx}
+            initialQuestionType={aiInitialType}
+            initialStrandIndex={aiInitialStrand}
             subject={editingEvaluation.subject}
             gradeLevel={editingEvaluation.grade}
             criterion={editingEvaluation.assessments[editingCriterionIdx].criterion}

@@ -12,6 +12,9 @@ interface GenerateCriterialQuestionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAddQuestion: (question: AssessmentExercise) => void;
+  onReplaceQuestion?: (index: number, question: AssessmentExercise) => void;
+  targetQuestionIndex?: number | null;
+  initialQuestionType?: GenerateQuestionOptions['questionType'];
   subject: string;
   gradeLevel: string;
   criterion: string;
@@ -30,6 +33,9 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
   isOpen,
   onClose,
   onAddQuestion,
+  onReplaceQuestion,
+  targetQuestionIndex = null,
+  initialQuestionType,
   subject,
   gradeLevel,
   criterion,
@@ -44,9 +50,10 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
   initialStrandIndex = 'i',
 }) => {
   const isEn = isEnglishSubject(subject);
+  const isReplaceMode = targetQuestionIndex !== null && targetQuestionIndex !== undefined;
 
   // Form states
-  const [selectedType, setSelectedType] = useState<GenerateQuestionOptions['questionType']>('multiple_choice');
+  const [selectedType, setSelectedType] = useState<GenerateQuestionOptions['questionType']>(initialQuestionType || 'multiple_choice');
   const [selectedStrandIndex, setSelectedStrandIndex] = useState<string>(initialStrandIndex || 'i');
   const [difficulty, setDifficulty] = useState<'facile' | 'moyen' | 'difficile' | 'approfondi'>('moyen');
   const [customGuidance, setCustomGuidance] = useState('');
@@ -62,12 +69,13 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
   useEffect(() => {
     if (isOpen) {
       setSelectedStrandIndex(initialStrandIndex || 'i');
+      if (initialQuestionType) setSelectedType(initialQuestionType);
       setGeneratedQuestion(null);
       setErrorMessage(null);
       setIsEditingPreview(false);
       setCustomGuidance('');
     }
-  }, [isOpen, initialStrandIndex]);
+  }, [isOpen, initialStrandIndex, initialQuestionType, targetQuestionIndex]);
 
   if (!isOpen) return null;
 
@@ -99,7 +107,7 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
         questionType: selectedType,
         difficulty,
         customGuidance: customGuidance.trim() || undefined,
-        taskNumber: existingQuestionsCount + 1,
+        taskNumber: isReplaceMode ? (targetQuestionIndex! + 1) : (existingQuestionsCount + 1),
       });
 
       setGeneratedQuestion(q);
@@ -112,7 +120,11 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
 
   const handleConfirmAdd = () => {
     if (!generatedQuestion) return;
-    onAddQuestion(generatedQuestion);
+    if (isReplaceMode && onReplaceQuestion && targetQuestionIndex !== null && targetQuestionIndex !== undefined) {
+      onReplaceQuestion(targetQuestionIndex, generatedQuestion);
+    } else {
+      onAddQuestion(generatedQuestion);
+    }
     onClose();
   };
 
@@ -129,7 +141,13 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold tracking-wide">
-                  {isEn ? 'Generate Targeted Assessment Question (AI)' : 'Générer une question ciblée avec l\'IA'}
+                  {isReplaceMode
+                    ? (isEn
+                        ? `Generate / Replace Question ${targetQuestionIndex! + 1} with AI`
+                        : `Générer / Remplacer la Question ${targetQuestionIndex! + 1} par IA`)
+                    : (isEn
+                        ? 'Generate New Assessment Question (AI)'
+                        : 'Générer une nouvelle question avec l\'IA')}
                 </h3>
                 {isEn && (
                   <span className="text-[10px] bg-emerald-500/90 text-white font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
@@ -464,9 +482,13 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
                 >
                   <Check size={18} />
                   <span>
-                    {isEn
-                      ? `Add this Question to Criterion ${criterion}`
-                      : `Valider et ajouter au Critère ${criterion}`}
+                    {isReplaceMode
+                      ? (isEn
+                          ? `Replace Question ${targetQuestionIndex! + 1} in Criterion ${criterion}`
+                          : `Valider et remplacer la Question ${targetQuestionIndex! + 1} (Critère ${criterion})`)
+                      : (isEn
+                          ? `Add this Question to Criterion ${criterion}`
+                          : `Valider et ajouter au Critère ${criterion}`)}
                   </span>
                 </button>
               </div>

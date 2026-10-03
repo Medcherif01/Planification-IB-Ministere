@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail } from '../types';
+import { UnitPlan, UnitSession, FormativeAssessmentDetail, ATLDetail, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { SUBJECTS, getConceptListsForSubject } from '../constants';
 import { generateStatementOfInquiry, generateInquiryQuestions, generateLearningExperiences, generateFullUnitPlan, updateUnitFromConceptsAndObjectives, sanitizeUnitPlan } from '../services/geminiService';
 import { normalizeCriterionLetter, extractCriteriaLetters, getStandardIBCriterion, formatCriterionFullName, syncAssessmentsWithTargetCriteria } from '../services/ibCriteriaService';
-import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock } from 'lucide-react';
+import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
+import { Sparkles, Save, ArrowLeft, Loader2, Plus, Trash2, BookOpen, Wand2, FileText, Copy, User, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Target, Brain, Users, Globe, BookMarked, Layers, MessageSquare, Settings, RefreshCw, Lock, Unlock, Edit3 } from 'lucide-react';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
+import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import ErrorBoundary from './ErrorBoundary';
 
 interface UnitPlanFormProps {
@@ -81,6 +83,11 @@ const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave,
   const [topicsInput, setTopicsInput] = useState('');
   const [isFullGenerating, setIsFullGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState<'plan' | 'assessment' | 'compliance'>('plan');
+  const [activeAssessmentCritIdx, setActiveAssessmentCritIdx] = useState(0);
+  const [showAiQuestionModal, setShowAiQuestionModal] = useState(false);
+  const [aiTargetQuestionIdx, setAiTargetQuestionIdx] = useState<number | null>(null);
+  const [aiInitialStrand, setAiInitialStrand] = useState<string>('i');
+  const [aiInitialType, setAiInitialType] = useState<GenerateQuestionOptions['questionType']>('multiple_choice');
 
   const [isGeneratingSOI, setIsGeneratingSOI] = useState(false);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
@@ -500,54 +507,460 @@ const UnitPlanFormContent: React.FC<UnitPlanFormProps> = ({ initialPlan, onSave,
 
       {/* TAB: ÉVALUATIONS */}
       {activeTab === 'assessment' && (
-        <div className="p-8 bg-slate-50 min-h-[80vh]">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+        <div className="p-6 sm:p-8 bg-slate-50 min-h-[80vh]">
+          <div className="max-w-5xl mx-auto space-y-5">
+            <div className="flex justify-between items-center flex-wrap gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
               <div>
-                <h3 className="text-xl font-bold text-slate-800">Aperçu des Évaluations</h3>
-                <p className="text-xs text-slate-500">Évaluations critériées IB alignées sur les critères de l'unité ({plan.assessments.length} critère(s))</p>
+                <h3 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
+                  <Edit3 size={18} className="text-indigo-600" />
+                  Évaluation & Questions de l'Unité ({plan.assessments.length} critère{plan.assessments.length > 1 ? 's' : ''})
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Modifiez directement chaque question, changez sa nature (QCM, Vrai/Faux, Sous-questions, Rédaction), ajoutez de nouvelles questions ou générez n'importe quelle question par IA.
+                </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
                   onClick={handleUpdateFromConceptsAndObjectives}
                   disabled={isUpdatingFromConcepts}
-                  className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-sm transition disabled:opacity-50"
-                  title="Régénérer les évaluations selon les critères sélectionnés et concepts de l'unité"
+                  className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-xs transition disabled:opacity-50"
+                  title="Régénérer l'évaluation complète selon les critères sélectionnés et concepts de l'unité"
                 >
                   {isUpdatingFromConcepts ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} className="text-amber-300" />}
-                  Mettre à jour les évaluations
+                  Régénérer toute l'évaluation (IA)
                 </button>
-                <button onClick={copyAssessmentToClipboard} className="flex items-center gap-2 text-blue-600 hover:text-blue-700 bg-white border border-blue-200 px-3 py-2 rounded-lg shadow-sm transition text-sm">
-                  <Copy size={16} /> Copier
+                <button onClick={copyAssessmentToClipboard} className="flex items-center gap-1.5 text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-xl transition text-xs font-bold">
+                  <Copy size={14} /> Copier
                 </button>
               </div>
             </div>
-            {plan.assessments.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {plan.assessments.map((assessment, idx) => (
-                  <div key={idx} className="bg-white p-5 rounded-xl shadow border border-slate-200">
-                    <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-3">
-                      <h4 className="font-bold text-lg text-slate-800">Critère {assessment.criterion}</h4>
-                      <span className="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded">{assessment.maxPoints} pts</span>
+
+            {plan.assessments.length > 0 ? (() => {
+              const safeIdx = Math.min(activeAssessmentCritIdx, plan.assessments.length - 1);
+              const activeCrit = plan.assessments[safeIdx];
+
+              const updateExerciseInCrit = (exIdx: number, updates: Partial<AssessmentExercise>) => {
+                setPlan(prev => ({
+                  ...prev,
+                  assessments: prev.assessments.map((a, idx) => {
+                    if (idx !== safeIdx) return a;
+                    const exercises = (a.exercises || []).map((ex, ei) => ei === exIdx ? { ...ex, ...updates } : ex);
+                    return { ...a, exercises };
+                  }),
+                }));
+              };
+
+              const handleChangeQuestionKind = (exIdx: number, kind: 'open' | 'multiple_choice' | 'true_false' | 'subquestions') => {
+                const ex = activeCrit.exercises?.[exIdx];
+                if (!ex) return;
+                if (kind === 'subquestions') {
+                  const defaultSubs: AssessmentSubQuestion[] = ex.subQuestions && ex.subQuestions.length > 0
+                    ? ex.subQuestions
+                    : [
+                        { id: `sub_${Date.now()}_1`, label: '1)', content: 'Sous-question 1...', strandIndex: 'i', strandText: activeCrit.strands?.[0]?.replace(/^[ivx]+[\.\)]\s*/i, '') || '', type: 'open' },
+                        { id: `sub_${Date.now()}_2`, label: '2)', content: 'Sous-question 2...', strandIndex: 'ii', strandText: activeCrit.strands?.[1]?.replace(/^[ivx]+[\.\)]\s*/i, '') || '', type: 'open' },
+                      ];
+                  updateExerciseInCrit(exIdx, { type: 'open', subQuestions: defaultSubs });
+                } else if (kind === 'multiple_choice') {
+                  const opts = ex.options && ex.options.length >= 2 ? ex.options : ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'];
+                  updateExerciseInCrit(exIdx, {
+                    type: 'multiple_choice',
+                    subQuestions: [],
+                    options: opts,
+                    correctAnswer: ex.correctAnswer && opts.includes(ex.correctAnswer) ? ex.correctAnswer : opts[0],
+                  });
+                } else if (kind === 'true_false') {
+                  updateExerciseInCrit(exIdx, {
+                    type: 'true_false',
+                    subQuestions: [],
+                    options: ['Vrai', 'Faux'],
+                    correctAnswer: 'Vrai',
+                  });
+                } else {
+                  updateExerciseInCrit(exIdx, { type: 'open', subQuestions: [] });
+                }
+              };
+
+              const handleAddNewQuestion = (kind: 'open' | 'multiple_choice' | 'true_false' | 'subquestions') => {
+                const count = (activeCrit.exercises?.length || 0) + 1;
+                const romans = ['i', 'ii', 'iii', 'iv'];
+                const roman = romans[(count - 1) % romans.length];
+                const strandDesc = activeCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || `Aspect ${roman}`;
+
+                let newEx: AssessmentExercise = {
+                  title: `Question ${count}`,
+                  content: 'Énoncé de la question...',
+                  criterionReference: `Critère ${activeCrit.criterion} : ${roman}.`,
+                  strandIndex: roman,
+                  strandText: strandDesc,
+                  type: 'open',
+                };
+
+                if (kind === 'multiple_choice') {
+                  newEx = {
+                    ...newEx,
+                    title: `Question ${count} : QCM`,
+                    type: 'multiple_choice',
+                    options: ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'],
+                    correctAnswer: 'Proposition A',
+                  };
+                } else if (kind === 'true_false') {
+                  newEx = {
+                    ...newEx,
+                    title: `Question ${count} : Vrai ou Faux`,
+                    type: 'true_false',
+                    options: ['Vrai', 'Faux'],
+                    correctAnswer: 'Vrai',
+                  };
+                } else if (kind === 'subquestions') {
+                  newEx = {
+                    ...newEx,
+                    title: `Question ${count} : Problème à sous-questions`,
+                    subQuestions: [
+                      { id: `sub_${Date.now()}_1`, label: '1)', content: 'Première sous-question...', strandIndex: 'i', strandText: strandDesc, type: 'open' },
+                      { id: `sub_${Date.now()}_2`, label: '2)', content: 'Deuxième sous-question...', strandIndex: 'ii', strandText: strandDesc, type: 'open' },
+                    ],
+                  };
+                }
+
+                setPlan(prev => ({
+                  ...prev,
+                  assessments: prev.assessments.map((a, idx) =>
+                    idx === safeIdx ? { ...a, exercises: [...(a.exercises || []), newEx] } : a
+                  ),
+                }));
+              };
+
+              const openAiForQuestionInPlan = (exIdx: number | null) => {
+                if (exIdx !== null && activeCrit.exercises?.[exIdx]) {
+                  const ex = activeCrit.exercises[exIdx];
+                  const hasSub = Boolean(ex.subQuestions && ex.subQuestions.length > 0);
+                  setAiTargetQuestionIdx(exIdx);
+                  setAiInitialStrand(ex.strandIndex || 'i');
+                  setAiInitialType(hasSub ? 'subquestions' : ex.type === 'multiple_choice' ? 'multiple_choice' : ex.type === 'true_false' ? 'true_false' : 'open');
+                } else {
+                  const count = activeCrit.exercises?.length || 0;
+                  setAiTargetQuestionIdx(null);
+                  setAiInitialStrand(['i', 'ii', 'iii', 'iv'][count % 4]);
+                  setAiInitialType('multiple_choice');
+                }
+                setShowAiQuestionModal(true);
+              };
+
+              return (
+                <div className="space-y-4">
+                  {/* Onglets des critères */}
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                    {plan.assessments.map((a, idx) => {
+                      const isCurrent = idx === safeIdx;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setActiveAssessmentCritIdx(idx)}
+                          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border-2 transition whitespace-nowrap ${
+                            isCurrent
+                              ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300'
+                          }`}
+                        >
+                          <span className={`w-5 h-5 rounded-md text-[11px] font-black flex items-center justify-center ${isCurrent ? 'bg-white/20 text-white' : 'bg-indigo-100 text-indigo-700'}`}>
+                            {a.criterion}
+                          </span>
+                          <span>Critère {a.criterion} : {a.criterionName}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] ${isCurrent ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                            {a.exercises?.length || 0} Q
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Barre d'ajout de nouvelles questions */}
+                  <div className="bg-indigo-50/80 border-2 border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-black text-indigo-950">
+                        Critère {activeCrit.criterion} — {activeCrit.exercises?.length || 0} question(s)
+                      </h4>
+                      <p className="text-xs text-indigo-700">
+                        Ajoutez une nouvelle question ou cliquez sur « Générer par IA » sur n'importe quelle question existante pour la remplacer.
+                      </p>
                     </div>
-                    <p className="text-sm text-slate-600 mb-2 font-medium">{assessment.criterionName}</p>
-                    <div className="space-y-2 mt-4">
-                      <p className="text-xs text-slate-400 uppercase font-bold">Exercices:</p>
-                      {assessment.exercises.map((ex, i) => (
-                        <div key={i} className="text-sm bg-slate-50 p-2 rounded border border-slate-100">
-                          <span className="font-bold block text-slate-700">{ex.title}</span>
-                          <span className="text-slate-500 text-xs whitespace-pre-wrap block">{ex.content}</span>
-                        </div>
-                      ))}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => openAiForQuestionInPlan(null)}
+                        className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
+                      >
+                        <Sparkles size={14} className="text-yellow-300" />
+                        <span>+ Nouvelle question par IA</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddNewQuestion('multiple_choice')}
+                        className="px-3 py-2 bg-white hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-xs font-bold transition"
+                      >
+                        + QCM
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddNewQuestion('true_false')}
+                        className="px-3 py-2 bg-white hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-xs font-bold transition"
+                      >
+                        + Vrai/Faux
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddNewQuestion('subquestions')}
+                        className="px-3 py-2 bg-white hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-xs font-bold transition"
+                      >
+                        + Sous-questions
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddNewQuestion('open')}
+                        className="px-3 py-2 bg-white hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-xs font-bold transition"
+                      >
+                        + Rédaction
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="bg-white p-12 rounded-lg border border-dashed border-slate-300 text-center">
+
+                  {/* Liste des questions du critère actif */}
+                  <div className="space-y-4">
+                    {(activeCrit.exercises || []).map((ex, exIdx) => {
+                      const hasSub = Boolean(ex.subQuestions && ex.subQuestions.length > 0);
+                      const qKind = hasSub ? 'subquestions' : ex.type === 'multiple_choice' ? 'multiple_choice' : ex.type === 'true_false' ? 'true_false' : 'open';
+
+                      return (
+                        <div key={exIdx} className="bg-white rounded-2xl border-2 border-slate-200 shadow-2xs overflow-hidden">
+                          {/* En-tête de la question avec bouton Générer par IA */}
+                          <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-xs font-black">
+                                Question {exIdx + 1}
+                              </span>
+                              <select
+                                value={qKind}
+                                onChange={e => handleChangeQuestionKind(exIdx, e.target.value as any)}
+                                className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800"
+                              >
+                                <option value="open">📝 Rédaction / Ouverte</option>
+                                <option value="multiple_choice">☑️ QCM (Choix multiples)</option>
+                                <option value="true_false">⚖️ Vrai ou Faux</option>
+                                <option value="subquestions">🔢 Sous-questions 1), 2)...</option>
+                              </select>
+                              <select
+                                value={ex.strandIndex || 'i'}
+                                onChange={e => {
+                                  const rom = e.target.value;
+                                  const desc = activeCrit.strands?.find(s => s.toLowerCase().startsWith(`${rom}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
+                                  updateExerciseInCrit(exIdx, {
+                                    strandIndex: rom,
+                                    strandText: desc,
+                                    criterionReference: `Critère ${activeCrit.criterion} : ${rom}.`,
+                                  });
+                                }}
+                                className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-indigo-700"
+                              >
+                                {['i', 'ii', 'iii', 'iv'].map(r => (
+                                  <option key={r} value={r}>Sous-aspect ({r})</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openAiForQuestionInPlan(exIdx)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-2xs transition"
+                                title="Générer ou remplacer cette question avec l'IA"
+                              >
+                                <Sparkles size={13} className="text-yellow-300" />
+                                <span>Générer par IA</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPlan(prev => ({
+                                    ...prev,
+                                    assessments: prev.assessments.map((a, idx) =>
+                                      idx === safeIdx ? { ...a, exercises: a.exercises.filter((_, ei) => ei !== exIdx) } : a
+                                    ),
+                                  }));
+                                }}
+                                className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition"
+                                title="Supprimer cette question"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Corps éditable de la question */}
+                          <div className="p-4 space-y-3">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Titre de la question</label>
+                              <input
+                                type="text"
+                                value={ex.title}
+                                onChange={e => updateExerciseInCrit(exIdx, { title: e.target.value })}
+                                className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-900"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Énoncé / Consigne</label>
+                              <textarea
+                                value={ex.content}
+                                onChange={e => updateExerciseInCrit(exIdx, { content: e.target.value })}
+                                rows={3}
+                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800"
+                              />
+                            </div>
+
+                            {qKind === 'multiple_choice' && (
+                              <div className="bg-indigo-50/50 border border-indigo-200 rounded-xl p-3 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-bold text-indigo-900 uppercase">Propositions QCM (cochez la bonne réponse)</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const opts = ex.options || ['Proposition A', 'Proposition B'];
+                                      updateExerciseInCrit(exIdx, { options: [...opts, `Proposition ${String.fromCharCode(65 + opts.length)}`] });
+                                    }}
+                                    className="text-xs font-bold text-indigo-600 hover:underline"
+                                  >
+                                    + Ajouter option
+                                  </button>
+                                </div>
+                                {(ex.options || []).map((opt, oi) => (
+                                  <div key={oi} className="flex items-center gap-2">
+                                    <input
+                                      type="radio"
+                                      name={`upf_qcm_${safeIdx}_${exIdx}`}
+                                      checked={ex.correctAnswer === opt}
+                                      onChange={() => updateExerciseInCrit(exIdx, { correctAnswer: opt })}
+                                    />
+                                    <input
+                                      type="text"
+                                      value={opt}
+                                      onChange={e => {
+                                        const nextOpts = [...(ex.options || [])];
+                                        const prevVal = nextOpts[oi];
+                                        nextOpts[oi] = e.target.value;
+                                        updateExerciseInCrit(exIdx, {
+                                          options: nextOpts,
+                                          correctAnswer: ex.correctAnswer === prevVal ? e.target.value : ex.correctAnswer,
+                                        });
+                                      }}
+                                      className="flex-1 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {qKind === 'subquestions' && (
+                              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-bold text-slate-700 uppercase">Sous-questions</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const subs = ex.subQuestions || [];
+                                      updateExerciseInCrit(exIdx, {
+                                        subQuestions: [
+                                          ...subs,
+                                          { id: `sub_${Date.now()}`, label: `${subs.length + 1})`, content: 'Nouvelle sous-question...', strandIndex: 'i', type: 'open' },
+                                        ],
+                                      });
+                                    }}
+                                    className="text-xs font-bold text-indigo-600 hover:underline"
+                                  >
+                                    + Ajouter sous-question
+                                  </button>
+                                </div>
+                                {(ex.subQuestions || []).map((sq, si) => (
+                                  <div key={si} className="flex items-center gap-2">
+                                    <input
+                                      type="text"
+                                      value={sq.label}
+                                      onChange={e => {
+                                        const nextSubs = [...(ex.subQuestions || [])];
+                                        nextSubs[si] = { ...nextSubs[si], label: e.target.value };
+                                        updateExerciseInCrit(exIdx, { subQuestions: nextSubs });
+                                      }}
+                                      className="w-12 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-center"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={sq.content}
+                                      onChange={e => {
+                                        const nextSubs = [...(ex.subQuestions || [])];
+                                        nextSubs[si] = { ...nextSubs[si], content: e.target.value };
+                                        updateExerciseInCrit(exIdx, { subQuestions: nextSubs });
+                                      }}
+                                      className="flex-1 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {showAiQuestionModal && (
+                    <GenerateCriterialQuestionModal
+                      isOpen={showAiQuestionModal}
+                      onClose={() => {
+                        setShowAiQuestionModal(false);
+                        setAiTargetQuestionIdx(null);
+                      }}
+                      onAddQuestion={(question) => {
+                        setPlan(prev => ({
+                          ...prev,
+                          assessments: prev.assessments.map((a, idx) =>
+                            idx === safeIdx ? { ...a, exercises: [...(a.exercises || []), question] } : a
+                          ),
+                        }));
+                      }}
+                      onReplaceQuestion={(targetIdx, question) => {
+                        setPlan(prev => ({
+                          ...prev,
+                          assessments: prev.assessments.map((a, idx) => {
+                            if (idx !== safeIdx) return a;
+                            const exercises = [...(a.exercises || [])];
+                            exercises[targetIdx] = question;
+                            return { ...a, exercises };
+                          }),
+                        }));
+                      }}
+                      targetQuestionIndex={aiTargetQuestionIdx}
+                      initialQuestionType={aiInitialType}
+                      initialStrandIndex={aiInitialStrand}
+                      subject={plan.subject}
+                      gradeLevel={plan.gradeLevel}
+                      criterion={activeCrit.criterion}
+                      criterionName={activeCrit.criterionName}
+                      availableStrands={activeCrit.strands || []}
+                      unitTitle={plan.title}
+                      statementOfInquiry={plan.statementOfInquiry}
+                      chapters={plan.chapters || plan.content}
+                      keyConcept={plan.keyConcept}
+                      relatedConcepts={plan.relatedConcepts}
+                      existingQuestionsCount={activeCrit.exercises?.length || 0}
+                    />
+                  )}
+                </div>
+              );
+            })() : (
+              <div className="bg-white p-12 rounded-2xl border border-dashed border-slate-300 text-center">
                 <FileText size={48} className="mx-auto text-slate-300 mb-4" />
-                <p className="text-slate-500 mb-2">Aucune évaluation générée pour le moment.</p>
+                <p className="text-slate-600 font-bold mb-2">Aucune évaluation générée pour le moment.</p>
                 <p className="text-xs text-slate-400 mb-4">Cliquez sur le bouton ci-dessous pour générer les évaluations selon les critères choisis.</p>
                 <button
                   type="button"

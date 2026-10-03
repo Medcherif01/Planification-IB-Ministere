@@ -10,7 +10,15 @@ import {
   listModificationRequests, updateRequestStatus,
   type AppUser, type ModificationRequest
 } from '../services/authService';
-import { SUBJECTS } from '../constants';
+import { SUBJECTS, PEI_GRADES } from '../constants';
+import { ClassStudent } from '../types';
+import {
+  fetchAllStudents,
+  saveStudentsForGrade,
+  removeStudentById,
+  clearGradeStudents,
+  parseBulkStudentText,
+} from '../services/studentRosterService';
 import {
   downloadCompleteExcelBackup,
   downloadCompleteCSVBackup,
@@ -26,12 +34,25 @@ interface AdminPanelProps {
   onImportCSV?: (file: File) => void;
 }
 
-type AdminTab = 'users' | 'requests' | 'data';
+type AdminTab = 'users' | 'students' | 'requests' | 'data';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportCSV }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
+
+  // ── Students by Class state ───────────────────────────────────────────────
+  const [allClassStudents, setAllClassStudents] = useState<ClassStudent[]>([]);
+  const [selectedStudentGrade, setSelectedStudentGrade] = useState<string>(PEI_GRADES[0] || 'PEI 1');
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [newStudentName, setNewStudentName] = useState('');
+  const [newStudentNumber, setNewStudentNumber] = useState('');
+  const [showBulkStudentBox, setShowBulkStudentBox] = useState(false);
+  const [bulkStudentText, setBulkStudentText] = useState('');
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [editStudentName, setEditStudentName] = useState('');
+  const [editStudentNumber, setEditStudentNumber] = useState('');
+  const [savingStudents, setSavingStudents] = useState(false);
 
   // ── Users state ───────────────────────────────────────────────────────────
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -83,8 +104,89 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     }
   };
 
-  useEffect(() => { loadUsers(); }, []);
+  const loadStudents = async () => {
+    setStudentsLoading(true);
+    try {
+      const data = await fetchAllStudents();
+      setAllClassStudents(data);
+    } catch (e: any) {
+      console.error('Erreur chargement élèves:', e);
+    } finally {
+      setStudentsLoading(false);
+    }
+  };
+
+  useEffect(() => { loadUsers(); loadStudents(); }, []);
   useEffect(() => { if (activeTab === 'requests') loadRequests(); }, [activeTab, requestFilter]);
+  useEffect(() => { if (activeTab === 'students') loadStudents(); }, [activeTab]);
+
+  const studentsForCurrentGrade = allClassStudents.filter(
+    s => s.grade === selectedStudentGrade
+  );
+
+  const handleAddSingleStudent = async () => {
+    if (!newStudentName.trim()) return;
+    setSavingStudents(true);
+    try {
+      await saveStudentsForGrade(
+        [{ name: newStudentName.trim(), studentNumber: newStudentNumber.trim(), grade: selectedStudentGrade }],
+        selectedStudentGrade,
+        false
+      );
+      setNewStudentName('');
+      setNewStudentNumber('');
+      await loadStudents();
+    } finally {
+      setSavingStudents(false);
+    }
+  };
+
+  const handleBulkImportStudents = async () => {
+    if (!bulkStudentText.trim()) return;
+    setSavingStudents(true);
+    try {
+      const parsed = parseBulkStudentText(
+        bulkStudentText,
+        selectedStudentGrade,
+        studentsForCurrentGrade.length + 1
+      );
+      if (parsed.length === 0) return;
+      await saveStudentsForGrade(parsed, selectedStudentGrade, false);
+      setBulkStudentText('');
+      setShowBulkStudentBox(false);
+      await loadStudents();
+    } finally {
+      setSavingStudents(false);
+    }
+  };
+
+  const handleSaveStudentEdit = async (stuId: string) => {
+    if (!editStudentName.trim()) return;
+    setSavingStudents(true);
+    try {
+      await saveStudentsForGrade(
+        [{ id: stuId, name: editStudentName.trim(), studentNumber: editStudentNumber.trim(), grade: selectedStudentGrade }],
+        selectedStudentGrade,
+        false
+      );
+      setEditingStudentId(null);
+      await loadStudents();
+    } finally {
+      setSavingStudents(false);
+    }
+  };
+
+  const handleDeleteStudent = async (stu: ClassStudent) => {
+    if (!window.confirm(`Supprimer l'élève "${stu.name}" de la classe ${stu.grade} ?`)) return;
+    await removeStudentById(stu.id);
+    await loadStudents();
+  };
+
+  const handleClearClass = async () => {
+    if (!window.confirm(`Voulez-vous vider toute la liste des élèves de la classe ${selectedStudentGrade} ?`)) return;
+    await clearGradeStudents(selectedStudentGrade);
+    await loadStudents();
+  };
 
   // ── Create teacher ────────────────────────────────────────────────────────
   const handleCreateTeacher = async () => {
@@ -348,9 +450,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
           </div>
 
           {/* Tabs */}
-          <div className="border-b border-slate-200 flex">
+          <div className="border-b border-slate-200 flex overflow-x-auto">
             {[
-              { id: 'users' as AdminTab, label: 'Utilisateurs', icon: <Users size={15} /> },
+              { id: 'users' as AdminTab, label: 'Enseignants', icon: <Users size={15} /> },
+              { id: 'students' as AdminTab, label: `Élèves par classe (${allClassStudents.length})`, icon: <UserCheck size={15} /> },
               { id: 'requests' as AdminTab, label: `Demandes${pendingCount > 0 ? ` (${pendingCount})` : ''}`, icon: <Bell size={15} /> },
               { id: 'data' as AdminTab, label: 'Données', icon: <Database size={15} /> },
             ].map(tab => (
@@ -554,6 +657,277 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ══ TAB: STUDENTS BY CLASS ═══════════════════════════════════════ */}
+            {activeTab === 'students' && (
+              <div className="space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-indigo-50/70 border border-indigo-200 rounded-2xl p-4">
+                  <div>
+                    <h3 className="font-bold text-slate-900 flex items-center gap-2 text-base">
+                      <UserCheck size={18} className="text-indigo-600" />
+                      Gestion des listes d'élèves par classe (PEI 1 à PEI 5)
+                    </h3>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Ajoutez les noms des élèves par classe afin que la génération des codes d'accès d'évaluation attribue automatiquement un code nominatif propre à chaque élève.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowBulkStudentBox(v => !v)}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex-shrink-0"
+                  >
+                    <FileText size={14} />
+                    <span>{showBulkStudentBox ? 'Fermer l\'ajout en liste' : 'Coller une liste d\'élèves'}</span>
+                  </button>
+                </div>
+
+                {/* Sélecteur de classe PEI 1 .. PEI 5 */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {PEI_GRADES.map(grade => {
+                    const count = allClassStudents.filter(s => s.grade === grade).length;
+                    const isSelected = selectedStudentGrade === grade;
+                    return (
+                      <button
+                        key={grade}
+                        type="button"
+                        onClick={() => {
+                          setSelectedStudentGrade(grade);
+                          setEditingStudentId(null);
+                        }}
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border-2 transition ${
+                          isSelected
+                            ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300'
+                        }`}
+                      >
+                        <span>{grade}</span>
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-black ${
+                            isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {count} élève{count > 1 ? 's' : ''}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Zone d'importation rapide par copier-coller */}
+                {showBulkStudentBox && (
+                  <div className="bg-slate-50 border-2 border-indigo-200 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-indigo-950 uppercase tracking-wide">
+                        📋 Importer une liste d'élèves pour la classe {selectedStudentGrade} (un élève par ligne)
+                      </label>
+                      <span className="text-[11px] text-slate-500">
+                        Format accepté : <code>Nom Prénom</code> ou <code>Nom Prénom ; Matricule</code>
+                      </span>
+                    </div>
+                    <textarea
+                      value={bulkStudentText}
+                      onChange={e => setBulkStudentText(e.target.value)}
+                      rows={6}
+                      placeholder={`Exemple :\nAdam Benali\nYasmine Mansouri ; 2026-002\nKarim Alami\nSara Toumi`}
+                      className="w-full border border-slate-300 rounded-xl p-3 text-xs font-mono bg-white focus:ring-2 focus:ring-indigo-400 outline-none"
+                    />
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowBulkStudentBox(false)}
+                        className="px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleBulkImportStudents}
+                        disabled={savingStudents || !bulkStudentText.trim()}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition disabled:opacity-50"
+                      >
+                        {savingStudents ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                        <span>Enregistrer la liste dans {selectedStudentGrade}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Formulaire d'ajout individuel rapide */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-2.5">
+                    ➕ Ajouter un élève en {selectedStudentGrade}
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                    <div className="sm:col-span-6">
+                      <input
+                        type="text"
+                        value={newStudentName}
+                        onChange={e => setNewStudentName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddSingleStudent(); }}
+                        placeholder="Nom et Prénom de l'élève *"
+                        className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-semibold focus:ring-2 focus:ring-indigo-400 outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <input
+                        type="text"
+                        value={newStudentNumber}
+                        onChange={e => setNewStudentNumber(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddSingleStudent(); }}
+                        placeholder="N° Matricule (auto si vide)"
+                        className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-mono focus:ring-2 focus:ring-indigo-400 outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <button
+                        type="button"
+                        onClick={handleAddSingleStudent}
+                        disabled={savingStudents || !newStudentName.trim()}
+                        className="w-full h-full flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition disabled:opacity-50"
+                      >
+                        <Plus size={14} />
+                        <span>Ajouter</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tableau des élèves de la classe sélectionnée */}
+                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                  <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-xs text-slate-800">
+                        Liste officielle — {selectedStudentGrade}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        · {studentsForCurrentGrade.length} élève{studentsForCurrentGrade.length > 1 ? 's' : ''} inscrit{studentsForCurrentGrade.length > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    {studentsForCurrentGrade.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearClass}
+                        className="text-xs text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1"
+                      >
+                        <Trash2 size={13} /> Vider la classe
+                      </button>
+                    )}
+                  </div>
+
+                  {studentsLoading ? (
+                    <div className="p-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                      <Loader2 size={16} className="animate-spin" /> Chargement de la liste des élèves...
+                    </div>
+                  ) : studentsForCurrentGrade.length === 0 ? (
+                    <div className="p-10 text-center text-slate-400">
+                      <Users size={30} className="mx-auto mb-2 opacity-30" />
+                      <p className="text-xs font-semibold text-slate-600">
+                        Aucun élève enregistré pour la classe {selectedStudentGrade}.
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Ajoutez les élèves ci-dessus ou collez votre liste de classe pour générer automatiquement leurs codes d'évaluation nominatifs.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 sticky top-0">
+                          <tr>
+                            <th className="px-4 py-2.5 w-12">#</th>
+                            <th className="px-4 py-2.5">Nom & Prénom de l'élève</th>
+                            <th className="px-4 py-2.5">N° Matricule</th>
+                            <th className="px-4 py-2.5">Aperçu Code Évaluation</th>
+                            <th className="px-4 py-2.5 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {studentsForCurrentGrade.map((stu, idx) => {
+                            const isEditing = editingStudentId === stu.id;
+                            return (
+                              <tr key={stu.id} className="hover:bg-slate-50/80 transition">
+                                <td className="px-4 py-2.5 font-bold text-slate-400">{idx + 1}</td>
+                                <td className="px-4 py-2.5">
+                                  {isEditing ? (
+                                    <input
+                                      type="text"
+                                      value={editStudentName}
+                                      onChange={e => setEditStudentName(e.target.value)}
+                                      className="w-full border border-indigo-300 rounded-lg px-2.5 py-1 text-xs font-bold"
+                                    />
+                                  ) : (
+                                    <span className="font-bold text-slate-900">{stu.name}</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  {isEditing ? (
+                                    <input
+                                      type="text"
+                                      value={editStudentNumber}
+                                      onChange={e => setEditStudentNumber(e.target.value)}
+                                      className="w-36 border border-indigo-300 rounded-lg px-2.5 py-1 text-xs font-mono"
+                                    />
+                                  ) : (
+                                    <span className="font-mono text-slate-600">{stu.studentNumber}</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  <span className="font-mono text-[11px] text-indigo-700 font-bold">
+                                    EVAL-XXXX-{String(idx + 1).padStart(2, '0')} → {stu.name}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                  {isEditing ? (
+                                    <div className="inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveStudentEdit(stu.id)}
+                                        className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-bold"
+                                      >
+                                        Enregistrer
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingStudentId(null)}
+                                        className="px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[11px]"
+                                      >
+                                        Annuler
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingStudentId(stu.id);
+                                          setEditStudentName(stu.name);
+                                          setEditStudentNumber(stu.studentNumber);
+                                        }}
+                                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                                        title="Modifier l'élève"
+                                      >
+                                        <Edit2 size={13} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteStudent(stu)}
+                                        className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition"
+                                        title="Supprimer l'élève"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 

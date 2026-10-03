@@ -608,3 +608,12 @@ export interface StudentSubmission {
   gradedBy?: string;
 }
 
+export interface ClassStudent {
+  id: string;
+  name: string;          // Nom et prénom de l'élève
+  studentNumber: string; // Numéro d'inscription / Matricule
+  grade: string;         // ex: "PEI 1", "PEI 2", "PEI 3", "PEI 4", "PEI 5"
+  createdAt?: string;
+}
+
+
