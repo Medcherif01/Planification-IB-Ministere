@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Printer, Award, Clock, Download } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../types';
+import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 
 interface EvaluationPrintViewProps {
   evaluation: OnlineEvaluation;
@@ -100,13 +101,15 @@ function getQuestionStrandLabel(
   criterionLetter: string,
   strands: string[] = [],
   exercise: { criterionReference?: string; strandIndex?: string; strandText?: string; title?: string },
-  exerciseIndex: number
+  exerciseIndex: number,
+  isEn: boolean = false
 ): { roman: string; description: string; fullText: string } {
+  const prefix = isEn ? 'Strand' : 'Sous-aspect';
   if (exercise.strandIndex && exercise.strandText) {
     return {
       roman: exercise.strandIndex,
       description: exercise.strandText,
-      fullText: `Sous-aspect (${exercise.strandIndex}) : ${exercise.strandText}`,
+      fullText: `${prefix} (${exercise.strandIndex}) : ${exercise.strandText}`,
     };
   }
 
@@ -118,7 +121,7 @@ function getQuestionStrandLabel(
     return {
       roman,
       description: desc,
-      fullText: `Sous-aspect (${roman})${desc ? ` : ${desc}` : ''}`,
+      fullText: `${prefix} (${roman})${desc ? ` : ${desc}` : ''}`,
     };
   }
 
@@ -135,7 +138,7 @@ function getQuestionStrandLabel(
     return {
       roman: targetRoman,
       description: cleanDesc,
-      fullText: `Sous-aspect (${targetRoman}) : ${cleanDesc}`,
+      fullText: `${prefix} (${targetRoman}) : ${cleanDesc}`,
     };
   }
 
@@ -144,7 +147,7 @@ function getQuestionStrandLabel(
   return {
     roman: targetRoman,
     description: cleanFallback,
-    fullText: `Sous-aspect (${targetRoman}) : ${cleanFallback || `Compétence ${criterionLetter}`}`,
+    fullText: `${prefix} (${targetRoman}) : ${cleanFallback || (isEn ? `Criterion ${criterionLetter} skill` : `Compétence ${criterionLetter}`)}`,
   };
 }
 
@@ -153,13 +156,15 @@ function getSubQuestionStrandLabel(
   criterionLetter: string,
   strands: string[] = [],
   sub: AssessmentSubQuestion,
-  subIndex: number
+  subIndex: number,
+  isEn: boolean = false
 ): { roman: string; description: string; fullText: string } {
+  const prefix = isEn ? 'Strand' : 'Sous-aspect';
   if (sub.strandIndex && sub.strandText) {
     return {
       roman: sub.strandIndex,
       description: sub.strandText,
-      fullText: `Sous-aspect (${sub.strandIndex}) : ${sub.strandText}`,
+      fullText: `${prefix} (${sub.strandIndex}) : ${sub.strandText}`,
     };
   }
 
@@ -176,7 +181,7 @@ function getSubQuestionStrandLabel(
     return {
       roman: targetRoman,
       description: cleanDesc,
-      fullText: `Sous-aspect (${targetRoman}) : ${cleanDesc}`,
+      fullText: `${prefix} (${targetRoman}) : ${cleanDesc}`,
     };
   }
 
@@ -185,24 +190,26 @@ function getSubQuestionStrandLabel(
   return {
     roman: targetRoman,
     description: cleanFallback,
-    fullText: `Sous-aspect (${targetRoman}) : ${cleanFallback || `Compétence ${criterionLetter}`}`,
+    fullText: `${prefix} (${targetRoman}) : ${cleanFallback || (isEn ? `Criterion ${criterionLetter} skill` : `Compétence ${criterionLetter}`)}`,
   };
 }
 
 const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, submission, onClose }) => {
   const isCorrectedCopy = Boolean(submission);
   const printContentRef = useRef<HTMLDivElement>(null);
+  const isEn = isEnglishSubject(evaluation.subject);
 
-  const currentDateFormatted = new Date().toLocaleDateString('fr-FR', {
+  const dateLocale = isEn ? 'en-US' : 'fr-FR';
+  const currentDateFormatted = new Date().toLocaleDateString(dateLocale, {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   });
 
   const examDateFormatted = submission?.submittedAt
-    ? new Date(submission.submittedAt).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    ? new Date(submission.submittedAt).toLocaleDateString(dateLocale, { day: '2-digit', month: '2-digit', year: 'numeric' })
     : evaluation.createdAt
-    ? new Date(evaluation.createdAt).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    ? new Date(evaluation.createdAt).toLocaleDateString(dateLocale, { day: '2-digit', month: '2-digit', year: 'numeric' })
     : currentDateFormatted;
 
   const handlePrint = () => {
@@ -213,11 +220,11 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
     if (!printContentRef.current) return;
     const content = printContentRef.current.innerHTML;
     const title = isCorrectedCopy
-      ? `Copie_${submission?.studentName?.replace(/\s+/g, '_') || 'Eleve'}_${evaluation.accessCode}`
-      : `Evaluation_${evaluation.title.replace(/\s+/g, '_')}_${evaluation.accessCode}`;
+      ? `${isEn ? 'Graded_Copy' : 'Copie'}_${submission?.studentName?.replace(/\s+/g, '_') || (isEn ? 'Student' : 'Eleve')}_${evaluation.accessCode}`
+      : `${isEn ? 'Assessment' : 'Evaluation'}_${evaluation.title.replace(/\s+/g, '_')}_${evaluation.accessCode}`;
 
     const fullHtml = `<!DOCTYPE html>
-<html lang="fr">
+<html lang="${isEn ? 'en' : 'fr'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -346,11 +353,17 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           <div>
             <h3 className="font-bold text-slate-800 text-sm">
               {isCorrectedCopy
-                ? `Copie Corrigée — ${submission?.studentName} (${submission?.studentNumber})`
-                : `Sujet d'Évaluation Officiel — ${evaluation.title}`}
+                ? (isEn
+                    ? `Graded Copy — ${submission?.studentName} (${submission?.studentNumber})`
+                    : `Copie Corrigée — ${submission?.studentName} (${submission?.studentNumber})`)
+                : (isEn
+                    ? `Official Assessment Paper — ${evaluation.title}`
+                    : `Sujet d'Évaluation Officiel — ${evaluation.title}`)}
             </h3>
             <p className="text-xs text-slate-500">
-              Mise en page officielle PEI IB · Format A4 · Marges 1 cm · Aucune coupure de questions
+              {isEn
+                ? 'Official IB MYP Layout · A4 Format · 1 cm Margins · No Question Break'
+                : 'Mise en page officielle PEI IB · Format A4 · Marges 1 cm · Aucune coupure de questions'}
             </p>
           </div>
         </div>
@@ -359,21 +372,21 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           <button
             onClick={handleDownloadHtml}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition"
-            title="Télécharger la version autonome HTML"
+            title={isEn ? 'Download standalone HTML version' : 'Télécharger la version autonome HTML'}
           >
-            <Download size={15} /> Télécharger HTML
+            <Download size={15} /> {isEn ? 'Download HTML' : 'Télécharger HTML'}
           </button>
           <button
             onClick={handlePrint}
             className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
-            title="Imprimer ou enregistrer en PDF via le navigateur"
+            title={isEn ? 'Print or save to PDF via browser' : 'Imprimer ou enregistrer en PDF via le navigateur'}
           >
-            <Printer size={16} /> Imprimer / PDF
+            <Printer size={16} /> {isEn ? 'Print / PDF' : 'Imprimer / PDF'}
           </button>
           <button
             onClick={onClose}
             className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition"
-            title="Fermer"
+            title={isEn ? 'Close' : 'Fermer'}
           >
             <X size={20} />
           </button>
@@ -498,17 +511,19 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
               />
               <div>
                 <h1 className="text-[15px] font-black tracking-tight text-slate-900 uppercase font-sans">
-                  Les Écoles Internationales Al-Kawthar
+                  {isEn ? 'Al-Kawthar International Schools' : 'Les Écoles Internationales Al-Kawthar'}
                 </h1>
                 <p className="text-[11px] font-bold text-purple-900 uppercase tracking-wide">
-                  Programme d'Éducation Intermédiaire (PEI) · Baccalauréat International (IB)
+                  {isEn
+                    ? 'Middle Years Programme (MYP) · International Baccalaureate (IB)'
+                    : "Programme d'Éducation Intermédiaire (PEI) · Baccalauréat International (IB)"}
                 </p>
                 <div className="flex items-center gap-3 mt-0.5">
                   <span className="text-[11px] text-slate-700 font-bold uppercase tracking-wider">
-                    Épreuve Sommative Critériée
+                    {isEn ? 'Summative Criterion-Referenced Assessment' : 'Épreuve Sommative Critériée'}
                   </span>
                   <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 flex items-center gap-1">
-                    <Clock size={11} /> Durée : {duration} minutes
+                    <Clock size={11} /> {isEn ? `Duration: ${duration} minutes` : `Durée : ${duration} minutes`}
                   </span>
                 </div>
               </div>
@@ -517,15 +532,23 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
             {/* Note finale si copie corrigée */}
             {isCorrectedCopy ? (
               <div className="border-2 border-purple-800 bg-purple-50 rounded-lg px-3.5 py-1.5 text-center min-w-[95px] shrink-0">
-                <span className="block text-[9px] font-bold text-purple-800 uppercase tracking-wider">Note Finale</span>
+                <span className="block text-[9px] font-bold text-purple-800 uppercase tracking-wider">
+                  {isEn ? 'Final Mark' : 'Note Finale'}
+                </span>
                 <span className="text-xl font-black text-purple-950 leading-tight">{totalScoreObtained} / {totalMaxPoints}</span>
-                <span className="block text-[9px] font-semibold text-purple-700">Niveau PEI</span>
+                <span className="block text-[9px] font-semibold text-purple-700">
+                  {isEn ? 'MYP Level' : 'Niveau PEI'}
+                </span>
               </div>
             ) : (
               <div className="border border-slate-300 bg-slate-50 rounded-lg px-3.5 py-1.5 text-center min-w-[95px] shrink-0">
-                <span className="block text-[9px] font-bold text-slate-500 uppercase">Barème Total</span>
+                <span className="block text-[9px] font-bold text-slate-500 uppercase">
+                  {isEn ? 'Total Scale' : 'Barème Total'}
+                </span>
                 <span className="text-lg font-black text-slate-800 leading-tight">/ {totalMaxPoints}</span>
-                <span className="block text-[9px] text-slate-500">PEI Barème 8</span>
+                <span className="block text-[9px] text-slate-500">
+                  {isEn ? 'MYP Scale 1-8' : 'PEI Barème 8'}
+                </span>
               </div>
             )}
           </div>
@@ -534,38 +557,52 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           <div className="mt-2.5 border border-slate-400 text-[11px] divide-y divide-slate-300">
             <div className="grid grid-cols-4 divide-x divide-slate-300 bg-slate-50/70">
               <div className="p-1.5">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block">Matière</span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">
+                  {isEn ? 'Subject' : 'Matière'}
+                </span>
                 <span className="font-bold text-slate-900">{evaluation.subject}</span>
               </div>
               <div className="p-1.5">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block">Classe / Niveau</span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">
+                  {isEn ? 'Grade / Level' : 'Classe / Niveau'}
+                </span>
                 <span className="font-bold text-slate-900">{evaluation.grade}</span>
               </div>
               <div className="p-1.5">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block">Enseignant(e)</span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">
+                  {isEn ? 'Teacher' : 'Enseignant(e)'}
+                </span>
                 <span className="font-medium text-slate-800">{evaluation.teacherName || '—'}</span>
               </div>
               <div className="p-1.5">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block">Date</span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">
+                  {isEn ? 'Date' : 'Date'}
+                </span>
                 <span className="font-medium text-slate-800">{examDateFormatted}</span>
               </div>
             </div>
 
             <div className="grid grid-cols-4 divide-x divide-slate-300">
               <div className="p-1.5 col-span-2">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block">Nom & Prénom de l'élève</span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">
+                  {isEn ? 'Student Full Name' : "Nom & Prénom de l'élève"}
+                </span>
                 <span className="font-bold text-sm text-slate-900">
                   {submission?.studentName || '________________________________________'}
                 </span>
               </div>
               <div className="p-1.5">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block">N° Matricule</span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">
+                  {isEn ? 'Candidate ID' : 'N° Matricule'}
+                </span>
                 <span className="font-mono font-bold text-slate-900">
                   {submission?.studentNumber || '________________'}
                 </span>
               </div>
               <div className="p-1.5">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block">Code Examen</span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase block">
+                  {isEn ? 'Assessment Code' : 'Code Examen'}
+                </span>
                 <span className="font-mono font-bold text-purple-700">{evaluation.accessCode}</span>
               </div>
             </div>
@@ -583,20 +620,22 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
 
           {evaluation.statementOfInquiry && (
             <div className="text-slate-800 italic text-[11px] mb-1.5 bg-white p-1.5 rounded border border-slate-200">
-              <strong className="not-italic text-purple-900 font-bold uppercase text-[10px] mr-1">Énoncé de recherche :</strong>
+              <strong className="not-italic text-purple-900 font-bold uppercase text-[10px] mr-1">
+                {isEn ? 'Statement of inquiry:' : 'Énoncé de recherche :'}
+              </strong>
               « {evaluation.statementOfInquiry} »
             </div>
           )}
 
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-600">
             {evaluation.keyConcept && (
-              <span><strong>Concept clé :</strong> {evaluation.keyConcept}</span>
+              <span><strong>{isEn ? 'Key concept:' : 'Concept clé :'}</strong> {evaluation.keyConcept}</span>
             )}
             {evaluation.globalContext && (
-              <span><strong>Contexte mondial :</strong> {evaluation.globalContext}</span>
+              <span><strong>{isEn ? 'Global context:' : 'Contexte mondial :'}</strong> {evaluation.globalContext}</span>
             )}
             {evaluation.relatedConcepts && evaluation.relatedConcepts.length > 0 && (
-              <span><strong>Concepts connexes :</strong> {evaluation.relatedConcepts.join(', ')}</span>
+              <span><strong>{isEn ? 'Related concepts:' : 'Concepts connexes :'}</strong> {evaluation.relatedConcepts.join(', ')}</span>
             )}
           </div>
         </section>
@@ -606,13 +645,21 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           <table className="w-full text-[10px] border-collapse border border-slate-300" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
             <thead>
               <tr className="bg-slate-100 text-slate-700 uppercase" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                <th className="border border-slate-300 px-2 py-1 text-center w-16">Critère</th>
-                <th className="border border-slate-300 px-2 py-1 text-left">Intitulé de la compétence</th>
-                <th className="border border-slate-300 px-2 py-1 text-left">Aspects spécifiques évalués</th>
-                <th className="border border-slate-300 px-2 py-1 text-center w-16">Barème</th>
+                <th className="border border-slate-300 px-2 py-1 text-center w-16">
+                  {isEn ? 'Criterion' : 'Critère'}
+                </th>
+                <th className="border border-slate-300 px-2 py-1 text-left">
+                  {isEn ? 'Skill / Criterion Title' : 'Intitulé de la compétence'}
+                </th>
+                <th className="border border-slate-300 px-2 py-1 text-left">
+                  {isEn ? 'Assessed Specific Strands' : 'Aspects spécifiques évalués'}
+                </th>
+                <th className="border border-slate-300 px-2 py-1 text-center w-16">
+                  {isEn ? 'Scale' : 'Barème'}
+                </th>
                 {isCorrectedCopy && (
                   <th className="border border-slate-300 px-2 py-1 text-center w-20 bg-purple-100 text-purple-900 font-bold">
-                    Note
+                    {isEn ? 'Mark' : 'Note'}
                   </th>
                 )}
               </tr>
@@ -624,7 +671,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                 return (
                   <tr key={a.criterion} style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                     <td className="border border-slate-300 px-2 py-1 text-center font-black" style={{ color: color.badge }}>
-                      Critère {a.criterion}
+                      {isEn ? `Criterion ${a.criterion}` : `Critère ${a.criterion}`}
                     </td>
                     <td className="border border-slate-300 px-2 py-1 font-bold text-slate-800">
                       {a.criterionName}
@@ -656,8 +703,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                 <div
                   className="py-1 px-2.5 bg-slate-800 text-white font-bold text-xs uppercase tracking-wide flex items-center justify-between rounded-xs avoid-break"
                 >
-                  <span>Critère {crit.criterion} : {crit.criterionName}</span>
-                  <span className="text-[10px] text-slate-300 font-normal">Barème de réalisation : 1 - {crit.maxPoints || 8}</span>
+                  <span>{isEn ? `Criterion ${crit.criterion}: ${crit.criterionName}` : `Critère ${crit.criterion} : ${crit.criterionName}`}</span>
+                  <span className="text-[10px] text-slate-300 font-normal">
+                    {isEn ? `Achievement scale: 1 - ${crit.maxPoints || 8} points` : `Barème de réalisation : 1 - ${crit.maxPoints || 8}`}
+                  </span>
                 </div>
 
                 {/* Rubrique descriptive succincte si présente */}
@@ -666,8 +715,12 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                     <table className="w-full text-[9.5px] border-collapse border border-slate-200" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                       <thead>
                         <tr className="bg-slate-50 text-slate-600" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                          <th className="border border-slate-200 px-2 py-0.5 text-center w-12">Niveau</th>
-                          <th className="border border-slate-200 px-2 py-0.5 text-left">Descripteur de réalisation</th>
+                          <th className="border border-slate-200 px-2 py-0.5 text-center w-12">
+                            {isEn ? 'Level' : 'Niveau'}
+                          </th>
+                          <th className="border border-slate-200 px-2 py-0.5 text-left">
+                            {isEn ? 'Achievement Descriptor' : 'Descripteur de réalisation'}
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -695,7 +748,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                   // Décomposition propre du stimulus et des sous-questions sans duplication
                   const { stimulusText, subQuestions } = parseExerciseContent(ex, crit.criterion, crit.strands);
                   const hasSubQuestions = subQuestions.length > 0;
-                  const strandInfo = getQuestionStrandLabel(crit.criterion, crit.strands, ex, exIdx);
+                  const strandInfo = getQuestionStrandLabel(crit.criterion, crit.strands, ex, exIdx, isEn);
 
                   return (
                     <div
@@ -706,7 +759,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                       <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 avoid-break">
                         <div className="flex items-center gap-2">
                           <span className="px-2 py-0.5 bg-slate-700 text-white font-bold text-[10px] rounded-xs uppercase">
-                            Tâche {exIdx + 1}
+                            {isEn ? `Task ${exIdx + 1}` : `Tâche ${exIdx + 1}`}
                           </span>
                           <span className="font-bold text-slate-900 text-xs">{ex.title}</span>
                         </div>
@@ -714,7 +767,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         {/* Note de la tâche si corrigé */}
                         {isCorrectedCopy && studentAns?.score !== undefined && (
                           <span className="text-[11px] font-black text-purple-900 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
-                            Note : {studentAns.score} / {crit.maxPoints || 8}
+                            {isEn ? `Mark: ${studentAns.score} / ${crit.maxPoints || 8}` : `Note : ${studentAns.score} / ${crit.maxPoints || 8}`}
                           </span>
                         )}
                       </div>
@@ -724,7 +777,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         <div className="my-2 p-2 bg-slate-50 border border-slate-200 rounded text-center avoid-break">
                           <img
                             src={ex.imageUrl}
-                            alt={ex.imageCaption || 'Illustration exercice'}
+                            alt={ex.imageCaption || (isEn ? 'Task illustration' : 'Illustration exercice')}
                             className="max-h-52 max-w-full mx-auto object-contain rounded"
                           />
                           {ex.imageCaption && (
@@ -746,7 +799,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                       {hasSubQuestions ? (
                         <div className="space-y-3 pt-1">
                           {subQuestions.map((sub, sIdx) => {
-                            const subStrand = getSubQuestionStrandLabel(crit.criterion, crit.strands, sub, sIdx);
+                            const subStrand = getSubQuestionStrandLabel(crit.criterion, crit.strands, sub, sIdx, isEn);
                             const subId = sub.id || `sub_${sIdx + 1}`;
                             const subAnswerData = studentAns?.subAnswers?.[subId];
                             const subResponseText = subAnswerData?.response;
@@ -773,7 +826,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                 {/* QCM */}
                                 {sub.type === 'multiple_choice' && (
                                   <div className="space-y-1 pt-1">
-                                    {(sub.options || ex.options || ['Proposition A', 'Proposition B', 'Proposition C']).map((opt, oIdx) => {
+                                    {(sub.options || ex.options || (isEn ? ['Option A', 'Option B', 'Option C'] : ['Proposition A', 'Proposition B', 'Proposition C'])).map((opt, oIdx) => {
                                       const isChosen = subResponseText === opt;
                                       return (
                                         <div key={oIdx} className="flex items-center gap-2 text-xs">
@@ -795,27 +848,29 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                     subResponseText ? (
                                       <div className="mt-1 bg-slate-50 border border-slate-200 rounded p-2 text-xs">
                                         <span className="text-[9.5px] font-bold text-slate-500 uppercase block mb-0.5">
-                                          Réponse de l'élève ({sub.label}) :
+                                          {isEn ? `Student's response (${sub.label}):` : `Réponse de l'élève (${sub.label}) :`}
                                         </span>
                                         <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
                                           {subResponseText}
                                         </p>
                                         {subDrawing && (
                                           <div className="mt-2 pt-1 border-t border-slate-200 text-center">
-                                            <span className="text-[9.5px] font-bold text-slate-500 block mb-0.5">Tracé / Dessin rattaché :</span>
+                                            <span className="text-[9.5px] font-bold text-slate-500 block mb-0.5">
+                                              {isEn ? 'Drawing / Attached figure:' : 'Tracé / Dessin rattaché :'}
+                                            </span>
                                             <img src={subDrawing} alt="Figure élève" className="max-h-36 max-w-full mx-auto border rounded bg-white" />
                                           </div>
                                         )}
                                       </div>
                                     ) : (
                                       <div className="mt-1 px-2.5 py-1 bg-slate-50 border border-dashed border-slate-200 rounded text-[10px] text-slate-400 italic">
-                                        Non répondu par l'élève
+                                        {isEn ? 'Not answered by student' : "Non répondu par l'élève"}
                                       </div>
                                     )
                                   ) : (
                                     <div className="mt-1.5 p-2 border border-slate-300 rounded bg-slate-50/20">
                                       <div className="text-[9px] font-semibold text-slate-400 uppercase mb-1">
-                                        Espace réponse pour {sub.label} :
+                                        {isEn ? `Answer space for ${sub.label}:` : `Espace réponse pour ${sub.label} :`}
                                       </div>
                                       <div className="border-b border-dotted border-slate-300 h-5"></div>
                                       <div className="border-b border-dotted border-slate-300 h-5"></div>
@@ -844,7 +899,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                           {/* QCM simple */}
                           {ex.type === 'multiple_choice' && (
                             <div className="space-y-1 pt-1">
-                              {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, oIdx) => {
+                              {(ex.options || (isEn ? ['Option A', 'Option B', 'Option C', 'Option D'] : ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'])).map((opt, oIdx) => {
                                 const isChosen = studentAns?.studentResponse === opt;
                                 return (
                                   <div key={oIdx} className="flex items-center gap-2 text-xs">
@@ -866,7 +921,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                               studentAns?.studentResponse ? (
                                 <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-xs">
                                   <span className="text-[9.5px] font-bold text-slate-500 uppercase block mb-0.5">
-                                    Réponse rédigée par l'élève :
+                                    {isEn ? "Student's written response:" : "Réponse rédigée par l'élève :"}
                                   </span>
                                   <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
                                     {studentAns.studentResponse}
@@ -875,7 +930,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                   {studentAns.drawingDataUrl && (
                                     <div className="mt-2 pt-1 border-t border-slate-200 text-center">
                                       <span className="text-[9.5px] font-bold text-slate-500 block mb-0.5">
-                                        Figure / Tracé de l'élève :
+                                        {isEn ? "Student's drawing / diagram:" : "Figure / Tracé de l'élève :"}
                                       </span>
                                       <img
                                         src={studentAns.drawingDataUrl}
@@ -889,7 +944,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                   {(studentAns.teacherComment || studentAns.aiFeedback) && (
                                     <div className="mt-2 p-1.5 bg-purple-50 border border-purple-200 rounded text-[10.5px]">
                                       <span className="text-[9px] font-bold text-purple-900 block uppercase">
-                                        Commentaire de l'enseignant :
+                                        {isEn ? "Teacher's comment:" : "Commentaire de l'enseignant :"}
                                       </span>
                                       <p className="text-purple-950 italic">
                                         {studentAns.teacherComment || studentAns.aiFeedback}
@@ -899,13 +954,13 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                 </div>
                               ) : (
                                 <div className="mt-1 px-2.5 py-1 bg-slate-50 border border-dashed border-slate-200 rounded text-[10px] text-slate-400 italic">
-                                  Non répondu par l'élève
+                                  {isEn ? 'Not answered by student' : "Non répondu par l'élève"}
                                 </div>
                               )
                             ) : (
                               <div className="mt-1.5 p-2 border border-slate-300 rounded bg-slate-50/20">
                                 <div className="text-[9px] font-semibold text-slate-400 uppercase mb-1">
-                                  Zone réservée pour la réponse rédigée de l'élève :
+                                  {isEn ? 'Reserved zone for student written response:' : 'Zone réservée pour la réponse rédigée de l\'élève :'}
                                 </div>
                                 <div className="border-b border-dotted border-slate-300 h-6"></div>
                                 <div className="border-b border-dotted border-slate-300 h-6"></div>
@@ -928,7 +983,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           {isCorrectedCopy && submission?.overallFeedback && (
             <div className="bg-purple-50/80 border border-purple-200 rounded p-2.5">
               <span className="text-[10px] font-bold text-purple-900 block uppercase mb-0.5">
-                💬 Appréciation globale de l'enseignant :
+                {isEn ? "💬 Teacher's General Feedback:" : "💬 Appréciation globale de l'enseignant :"}
               </span>
               <p className="text-slate-800 italic leading-relaxed text-[11px]">
                 "{submission.overallFeedback}"
@@ -939,36 +994,50 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           {/* Grille de signature officielle */}
           <div className="grid grid-cols-3 gap-3 pt-1">
             <div className="border border-slate-400 rounded p-2 h-20 bg-slate-50/40">
-              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">Signature de l'enseignant(e)</span>
-              <div className="mt-6 text-[8.5px] text-slate-400 italic">Date et signature</div>
+              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">
+                {isEn ? "Teacher's Signature" : "Signature de l'enseignant(e)"}
+              </span>
+              <div className="mt-6 text-[8.5px] text-slate-400 italic">
+                {isEn ? 'Date and signature' : 'Date et signature'}
+              </div>
             </div>
             <div className="border border-slate-400 rounded p-2 h-20 bg-slate-50/40">
-              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">Visa Direction / Coordonnateur PEI</span>
-              <div className="mt-6 text-[8.5px] text-slate-400 italic">Signature et cachet</div>
+              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">
+                {isEn ? 'IB MYP Coordinator / School Leadership' : 'Visa Direction / Coordonnateur PEI'}
+              </span>
+              <div className="mt-6 text-[8.5px] text-slate-400 italic">
+                {isEn ? 'Signature and stamp' : 'Signature et cachet'}
+              </div>
             </div>
             <div className="border border-slate-400 rounded p-2 h-20 bg-slate-50/40">
-              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">Signature des parents</span>
-              <div className="mt-6 text-[8.5px] text-slate-400 italic">Vu et pris connaissance</div>
+              <span className="text-[9.5px] font-bold text-slate-700 block uppercase">
+                {isEn ? "Parents' Signature" : 'Signature des parents'}
+              </span>
+              <div className="mt-6 text-[8.5px] text-slate-400 italic">
+                {isEn ? 'Seen and acknowledged' : 'Vu et pris connaissance'}
+              </div>
             </div>
           </div>
 
           <div className="text-center text-[9.5px] text-slate-500 pt-1 border-t border-slate-200">
-            Document officiel d'évaluation · Les Écoles Internationales Al-Kawthar · Système PEI IB
+            {isEn
+              ? 'Official Assessment Document · Al-Kawthar International Schools · IB MYP'
+              : "Document officiel d'évaluation · Les Écoles Internationales Al-Kawthar · Système PEI IB"}
           </div>
         </footer>
 
         {/* ── 6. PIED DE PAGE (DATE & NUMÉRO DE PAGE) ── */}
         <div className="print-footer-fixed">
           <div>
-            <span>Écoles Al-Kawthar · PEI IB</span>
+            <span>{isEn ? 'Al-Kawthar Schools · IB MYP' : 'Écoles Al-Kawthar · PEI IB'}</span>
             <span className="mx-1.5 text-slate-300">|</span>
-            <span>Date : {examDateFormatted}</span>
+            <span>{isEn ? 'Date: ' : 'Date : '}{examDateFormatted}</span>
           </div>
           <div className="font-semibold text-slate-700">
-            {evaluation.title} (Code : {evaluation.accessCode})
+            {evaluation.title} ({isEn ? 'Code' : 'Code'} : {evaluation.accessCode})
           </div>
           <div>
-            <span>Page </span>
+            <span>{isEn ? 'Page ' : 'Page '}</span>
             <span className="print-page-num font-bold">1</span>
           </div>
         </div>

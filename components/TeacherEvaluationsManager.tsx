@@ -3,6 +3,7 @@ import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus,
 import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
+import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 
 interface TeacherEvaluationsManagerProps {
   currentSubject?: string;
@@ -80,6 +81,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [editingEvaluation, setEditingEvaluation] = useState<OnlineEvaluation | null>(null);
   const [editingCriterionIdx, setEditingCriterionIdx] = useState(0);
   const [isSavingEvalChanges, setIsSavingEvalChanges] = useState(false);
+  const [showAiGenModal, setShowAiGenModal] = useState(false);
 
   // Submissions view & correction
   const [selectedEvaluation, setSelectedEvaluation] = useState<OnlineEvaluation | null>(null);
@@ -337,6 +339,18 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
     if (!targetCrit.exercises) targetCrit.exercises = [];
     targetCrit.exercises.push(newExercise);
+    setEditingEvaluation(newEval);
+  };
+
+  // Ajouter une question générée par l'IA selon le type et le sous-aspect
+  const handleAddAiGeneratedQuestion = (generatedQuestion: AssessmentExercise) => {
+    if (!editingEvaluation) return;
+    const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
+    const targetCrit = newEval.assessments[editingCriterionIdx];
+    if (!targetCrit) return;
+
+    if (!targetCrit.exercises) targetCrit.exercises = [];
+    targetCrit.exercises.push(generatedQuestion);
     setEditingEvaluation(newEval);
   };
 
@@ -1796,7 +1810,18 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                         <span className="text-[10px] font-black uppercase text-purple-900 tracking-wider block mb-2">
                           ➕ Ajouter une question (choisissez la modalité) :
                         </span>
-                        <div className="flex gap-2 flex-wrap">
+                        <div className="flex gap-2 flex-wrap items-center">
+                          {/* BOUTON IA EN VEDETTE : Génération selon la nature & sous-aspect */}
+                          <button
+                            type="button"
+                            onClick={() => setShowAiGenModal(true)}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 hover:from-purple-700 hover:to-indigo-800 text-white rounded-xl font-bold text-xs shadow-md transition transform active:scale-95"
+                            title="Générer une question ciblée avec l'IA en choisissant la nature (QCM, Vrai/Faux, etc.) et le sous-aspect"
+                          >
+                            <Sparkles size={14} className="text-yellow-300 animate-pulse" />
+                            <span>Générer avec l'IA</span>
+                          </button>
+
                           <button
                             type="button"
                             onClick={() => handleAddQuestionWithType(editingCriterionIdx, 'multiple_choice')}
@@ -2895,6 +2920,25 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               </div>
             </div>
           </div>
+        )}
+
+        {/* Modal de génération de questions ciblées avec l'IA */}
+        {showAiGenModal && editingEvaluation && editingEvaluation.assessments[editingCriterionIdx] && (
+          <GenerateCriterialQuestionModal
+            isOpen={showAiGenModal}
+            onClose={() => setShowAiGenModal(false)}
+            onAddQuestion={handleAddAiGeneratedQuestion}
+            subject={editingEvaluation.subject}
+            gradeLevel={editingEvaluation.grade}
+            criterion={editingEvaluation.assessments[editingCriterionIdx].criterion}
+            criterionName={editingEvaluation.assessments[editingCriterionIdx].criterionName}
+            availableStrands={editingEvaluation.assessments[editingCriterionIdx].strands || []}
+            unitTitle={editingEvaluation.unitTitle || editingEvaluation.title}
+            statementOfInquiry={editingEvaluation.statementOfInquiry}
+            keyConcept={editingEvaluation.keyConcept}
+            relatedConcepts={editingEvaluation.relatedConcepts}
+            existingQuestionsCount={editingEvaluation.assessments[editingCriterionIdx].exercises?.length || 0}
+          />
         )}
 
       </div>

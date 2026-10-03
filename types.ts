@@ -7,6 +7,7 @@ export interface AssessmentSubQuestion {
   type?: 'open' | 'true_false' | 'multiple_choice';
   options?: string[]; // Pour QCM: ["Option A", "Option B", "Option C", "Option D"]
   correctAnswer?: string;
+  answer?: string; // Corrigé indicatif pour la sous-question
   points?: number;
 }
 
@@ -19,6 +20,7 @@ export interface AssessmentExercise {
   type?: 'open' | 'true_false' | 'multiple_choice';
   options?: string[]; // Pour QCM: ["Option A", "Option B", "Option C", "Option D"]
   correctAnswer?: string; // Pour QCM ou Vrai/Faux
+  answer?: string; // Corrigé type / Grille de correction attendue
   workspaceNeeded?: boolean;
   imageUrl?: string; // Photo / oeuvre d'art / figure géométrique
   imageCaption?: string; // Légende de l'oeuvre (titre, artiste, date)

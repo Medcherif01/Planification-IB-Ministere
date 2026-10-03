@@ -8,6 +8,7 @@ import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise,
 import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation, createOrUpdateEvaluation } from '../services/onlineEvaluationService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GeometricDrawingModal from './GeometricDrawingModal';
+import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 
 interface StudentEvaluationPortalProps {
   initialAccessCode?: string;
@@ -26,13 +27,15 @@ function resolveStrandForQuestion(
   criterionLetter: string,
   strands: string[] = [],
   exercise: AssessmentExercise,
-  exerciseIndex: number
+  exerciseIndex: number,
+  isEn: boolean = false
 ): { roman: string; description: string; fullLabel: string } {
+  const prefix = isEn ? 'Strand' : 'Sous-aspect';
   if (exercise.strandIndex && exercise.strandText) {
     return {
       roman: exercise.strandIndex,
       description: exercise.strandText,
-      fullLabel: `Sous-aspect (${exercise.strandIndex}) : ${exercise.strandText}`,
+      fullLabel: `${prefix} (${exercise.strandIndex}) : ${exercise.strandText}`,
     };
   }
 
@@ -44,7 +47,7 @@ function resolveStrandForQuestion(
     return {
       roman,
       description: desc,
-      fullLabel: `Sous-aspect (${roman})${desc ? ` : ${desc}` : ''}`,
+      fullLabel: `${prefix} (${roman})${desc ? ` : ${desc}` : ''}`,
     };
   }
 
@@ -61,7 +64,7 @@ function resolveStrandForQuestion(
     return {
       roman: targetRoman,
       description: cleanDesc,
-      fullLabel: `Sous-aspect (${targetRoman}) : ${cleanDesc}`,
+      fullLabel: `${prefix} (${targetRoman}) : ${cleanDesc}`,
     };
   }
 
@@ -70,7 +73,7 @@ function resolveStrandForQuestion(
   return {
     roman: targetRoman,
     description: cleanFallback,
-    fullLabel: `Sous-aspect (${targetRoman}) : ${cleanFallback || `Compétence ${criterionLetter}`}`,
+    fullLabel: `${prefix} (${targetRoman}) : ${cleanFallback || (isEn ? `Criterion ${criterionLetter} Skill` : `Compétence ${criterionLetter}`)}`,
   };
 }
 
@@ -79,13 +82,15 @@ function resolveStrandForSubQuestion(
   criterionLetter: string,
   strands: string[] = [],
   sub: AssessmentSubQuestion,
-  subIndex: number
+  subIndex: number,
+  isEn: boolean = false
 ): { roman: string; description: string; fullLabel: string } {
+  const prefix = isEn ? 'Strand' : 'Sous-aspect';
   if (sub.strandIndex && sub.strandText) {
     return {
       roman: sub.strandIndex,
       description: sub.strandText,
-      fullLabel: `Sous-aspect (${sub.strandIndex}) : ${sub.strandText}`,
+      fullLabel: `${prefix} (${sub.strandIndex}) : ${sub.strandText}`,
     };
   }
 
@@ -102,7 +107,7 @@ function resolveStrandForSubQuestion(
     return {
       roman: targetRoman,
       description: cleanDesc,
-      fullLabel: `Sous-aspect (${targetRoman}) : ${cleanDesc}`,
+      fullLabel: `${prefix} (${targetRoman}) : ${cleanDesc}`,
     };
   }
 
@@ -111,7 +116,7 @@ function resolveStrandForSubQuestion(
   return {
     roman: targetRoman,
     description: cleanFallback,
-    fullLabel: `Sous-aspect (${targetRoman}) : ${cleanFallback || `Compétence ${criterionLetter}`}`,
+    fullLabel: `${prefix} (${targetRoman}) : ${cleanFallback || (isEn ? `Criterion ${criterionLetter} Skill` : `Compétence ${criterionLetter}`)}`,
   };
 }
 
@@ -198,6 +203,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
   // Print view modal
   const [showPrintModal, setShowPrintModal] = useState(false);
+
+  // Détection automatique si l'évaluation est en anglais
+  const isEn = evaluation ? isEnglishSubject(evaluation.subject) : false;
 
   // Sécurité plein écran & surveillance anti-fraude
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -611,7 +619,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       (evaluation.assessments || []).forEach(crit => {
         (crit.exercises || []).forEach((ex, exIdx) => {
           const mainKey = `${crit.criterion}_${exIdx}`;
-          const strand = resolveStrandForQuestion(crit.criterion, crit.strands, ex, exIdx);
+          const strand = resolveStrandForQuestion(crit.criterion, crit.strands, ex, exIdx, isEn);
           const subQuestions = getExerciseSubQuestions(ex, crit.criterion, crit.strands);
 
           let combinedResponse = '';
@@ -1276,7 +1284,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               {(activeAssessment.exercises || []).map((ex, exIdx) => {
                 const subQuestions = getExerciseSubQuestions(ex, activeAssessment.criterion, activeAssessment.strands);
                 const hasSubQuestions = subQuestions.length > 0;
-                const mainStrand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx);
+                const mainStrand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx, isEn);
 
                 return (
                   <div
@@ -1336,7 +1344,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                           const subKey = `${activeAssessment.criterion}_${exIdx}_sub_${sIdx}`;
                           const subAnswer = answers[subKey] || '';
                           const subDrawing = drawings[subKey];
-                          const subStrand = resolveStrandForSubQuestion(activeAssessment.criterion, activeAssessment.strands, sub, sIdx);
+                          const subStrand = resolveStrandForSubQuestion(activeAssessment.criterion, activeAssessment.strands, sub, sIdx, isEn);
                           const subQType = sub.type || ex.type || 'open';
 
                           return (
