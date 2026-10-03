@@ -706,8 +706,6 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             ...c,
             isUsed: false,
             usedAt: undefined,
-            studentName: '',
-            studentNumber: '',
             allowedRetake: false,
           };
         }
@@ -769,10 +767,12 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
     setIsSavingCodes(true);
     try {
+      const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
+      const defaultMat = `PEI${gradeDigit}-${String(currentCodes.length + 1).padStart(3, '0')}`;
       const newCodeObj: IndividualAccessCode = {
         code: cleanCode,
         studentName: newCustomStudentName.trim(),
-        studentNumber: newCustomStudentNumber.trim(),
+        studentNumber: newCustomStudentNumber.trim() || defaultMat,
         isUsed: false,
         allowedRetake: false,
         createdAt: new Date().toISOString(),
@@ -813,12 +813,14 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         .filter(n => n > 0);
       let nextNum = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : currentCodes.length + 1;
 
+      const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
       const newCodes: IndividualAccessCode[] = [];
       for (let i = 0; i < qty; i++) {
+        const seq = nextNum + i;
         newCodes.push({
-          code: `${managingCodesEval.accessCode}-${String(nextNum + i).padStart(2, '0')}`,
+          code: `${managingCodesEval.accessCode}-${String(seq).padStart(2, '0')}`,
           studentName: '',
-          studentNumber: '',
+          studentNumber: `PEI${gradeDigit}-${String(seq).padStart(3, '0')}`,
           isUsed: false,
           allowedRetake: false,
           createdAt: new Date().toISOString(),
@@ -2814,18 +2816,22 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               </td>
 
                               <td className="px-4 py-2.5">
-                                {codeObj.studentName ? (
-                                  <div>
-                                    <span className="font-bold text-slate-800 block text-xs">{codeObj.studentName}</span>
-                                    {codeObj.studentNumber && (
-                                      <span className="text-[10px] text-slate-500 font-mono">
-                                        Matricule : {codeObj.studentNumber}
+                                {(() => {
+                                  const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
+                                  const effectiveMat = codeObj.studentNumber || `PEI${gradeDigit}-${String(idx + 1).padStart(3, '0')}`;
+                                  return (
+                                    <div>
+                                      {codeObj.studentName ? (
+                                        <span className="font-bold text-slate-800 block text-xs">{codeObj.studentName}</span>
+                                      ) : (
+                                        <span className="text-slate-400 italic text-[11px] block">Nom saisi à la connexion</span>
+                                      )}
+                                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded">
+                                        🔒 Matricule obligatoire : {effectiveMat}
                                       </span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-slate-400 italic text-[11px]">Non assigné (saisi à la connexion)</span>
-                                )}
+                                    </div>
+                                  );
+                                })()}
                               </td>
 
                               <td className="px-4 py-2.5">
@@ -3033,9 +3039,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase block">N° d'inscription (Matricule) :</span>
-                        <span className="font-mono font-bold text-slate-800 block border-b border-slate-300 pb-0.5 min-h-[18px]">
-                          {codeObj.studentNumber || ''}
+                        <span className="text-[10px] font-bold text-slate-500 uppercase block">N° d'inscription (Matricule obligatoire) :</span>
+                        <span className="font-mono font-bold text-slate-900 block border-b border-slate-300 pb-0.5 min-h-[18px]">
+                          {codeObj.studentNumber || `PEI${(managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1'}-${String(cIdx + 1).padStart(3, '0')}`}
                         </span>
                       </div>
                     </div>

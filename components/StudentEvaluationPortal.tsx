@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation, createOrUpdateEvaluation } from '../services/onlineEvaluationService';
+import { fetchAllStudents, normalizeMatricule, normalizeGradeLabel } from '../services/studentRosterService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GeometricDrawingModal from './GeometricDrawingModal';
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
@@ -220,7 +221,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     }
   }, [initialAccessCode]);
 
-  // Pré-remplir automatiquement le nom et le matricule si le code saisi est un code nominatif propre à un élève
+  // Pré-remplir uniquement le nom de l'élève si le code saisi est nominatif (NE JAMAIS pré-remplir le matricule : l'élève doit obligatoirement le saisir lui-même)
   useEffect(() => {
     const clean = accessCode.trim().toUpperCase();
     if (clean.length < 8 || !clean.includes('-')) return;
@@ -232,9 +233,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         const matched = evalData.studentAccessCodes.find(
           sc => sc.code.trim().toUpperCase() === clean
         );
-        if (matched) {
-          if (matched.studentName) setStudentName(matched.studentName);
-          if (matched.studentNumber) setStudentNumber(matched.studentNumber);
+        if (matched && matched.studentName) {
+          setStudentName(matched.studentName);
         }
       } catch {}
     }, 250);
@@ -341,24 +341,121 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         return;
       }
 
-      // Vérifier si cleanCode est un code d'accès individuel pré-assigné à un élève
-      const individualCode = evalData.studentAccessCodes?.find(sc => sc.code.trim().toUpperCase() === cleanCode);
-      if (individualCode) {
-        if (!cleanName && individualCode.studentName) {
-          cleanName = individualCode.studentName;
-          setStudentName(cleanName);
-        }
-        if (!cleanNum && individualCode.studentNumber) {
-          cleanNum = individualCode.studentNumber;
-          setStudentNumber(cleanNum);
-        }
-      }
-
       if (!cleanNum) {
-        setLoginError('Veuillez saisir votre N° d\'inscription / Matricule.');
+        setLoginError('❌ Accès refusé : Veuillez saisir votre N° d\'inscription / Matricule. L\'accès est bloqué sans matricule.');
         setIsValidating(false);
         return;
       }
+
+      // Charger la liste officielle des élèves de la classe pour vérifier le matricule
+      const normGrade = normalizeGradeLabel(evalData.grade);
+      const gradeDigit = normGrade.replace(/[^1-5]/g, '') || '1';
+      const classStudents = await fetchAllStudents(normGrade);
+      const enteredMat = normalizeMatricule(cleanNum);
+
+      // Vérifier si cleanCode est un code d'accès individuel pré-assigné à un élève
+      const individualCode = evalData.studentAccessCodes?.find(sc => sc.code.trim().toUpperCase() === cleanCode);
+
+      if (individualCode) {
+        // Déterminer le matricule exact attendu pour ce code individuel
+        const codeMat = normalizeMatricule(individualCode.studentNumber);
+        const rosterByName = individualCode.studentName
+          ? classStudents.find(s => s.name.trim().toLowerCase() === individualCode.studentName!.trim().toLowerCase())
+          : undefined;
+        const rosterNameMat = normalizeMatricule(rosterByName?.studentNumber);
+
+        // Si le code n'avait pas encore de matricule enregistré (ancienne évaluation), vérifier la position du code (-01, -02...)
+        const slotMatch = cleanCode.match(/-(\d+)$/);
+        const slotIndex = slotMatch ? parseInt(slotMatch[1], 10) - 1 : -1;
+        const slotRosterStudent = !codeMat && !rosterNameMat && slotIndex >= 0 && slotIndex < classStudents.length
+          ? classStudents[slotIndex]
+          : undefined;
+        const slotRosterMat = normalizeMatricule(slotRosterStudent?.studentNumber);
+        const defaultSlotMat = !codeMat && !rosterNameMat && classStudents.length === 0 && slotIndex >= 0
+          ? `PEI${gradeDigit}-${String(slotIndex + 1).padStart(3, '0')}`
+          : '';
+
+        const validExpectedMats = [codeMat, rosterNameMat, slotRosterMat, defaultSlotMat].filter(Boolean);
+
+        if (validExpectedMats.length > 0) {
+          if (!validExpectedMats.includes(enteredMat)) {
+            const targetStudentLabel = individualCode.studentName || rosterByName?.name || slotRosterStudent?.name || '';
+            setLoginError(
+              `❌ Accès refusé : Le N° d'inscription / Matricule saisi ("${cleanNum}") est incorrect${targetStudentLabel ? ` pour l'élève ${targetStudentLabel}` : ''}. Vous devez obligatoirement écrire votre matricule exact pour accéder à l'évaluation.`
+            );
+            setIsValidating(false);
+            return;
+          }
+        } else if (classStudents.length > 0) {
+          // Cas d'un code supplémentaire personnalisé sans numéro de slot mais avec une liste de classe active
+          const matchedInRoster = classStudents.find(s => normalizeMatricule(s.studentNumber) === enteredMat);
+          if (!matchedInRoster) {
+            setLoginError(
+              `❌ Accès refusé : Le N° d'inscription / Matricule "${cleanNum}" est incorrect et ne figure pas dans la liste officielle de la classe ${normGrade}.`
+            );
+            setIsValidating(false);
+            return;
+          }
+          // Vérifier que ce matricule n'appartient pas déjà à un autre code individuel de l'évaluation
+          const otherAssigned = evalData.studentAccessCodes?.find(
+            sc =>
+              sc.code.trim().toUpperCase() !== cleanCode &&
+              (normalizeMatricule(sc.studentNumber) === enteredMat ||
+                (sc.studentName && sc.studentName.trim().toLowerCase() === matchedInRoster.name.trim().toLowerCase()))
+          );
+          if (otherAssigned) {
+            setLoginError(
+              `❌ Accès refusé : Ce matricule appartient à un autre code d'accès individuel (${otherAssigned.code}). Veuillez utiliser votre propre code et matricule.`
+            );
+            setIsValidating(false);
+            return;
+          }
+          if (!cleanName) {
+            cleanName = matchedInRoster.name;
+            setStudentName(cleanName);
+          }
+        }
+
+        // Compléter le nom officiel de l'élève si le matricule est correct
+        const officialName = individualCode.studentName || rosterByName?.name || slotRosterStudent?.name || '';
+        if (!cleanName && officialName) {
+          cleanName = officialName;
+          setStudentName(cleanName);
+        }
+      } else {
+        // L'élève a saisi le code général de l'évaluation (ex: EVAL-4892) :
+        // Vérifier que le matricule saisi existe dans les codes de l'évaluation ou dans la liste de la classe
+        const matchedCodeByMat = evalData.studentAccessCodes?.find(
+          sc => sc.studentNumber && normalizeMatricule(sc.studentNumber) === enteredMat
+        );
+        const matchedRosterByMat = classStudents.find(
+          s => s.studentNumber && normalizeMatricule(s.studentNumber) === enteredMat
+        );
+
+        if (!matchedCodeByMat && !matchedRosterByMat) {
+          setLoginError(
+            `❌ Accès refusé : Le N° d'inscription / Matricule "${cleanNum}" est incorrect. Vous ne pouvez pas avoir accès à l'évaluation sans saisir un matricule valide de la classe ${normGrade}.`
+          );
+          setIsValidating(false);
+          return;
+        }
+
+        // Si le matricule correspond à un code individuel déjà utilisé et non réautorisé, bloquer l'accès
+        if (matchedCodeByMat && matchedCodeByMat.isUsed && !matchedCodeByMat.allowedRetake) {
+          setLoginError(
+            `❌ Accès refusé : Le matricule "${cleanNum}" (${matchedCodeByMat.studentName || 'Élève'}) a déjà composé et remis sa copie avec le code ${matchedCodeByMat.code}.`
+          );
+          setIsValidating(false);
+          return;
+        }
+
+        const officialName = matchedCodeByMat?.studentName || matchedRosterByMat?.name || '';
+        if (!cleanName && officialName) {
+          cleanName = officialName;
+          setStudentName(cleanName);
+        }
+      }
+
       if (!cleanName) {
         setLoginError('Veuillez saisir votre nom et prénom complets.');
         setIsValidating(false);
@@ -841,16 +938,19 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">
-                  N° d'inscription / Matricule <span className="text-rose-500">*</span>
+                  N° d'inscription / Matricule obligatoire <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={studentNumber}
                   onChange={e => setStudentNumber(e.target.value)}
-                  placeholder="Ex: 2024-8491"
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 focus:border-purple-600 rounded-xl text-sm font-mono font-bold focus:outline-none transition"
+                  placeholder="Saisissez votre matricule exact (ex: PEI1-001)"
+                  className="w-full px-4 py-2.5 bg-slate-50 border-2 border-slate-300 focus:border-purple-600 rounded-xl text-sm font-mono font-bold focus:outline-none transition"
                   required
                 />
+                <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                  🔒 Si le matricule saisi est incorrect, l'accès à l'évaluation sera refusé.
+                </p>
               </div>
 
               <div>

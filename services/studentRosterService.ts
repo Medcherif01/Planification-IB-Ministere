@@ -1,6 +1,12 @@
 import { ClassStudent, IndividualAccessCode } from '../types';
+import { getEvaluations, createOrUpdateEvaluation } from './onlineEvaluationService';
 
 const LOCAL_STORAGE_KEY = 'alkawthar_class_students_v1';
+
+// Normaliser un numéro de matricule pour une comparaison stricte (insensible à la casse et aux espaces)
+export function normalizeMatricule(matricule?: string): string {
+  return (matricule || '').trim().toUpperCase();
+}
 
 // Normaliser le nom de la classe (ex: "PEI1" -> "PEI 1", "PEI 1 (6ème)" -> "PEI 1")
 export function normalizeGradeLabel(grade: string): string {
@@ -149,6 +155,26 @@ export async function saveStudentsForGrade(
     // Sauvegardé en local
   }
 
+  // Synchroniser automatiquement les codes des évaluations existantes de cette classe avec les matricules à jour
+  try {
+    const evals = await getEvaluations();
+    const matchingEvals = evals.filter(ev => normalizeGradeLabel(ev.grade) === normGrade);
+    for (const ev of matchingEvals) {
+      const { codes } = await generateCleanStudentCodesForEvaluation(
+        ev.accessCode,
+        normGrade,
+        ev.studentAccessCodes?.length || 25,
+        ev.studentAccessCodes || []
+      );
+      await createOrUpdateEvaluation({
+        ...ev,
+        studentAccessCodes: codes,
+      });
+    }
+  } catch (e) {
+    console.warn('Synchronisation automatique des codes avec les évaluations:', e);
+  }
+
   return sortedGrade;
 }
 
@@ -225,30 +251,36 @@ export async function generateCleanStudentCodesForEvaluation(
   fallbackCount: number = 25,
   existingCodes: IndividualAccessCode[] = []
 ): Promise<{ codes: IndividualAccessCode[]; fromClassRoster: boolean; rosterCount: number }> {
-  const classStudents = await fetchAllStudents(grade);
+  const normGrade = normalizeGradeLabel(grade);
+  const gradeDigit = normGrade.replace(/[^1-5]/g, '') || '1';
+  const classStudents = await fetchAllStudents(normGrade);
   const cleanPrefix = accessCode.trim().toUpperCase();
 
   if (classStudents.length > 0) {
     const generated: IndividualAccessCode[] = classStudents.map((stu, idx) => {
+      const targetCode = `${cleanPrefix}-${String(idx + 1).padStart(2, '0')}`;
+      const expectedMat = stu.studentNumber || `PEI${gradeDigit}-${String(idx + 1).padStart(3, '0')}`;
       // Vérifier si l'élève avait déjà un code assigné dans existingCodes
       const alreadyAssigned = existingCodes.find(
         c =>
           (c.studentNumber && stu.studentNumber && c.studentNumber.toLowerCase() === stu.studentNumber.toLowerCase()) ||
-          (c.studentName && c.studentName.trim().toLowerCase() === stu.name.trim().toLowerCase())
+          (c.studentName && c.studentName.trim().toLowerCase() === stu.name.trim().toLowerCase()) ||
+          c.code.trim().toUpperCase() === targetCode
       );
 
       if (alreadyAssigned) {
         return {
           ...alreadyAssigned,
+          code: targetCode,
           studentName: stu.name,
-          studentNumber: stu.studentNumber || alreadyAssigned.studentNumber,
+          studentNumber: expectedMat,
         };
       }
 
       return {
-        code: `${cleanPrefix}-${String(idx + 1).padStart(2, '0')}`,
+        code: targetCode,
         studentName: stu.name,
-        studentNumber: stu.studentNumber,
+        studentNumber: expectedMat,
         isUsed: false,
         allowedRetake: false,
         createdAt: new Date().toISOString(),
@@ -262,17 +294,21 @@ export async function generateCleanStudentCodesForEvaluation(
     };
   }
 
-  // Fallback si aucun élève n'est encore enregistré dans cette classe
+  // Fallback si aucun élève n'est encore enregistré dans cette classe : attribuer un matricule propre obligatoire à chaque code
   const count = Math.max(1, fallbackCount);
   const fallbackCodes: IndividualAccessCode[] = [];
   for (let i = 1; i <= count; i++) {
+    const targetCode = `${cleanPrefix}-${String(i).padStart(2, '0')}`;
+    const existing = existingCodes.find(c => c.code.trim().toUpperCase() === targetCode);
+    const defaultMatricule = `PEI${gradeDigit}-${String(i).padStart(3, '0')}`;
     fallbackCodes.push({
-      code: `${cleanPrefix}-${String(i).padStart(2, '0')}`,
-      studentName: '',
-      studentNumber: '',
-      isUsed: false,
-      allowedRetake: false,
-      createdAt: new Date().toISOString(),
+      code: targetCode,
+      studentName: existing?.studentName || '',
+      studentNumber: existing?.studentNumber?.trim() || defaultMatricule,
+      isUsed: existing?.isUsed || false,
+      usedAt: existing?.usedAt,
+      allowedRetake: existing?.allowedRetake || false,
+      createdAt: existing?.createdAt || new Date().toISOString(),
     });
   }
 
