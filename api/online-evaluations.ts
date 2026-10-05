@@ -205,15 +205,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 3. DELETE Requests
       if (req.method === 'DELETE') {
         if (action === 'delete_submission') {
-          const { submissionId } = req.query;
-          if (!submissionId) return res.status(400).json({ error: 'submissionId requis' });
+          const { submissionId, evalId, accessCode, studentNumber } = req.query;
+          if (!submissionId && !studentNumber) return res.status(400).json({ error: 'submissionId requis' });
+
+          const normMat = (v: any) => String(v || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
           const subIdx = inMemorySubmissions.findIndex(s => s.id === submissionId);
           let deletedSub: any = null;
           if (subIdx !== -1) {
             deletedSub = inMemorySubmissions[subIdx];
             inMemorySubmissions.splice(subIdx, 1);
           }
-          return res.status(200).json({ success: true, deleted: subIdx !== -1 ? 1 : 0, deletedSubmission: deletedSub });
+
+          const targetEvalId = evalId || deletedSub?.evaluationId;
+          const targetCode = String(accessCode || deletedSub?.accessCode || '').trim().toUpperCase();
+          const targetStudentNum = normMat(studentNumber || deletedSub?.studentNumber);
+
+          // Purger toute autre copie résiduelle de ce même élève pour cette évaluation
+          if (targetStudentNum && (targetEvalId || targetCode)) {
+            for (let i = inMemorySubmissions.length - 1; i >= 0; i--) {
+              const s = inMemorySubmissions[i];
+              const sameEval = (targetEvalId && s.evaluationId === targetEvalId) ||
+                               (targetCode && String(s.accessCode || '').trim().toUpperCase() === targetCode);
+              if (sameEval && normMat(s.studentNumber) === targetStudentNum) {
+                inMemorySubmissions.splice(i, 1);
+              }
+            }
+          }
+
+          // Réouvrir automatiquement le matricule de l'élève dans l'évaluation pour qu'il puisse refaire l'évaluation
+          let updatedEval: any = null;
+          const evalIdx = inMemoryEvaluations.findIndex(
+            e => (targetEvalId && e.id === targetEvalId) ||
+                 (targetCode && String(e.accessCode || '').trim().toUpperCase() === targetCode)
+          );
+          if (evalIdx !== -1 && Array.isArray(inMemoryEvaluations[evalIdx].studentAccessCodes)) {
+            inMemoryEvaluations[evalIdx].studentAccessCodes = inMemoryEvaluations[evalIdx].studentAccessCodes.map((sc: any) => {
+              if (
+                sc.submissionId === submissionId ||
+                (targetStudentNum && normMat(sc.studentNumber) === targetStudentNum)
+              ) {
+                return {
+                  ...sc,
+                  isUsed: false,
+                  allowedRetake: true,
+                  usedAt: undefined,
+                  submissionId: undefined,
+                };
+              }
+              return sc;
+            });
+            updatedEval = inMemoryEvaluations[evalIdx];
+          }
+
+          return res.status(200).json({
+            success: true,
+            deleted: 1,
+            deletedSubmission: deletedSub,
+            updatedEvaluation: updatedEval,
+          });
         }
         const { id } = req.query;
         if (!id) return res.status(400).json({ error: 'ID requis pour la suppression' });
@@ -236,9 +285,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'GET') {
       if (action === 'student_submission') {
         const { accessCode, studentNumber } = req.query;
+        const cleanNum = String(studentNumber || '').trim();
+        const escapedNum = cleanNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const sub = await subCol.findOne({
-          accessCode: String(accessCode).trim().toUpperCase(),
-          studentNumber: String(studentNumber).trim(),
+          accessCode: String(accessCode || '').trim().toUpperCase(),
+          studentNumber: { $regex: new RegExp(`^${escapedNum}$`, 'i') },
         });
         return res.status(200).json({ submission: sub || null });
       }
@@ -353,10 +404,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 3. DELETE Requests
     if (req.method === 'DELETE') {
       if (action === 'delete_submission') {
-        const { submissionId } = req.query;
-        if (!submissionId) return res.status(400).json({ error: 'submissionId requis' });
-        const result = await subCol.deleteOne({ id: submissionId });
-        return res.status(200).json({ success: true, deleted: result.deletedCount });
+        const { submissionId, evalId, accessCode, studentNumber } = req.query;
+        if (!submissionId && !studentNumber) return res.status(400).json({ error: 'submissionId requis' });
+
+        const normMat = (v: any) => String(v || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+        const existingSub = submissionId ? await subCol.findOne({ id: submissionId }) : null;
+        const result = submissionId ? await subCol.deleteOne({ id: submissionId }) : { deletedCount: 0 };
+
+        const targetEvalId = String(evalId || existingSub?.evaluationId || '');
+        const targetCode = String(accessCode || existingSub?.accessCode || '').trim().toUpperCase();
+        const rawStudentNum = String(studentNumber || existingSub?.studentNumber || '').trim();
+        const targetStudentNum = normMat(rawStudentNum);
+
+        if (rawStudentNum && (targetEvalId || targetCode)) {
+          const escapedNum = rawStudentNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const extraFilter: any = {
+            studentNumber: { $regex: new RegExp(`^${escapedNum}$`, 'i') },
+          };
+          if (targetEvalId) extraFilter.evaluationId = targetEvalId;
+          else if (targetCode) extraFilter.accessCode = targetCode;
+          await subCol.deleteMany(extraFilter);
+        }
+
+        // Réouvrir automatiquement le matricule de l'élève dans l'évaluation pour qu'il puisse refaire l'épreuve
+        let updatedEvaluation: any = null;
+        if (targetEvalId || targetCode) {
+          const evalFilter = targetEvalId ? { id: targetEvalId } : { accessCode: targetCode };
+          const evalDoc = await evalCol.findOne(evalFilter);
+          if (evalDoc && Array.isArray(evalDoc.studentAccessCodes)) {
+            const updatedCodes = evalDoc.studentAccessCodes.map((sc: any) => {
+              if (
+                sc.submissionId === submissionId ||
+                (targetStudentNum && normMat(sc.studentNumber) === targetStudentNum)
+              ) {
+                return {
+                  ...sc,
+                  isUsed: false,
+                  allowedRetake: true,
+                  usedAt: undefined,
+                  submissionId: undefined,
+                };
+              }
+              return sc;
+            });
+            await evalCol.updateOne(evalFilter, { $set: { studentAccessCodes: updatedCodes } });
+            updatedEvaluation = { ...evalDoc, studentAccessCodes: updatedCodes };
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          deleted: result.deletedCount || 1,
+          updatedEvaluation,
+        });
       }
       const { id } = req.query;
       if (!id) return res.status(400).json({ error: 'ID requis' });

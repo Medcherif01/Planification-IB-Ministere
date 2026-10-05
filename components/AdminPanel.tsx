@@ -161,19 +161,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     if (!validatedCopyIds[sub.id]) return;
     setDeletingCopyId(sub.id);
     try {
-      await deleteStudentSubmission(sub.id, 'admin', ev.id);
-      const shouldResetMatricule = resetMatriculeCopyIds[sub.id] !== false;
-      if (shouldResetMatricule && ev.studentAccessCodes) {
-        const cleanNum = (sub.studentNumber || '').trim().toUpperCase();
+      await deleteStudentSubmission(sub.id, ev.accessCode || sub.accessCode, sub.studentNumber, ev.id);
+      if (ev.studentAccessCodes) {
+        const normMat = (v: any) => String(v || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+        const cleanNum = normMat(sub.studentNumber);
         const updatedCodes = ev.studentAccessCodes.map(sc => {
-          const scNum = (sc.studentNumber || '').trim().toUpperCase();
+          const scNum = normMat(sc.studentNumber);
           if (sc.submissionId === sub.id || (cleanNum && scNum === cleanNum)) {
             return {
               ...sc,
               isUsed: false,
               usedAt: undefined,
               submissionId: undefined,
-              allowedRetake: false,
+              allowedRetake: true,
             };
           }
           return sc;

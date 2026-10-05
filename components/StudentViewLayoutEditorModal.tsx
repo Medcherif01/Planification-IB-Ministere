@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X, Eye, Sliders, ArrowUp, ArrowDown, Edit3, Plus, Trash2, Check, Sparkles,
-  Calculator, List, Layers, Clock, CheckCircle, Send, Save, RotateCcw
+  Calculator, Clock, CheckCircle, Save
 } from 'lucide-react';
 import {
   OnlineEvaluation,
@@ -10,14 +10,16 @@ import {
   AssessmentSubQuestion,
 } from '../types';
 import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './ScientificCalculatorAndMathBar';
-import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
+import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
+import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 
 interface StudentViewLayoutEditorModalProps {
   evaluation: OnlineEvaluation;
-  isOpen: boolean;
+  isOpen?: boolean;
   isSaving?: boolean;
   onClose: () => void;
-  onSaveEvaluation: (updated: OnlineEvaluation) => Promise<void>;
+  onSave?: (updated: OnlineEvaluation) => Promise<void> | void;
+  onSaveEvaluation?: (updated: OnlineEvaluation) => Promise<void> | void;
   onOpenDetailedQuestionEditor?: (updated: OnlineEvaluation, criterionIdx?: number) => void;
 }
 
@@ -28,11 +30,14 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   D: { bg: 'bg-rose-50',    border: 'border-rose-300',   text: 'text-rose-800',    badge: 'bg-rose-600',    light: 'bg-rose-100' },
 };
 
+const ROMAN_NUMERALS = ['i', 'ii', 'iii', 'iv', 'v'];
+
 const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> = ({
   evaluation,
-  isOpen,
+  isOpen = true,
   isSaving = false,
   onClose,
+  onSave,
   onSaveEvaluation,
   onOpenDetailedQuestionEditor,
 }) => {
@@ -40,6 +45,8 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
   const [viewMode, setViewMode] = useState<'organize' | 'pure_student'>('organize');
   const [showLayoutPanel, setShowLayoutPanel] = useState<boolean>(true);
   const [activeCriterionIdx, setActiveCriterionIdx] = useState<number>(0);
+  const [savingInternal, setSavingInternal] = useState<boolean>(false);
+  const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
   // État pour tester l'interface comme un élève (calculatrice, réponses, parenthèses/accolades)
   const [testAnswers, setTestAnswers] = useState<Record<string, string>>({});
@@ -47,8 +54,19 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
   const [activeTextareaKey, setActiveTextareaKey] = useState<string | null>(null);
   const [activeTextareaLabel, setActiveTextareaLabel] = useState<string>('');
 
-  // Édition rapide sur place d'un exercice
-  const [inlineEditingKey, setInlineEditingKey] = useState<string | null>(null);
+  // Modale IA intégrée directement dans la vue examen élève
+  const [aiModalTarget, setAiModalTarget] = useState<{
+    critIdx: number;
+    exIdx: number | null;
+    initialStrand: string;
+    initialType: GenerateQuestionOptions['questionType'];
+  } | null>(null);
+
+  useEffect(() => {
+    if (evaluation) {
+      setDraftEval(JSON.parse(JSON.stringify(evaluation)));
+    }
+  }, [evaluation]);
 
   if (!isOpen) return null;
 
@@ -79,6 +97,22 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
     }));
   };
 
+  const handleTriggerSave = async () => {
+    const saveFn = onSave || onSaveEvaluation;
+    if (!saveFn) return;
+    setSavingInternal(true);
+    setSaveSuccess(false);
+    try {
+      await saveFn(draftEval);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3500);
+    } catch (err: any) {
+      alert(`Erreur lors de l'enregistrement : ${err?.message || 'Impossible de sauvegarder'}`);
+    } finally {
+      setSavingInternal(false);
+    }
+  };
+
   // Numérotation continue des exercices
   const getGlobalExerciseNumber = (critIdx: number, exIdx: number): number => {
     if (layout.numberingStyle === 'by_criterion') return exIdx + 1;
@@ -89,7 +123,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
     return count + exIdx + 1;
   };
 
-  // ── Actions de réorganisation (Critères, Exercices, Sous-questions) ─────────
+  // ── Actions de réorganisation et d'édition directe sur la page d'examen ────
 
   const handleMoveCriterion = (critIdx: number, direction: 'up' | 'down') => {
     const targetIdx = direction === 'up' ? critIdx - 1 : critIdx + 1;
@@ -121,7 +155,6 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
     if (targetIdx < 0 || targetIdx >= subs.length) return;
     const [moved] = subs.splice(subIdx, 1);
     subs.splice(targetIdx, 0, moved);
-    // Renuméroter proprement 1), 2), 3)...
     const renumbered = subs.map((s, i) => ({
       ...s,
       label: `${i + 1})`,
@@ -150,6 +183,42 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
     handleUpdateExerciseField(critIdx, exIdx, { subQuestions: nextSubs });
   };
 
+  const handleAddSubQuestion = (critIdx: number, exIdx: number) => {
+    const crit = draftEval.assessments[critIdx];
+    const ex = crit?.exercises?.[exIdx];
+    if (!crit || !ex) return;
+    const currentSubs = ex.subQuestions || [];
+    const nextNum = currentSubs.length + 1;
+    const roman = ROMAN_NUMERALS[(nextNum - 1) % ROMAN_NUMERALS.length];
+    const matchedDesc =
+      crit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') ||
+      `Compétence du sous-aspect (${roman})`;
+
+    const newSub: AssessmentSubQuestion = {
+      id: `sub_${Date.now()}_${nextNum}`,
+      label: `${nextNum})`,
+      content: `Sous-question ${nextNum} : énoncé...`,
+      strandIndex: roman,
+      strandText: matchedDesc,
+      type: 'open',
+      expectedLines: layout.answerBoxRows || 4,
+    };
+    handleUpdateExerciseField(critIdx, exIdx, {
+      subQuestions: [...currentSubs, newSub],
+    });
+  };
+
+  const handleDeleteSubQuestion = (critIdx: number, exIdx: number, subIdx: number) => {
+    const ex = draftEval.assessments[critIdx]?.exercises?.[exIdx];
+    if (!ex || !ex.subQuestions) return;
+    const nextSubs = ex.subQuestions
+      .filter((_, idx) => idx !== subIdx)
+      .map((s, i) => ({ ...s, label: `${i + 1})` }));
+    handleUpdateExerciseField(critIdx, exIdx, {
+      subQuestions: nextSubs.length > 0 ? nextSubs : undefined,
+    });
+  };
+
   const handleDeleteExercise = (critIdx: number, exIdx: number) => {
     const nextAssessments = draftEval.assessments.map((c, cI) => {
       if (cI !== critIdx) return c;
@@ -161,23 +230,63 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
     setDraftEval(prev => ({ ...prev, assessments: nextAssessments }));
   };
 
-  const handleAddQuickExercise = (critIdx: number) => {
+  const handleAddQuickExercise = (critIdx: number, questionFormat: 'open' | 'multiple_choice' | 'subquestions' | 'true_false' = 'open') => {
     const crit = draftEval.assessments[critIdx];
     if (!crit) return;
+    const nextIdx = (crit.exercises?.length || 0) + 1;
+    const roman = ROMAN_NUMERALS[(nextIdx - 1) % ROMAN_NUMERALS.length];
+    const defaultStrand =
+      crit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') ||
+      'Sélectionner et appliquer les concepts appropriés';
+
     const newEx: AssessmentExercise = {
-      title: `Exercice ${(crit.exercises?.length || 0) + 1}`,
-      content: 'Énoncé de la question...',
-      criterionReference: `Critère ${crit.criterion} : i.`,
-      strandIndex: 'i',
-      strandText: crit.strands?.[0]?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Compétence évaluée',
-      type: 'open',
+      title: `Exercice ${nextIdx}`,
+      content: 'Énoncé de la question à résoudre...',
+      criterionReference: `Critère ${crit.criterion} : ${roman}.`,
+      strandIndex: roman,
+      strandText: defaultStrand,
+      type: questionFormat === 'subquestions' ? 'open' : questionFormat,
       expectedLines: layout.answerBoxRows || 4,
+      ...(questionFormat === 'multiple_choice'
+        ? {
+            options: ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'],
+            correctAnswer: 'Proposition A',
+          }
+        : {}),
+      ...(questionFormat === 'true_false'
+        ? {
+            options: ['Vrai', 'Faux'],
+            correctAnswer: 'Vrai',
+          }
+        : {}),
+      ...(questionFormat === 'subquestions'
+        ? {
+            subQuestions: [
+              {
+                id: `sub_${Date.now()}_1`,
+                label: '1)',
+                content: 'Première sous-question...',
+                strandIndex: 'i',
+                strandText: crit.strands?.[0]?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Sous-aspect (i)',
+                type: 'open',
+              },
+              {
+                id: `sub_${Date.now()}_2`,
+                label: '2)',
+                content: 'Deuxième sous-question...',
+                strandIndex: 'ii',
+                strandText: crit.strands?.[1]?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Sous-aspect (ii)',
+                type: 'open',
+              },
+            ],
+          }
+        : {}),
     };
+
     const nextAssessments = draftEval.assessments.map((c, cI) =>
       cI === critIdx ? { ...c, exercises: [...(c.exercises || []), newEx] } : c
     );
     setDraftEval(prev => ({ ...prev, assessments: nextAssessments }));
-    setInlineEditingKey(`${crit.criterion}_${crit.exercises?.length || 0}`);
   };
 
   // Insertion de symboles mathématiques / parenthèses / accolades dans la zone de test élève
@@ -224,24 +333,31 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
       ? [{ crit: draftEval.assessments[activeCriterionIdx], critIdx: activeCriterionIdx }]
       : [];
 
+  const isBusySaving = isSaving || savingInternal;
+
   return (
-    <div className="fixed inset-0 z-[92] bg-slate-950/80 backdrop-blur-sm flex flex-col overflow-hidden animate-fadeIn">
+    <div className="fixed inset-0 z-[115] bg-slate-950/85 backdrop-blur-sm flex flex-col overflow-hidden animate-fadeIn">
       {/* ═══════════════════════════════════════════════════════════════════════
-          BARRE SUPÉRIEURE ENSEIGNANT : CONTRÔLE DE L'APERÇU & MISE EN PAGE
+          BARRE SUPÉRIEURE ENSEIGNANT : CONTRÔLE DE LA PAGE D'EXAMEN ÉLÈVE
           ═══════════════════════════════════════════════════════════════════════ */}
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-purple-950 text-white px-4 sm:px-6 py-3 border-b border-white/15 flex items-center justify-between gap-3 flex-wrap flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-purple-600/30 border border-purple-400/40 flex items-center justify-center text-purple-200 font-black">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300 font-black">
             <Eye size={20} />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                Version Élève & Mise en Page
+                Page d'Examen Élève — Voir & Modifier en direct
               </span>
               <span className="text-xs font-mono text-purple-300 font-bold">
-                Code : {draftEval.accessCode}
+                Code Classe : {draftEval.accessCode}
               </span>
+              {saveSuccess && (
+                <span className="text-xs font-bold bg-emerald-500 text-slate-950 px-2.5 py-0.5 rounded-full flex items-center gap-1 animate-fadeIn">
+                  <CheckCircle size={13} /> Modifications enregistrées !
+                </span>
+              )}
             </div>
             <h2 className="text-sm sm:text-base font-black text-white truncate">
               {draftEval.title} ({draftEval.subject} · {draftEval.grade})
@@ -249,7 +365,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
           </div>
         </div>
 
-        {/* Commutateur : Mode Organisation/Mise en page vs Mode 100% Élève */}
+        {/* Commutateur : Mode Voir & Modifier sur la copie vs Mode Tester comme un Élève */}
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center bg-slate-800/90 p-1 rounded-xl border border-slate-700">
             <button
@@ -261,8 +377,8 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <Sliders size={13} />
-              <span>Organiser & Modifier sur place</span>
+              <Edit3 size={13} />
+              <span>✏️ Voir & Modifier l'Examen</span>
             </button>
             <button
               type="button"
@@ -274,7 +390,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
               }`}
             >
               <Eye size={13} />
-              <span>Aperçu 100% Élève (Tester)</span>
+              <span>👁️ Aperçu Pur Élève (Tester)</span>
             </button>
           </div>
 
@@ -288,7 +404,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
             }`}
           >
             <Sliders size={13} />
-            <span>{showLayoutPanel ? 'Masquer options mise en page' : 'Options de mise en page'}</span>
+            <span>{showLayoutPanel ? 'Masquer Mise en Page' : 'Options de Mise en Page'}</span>
           </button>
 
           {onOpenDetailedQuestionEditor && (
@@ -296,21 +412,21 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
               type="button"
               onClick={() => onOpenDetailedQuestionEditor(draftEval, activeCriterionIdx)}
               className="px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5"
-              title="Ouvrir l'éditeur complet avec générateur IA par question"
+              title="Ouvrir l'éditeur détaillé"
             >
               <Sparkles size={13} className="text-yellow-300" />
-              <span>Éditeur IA Détaillé</span>
+              <span>Éditeur Détaillé</span>
             </button>
           )}
 
           <button
             type="button"
-            disabled={isSaving}
-            onClick={() => onSaveEvaluation(draftEval)}
+            disabled={isBusySaving}
+            onClick={handleTriggerSave}
             className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs shadow-lg transition flex items-center gap-1.5 disabled:opacity-50"
           >
             <Save size={14} />
-            <span>{isSaving ? 'Enregistrement…' : 'Enregistrer la mise en page'}</span>
+            <span>{isBusySaving ? 'Enregistrement…' : '💾 Enregistrer les modifications'}</span>
           </button>
 
           <button
@@ -434,7 +550,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          ZONE DE RENDU EXACT DE LA VERSION ÉLÈVE (SCROLLABLE)
+          ZONE DE RENDU EXACT DE LA PAGE D'EXAMEN ÉLÈVE (SCROLLABLE)
           ═══════════════════════════════════════════════════════════════════════ */}
       <div className="flex-1 overflow-y-auto bg-slate-100 text-slate-900">
         {/* Simulation de la barre sticky de l'élève */}
@@ -460,7 +576,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs transition"
                 >
                   <Calculator size={14} />
-                  <span>Calculatrice</span>
+                  <span>Calculatrice Scientifique</span>
                 </button>
               )}
 
@@ -476,6 +592,29 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
         <div className={`max-w-5xl mx-auto w-full p-4 sm:p-6 ${
           layout.spacing === 'compact' ? 'space-y-4' : layout.spacing === 'spacious' ? 'space-y-8' : 'space-y-6'
         }`}>
+          {/* Bandeau d'aide pour l'enseignant en mode édition directe */}
+          {viewMode === 'organize' && (
+            <div className="bg-indigo-50 border-2 border-indigo-200 rounded-2xl px-4 py-3 flex items-center justify-between flex-wrap gap-2 text-xs text-indigo-950">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 bg-indigo-600 text-white font-black rounded text-[10px] uppercase">
+                  Mode Édition Directe
+                </span>
+                <span className="font-semibold">
+                  Vous voyez la page d'examen telle qu'elle apparaît chez l'élève. Cliquez directement sur les titres, énoncés, sous-aspects ou options pour les modifier, ou utilisez les flèches ↑ ↓ pour réorganiser.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleTriggerSave}
+                disabled={isBusySaving}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-2xs transition flex items-center gap-1"
+              >
+                <Save size={13} />
+                <span>{isBusySaving ? 'Enregistrement…' : 'Enregistrer'}</span>
+              </button>
+            </div>
+          )}
+
           {/* 1. EN-TÊTE OFFICIEL DE L'ÉVALUATION */}
           {layout.headerStyle === 'official_ib' ? (
             <div className="bg-white rounded-3xl border-2 border-slate-300 shadow-xs overflow-hidden">
@@ -485,13 +624,24 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                     Les Écoles Internationales Al-Kawthar · Baccalauréat International (PEI)
                   </span>
                   {viewMode === 'organize' ? (
-                    <input
-                      type="text"
-                      value={draftEval.title}
-                      onChange={e => setDraftEval(prev => ({ ...prev, title: e.target.value }))}
-                      className="w-full mt-1 bg-white/10 border border-white/20 rounded-xl px-3 py-1 text-base sm:text-lg font-black text-white focus:outline-none focus:border-purple-400"
-                      placeholder="Titre de l'évaluation..."
-                    />
+                    <div className="mt-1.5 flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={draftEval.title}
+                        onChange={e => setDraftEval(prev => ({ ...prev, title: e.target.value }))}
+                        className="flex-1 bg-white/15 border border-white/30 rounded-xl px-3 py-1.5 text-base sm:text-lg font-black text-white focus:outline-none focus:border-emerald-400"
+                        placeholder="Titre de l'évaluation..."
+                      />
+                      <div className="flex items-center gap-1.5 bg-white/10 border border-white/25 rounded-xl px-3 py-1 text-xs">
+                        <span className="text-purple-200 font-bold">Durée (min) :</span>
+                        <input
+                          type="number"
+                          value={draftEval.durationMinutes || 45}
+                          onChange={e => setDraftEval(prev => ({ ...prev, durationMinutes: parseInt(e.target.value) || 45 }))}
+                          className="w-16 bg-slate-900/80 text-amber-300 font-black text-center rounded-lg p-1 border border-white/20"
+                        />
+                      </div>
+                    </div>
                   ) : (
                     <h1 className="text-lg sm:text-xl font-black mt-1 text-white">{draftEval.title}</h1>
                   )}
@@ -532,7 +682,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                       onChange={e => setDraftEval(prev => ({ ...prev, instructions: e.target.value }))}
                       rows={2}
                       placeholder="Ajoutez vos consignes générales pour les élèves (ex: L'usage de la calculatrice intégrée est autorisé, détaillez toutes les étapes de vos calculs...)"
-                      className="w-full p-2 bg-white border border-amber-300 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-purple-500"
+                      className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-purple-500 font-medium"
                     />
                   ) : (
                     <p className="text-xs leading-relaxed whitespace-pre-wrap">
@@ -651,7 +801,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                         )}
 
                         {viewMode === 'organize' && (
-                          <div className="flex items-center gap-1 bg-white/90 p-1 rounded-xl border border-slate-300 shadow-2xs">
+                          <div className="flex items-center gap-1.5 bg-white/95 p-1.5 rounded-xl border border-slate-300 shadow-2xs flex-wrap">
                             <button
                               type="button"
                               disabled={critIdx === 0}
@@ -672,11 +822,34 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleAddQuickExercise(critIdx)}
-                              className="flex items-center gap-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition"
+                              onClick={() => handleAddQuickExercise(critIdx, 'open')}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition"
                             >
                               <Plus size={13} />
                               <span>+ Exercice</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleAddQuickExercise(critIdx, 'subquestions')}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition"
+                            >
+                              <Plus size={13} />
+                              <span>+ Sous-questions 1), 2)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAiModalTarget({
+                                  critIdx,
+                                  exIdx: null,
+                                  initialStrand: 'i',
+                                  initialType: 'open',
+                                })
+                              }
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-2xs"
+                            >
+                              <Sparkles size={13} className="text-yellow-300" />
+                              <span>+ Générer par IA</span>
                             </button>
                           </div>
                         )}
@@ -689,8 +862,8 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                     {(activeAssessment.exercises || []).map((ex, exIdx) => {
                       const exerciseNum = getGlobalExerciseNumber(critIdx, exIdx);
                       const hasSubQuestions = Boolean(ex.subQuestions && ex.subQuestions.length > 0);
+                      const qFormat = hasSubQuestions ? 'subquestions' : (ex.type || 'open');
                       const editKey = `${activeAssessment.criterion}_${exIdx}`;
-                      const isInlineEditing = viewMode === 'organize' && inlineEditingKey === editKey;
 
                       return (
                         <div
@@ -698,21 +871,21 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                           key={exIdx}
                           className={`bg-white rounded-3xl ${
                             layout.spacing === 'compact' ? 'p-4 sm:p-5 space-y-4' : layout.spacing === 'spacious' ? 'p-7 sm:p-8 space-y-6' : 'p-6 sm:p-7 space-y-5'
-                          } border-2 ${isInlineEditing ? 'border-purple-500 ring-4 ring-purple-100' : 'border-slate-200'} shadow-sm transition`}
+                          } border-2 border-slate-200 hover:border-purple-300 shadow-sm transition`}
                         >
-                          {/* En-tête de l'exercice + Contrôles d'organisation (Monter / Descendre / Modifier) */}
+                          {/* En-tête de l'exercice + Contrôles d'organisation (Monter / Descendre / Format / IA / Supprimer) */}
                           <div className="flex items-center justify-between border-b-2 border-slate-100 pb-3.5 flex-wrap gap-2">
-                            <div className="flex items-center gap-3 flex-1 min-w-[220px]">
+                            <div className="flex items-center gap-3 flex-1 min-w-[240px]">
                               <span className={`px-3.5 py-1.5 rounded-xl text-xs font-black text-white shadow-2xs flex-shrink-0 ${activeColors.badge}`}>
                                 Exercice {exerciseNum}
                               </span>
-                              {isInlineEditing ? (
+                              {viewMode === 'organize' ? (
                                 <input
                                   type="text"
                                   value={ex.title}
                                   onChange={e => handleUpdateExerciseField(critIdx, exIdx, { title: e.target.value })}
-                                  className="flex-1 p-1.5 bg-purple-50 border border-purple-300 rounded-lg font-black text-sm text-slate-900"
-                                  placeholder="Titre de l'exercice..."
+                                  className="flex-1 p-2 bg-slate-50 hover:bg-white focus:bg-white border border-slate-300 focus:border-purple-500 rounded-xl font-black text-sm sm:text-base text-slate-900 focus:outline-none"
+                                  placeholder={`Titre de l'exercice ${exerciseNum}...`}
                                 />
                               ) : (
                                 <h4 className="font-black text-base sm:text-lg text-slate-900">
@@ -722,82 +895,132 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                             </div>
 
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
-                                {hasSubQuestions
-                                  ? `${ex.subQuestions?.length} sous-questions`
-                                  : ex.type === 'multiple_choice' ? '☑️ QCM' : ex.type === 'true_false' ? '⚖️ Vrai / Faux' : '📝 Rédaction & Calculs'}
-                              </span>
+                              {viewMode === 'organize' ? (
+                                <>
+                                  {/* Sélecteur direct de type de question */}
+                                  <select
+                                    value={qFormat}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      if (val === 'subquestions') {
+                                        if (!ex.subQuestions || ex.subQuestions.length === 0) {
+                                          handleAddSubQuestion(critIdx, exIdx);
+                                        }
+                                      } else {
+                                        const updates: Partial<AssessmentExercise> = {
+                                          type: val as any,
+                                          subQuestions: undefined,
+                                        };
+                                        if (val === 'multiple_choice' && (!ex.options || ex.options.length === 0)) {
+                                          updates.options = ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'];
+                                          updates.correctAnswer = 'Proposition A';
+                                        }
+                                        handleUpdateExerciseField(critIdx, exIdx, updates);
+                                      }
+                                    }}
+                                    className="px-2.5 py-1.5 bg-purple-50 border border-purple-200 rounded-xl text-xs font-bold text-purple-900 focus:outline-none"
+                                    title="Changer le format de cette question"
+                                  >
+                                    <option value="open">📝 Rédaction & Calculs</option>
+                                    <option value="multiple_choice">☑️ QCM (Choix multiples)</option>
+                                    <option value="subquestions">🔢 Sous-questions 1), 2), 3)...</option>
+                                    <option value="true_false">⚖️ Vrai / Faux</option>
+                                  </select>
 
-                              {/* Barre d'actions d'organisation Enseignant sur chaque exercice */}
-                              {viewMode === 'organize' && (
-                                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-300">
-                                  <button
-                                    type="button"
-                                    disabled={exIdx === 0}
-                                    onClick={() => handleMoveExercise(critIdx, exIdx, 'up')}
-                                    className="p-1.5 bg-white hover:bg-purple-50 text-slate-700 rounded-lg disabled:opacity-30 shadow-2xs"
-                                    title="Monter cet exercice dans l'ordre"
-                                  >
-                                    <ArrowUp size={13} />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={exIdx === (activeAssessment.exercises?.length || 1) - 1}
-                                    onClick={() => handleMoveExercise(critIdx, exIdx, 'down')}
-                                    className="p-1.5 bg-white hover:bg-purple-50 text-slate-700 rounded-lg disabled:opacity-30 shadow-2xs"
-                                    title="Descendre cet exercice dans l'ordre"
-                                  >
-                                    <ArrowDown size={13} />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setInlineEditingKey(isInlineEditing ? null : editKey)}
-                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition ${
-                                      isInlineEditing
-                                        ? 'bg-emerald-600 text-white'
-                                        : 'bg-white hover:bg-purple-50 text-purple-800 border border-purple-200'
-                                    }`}
-                                  >
-                                    {isInlineEditing ? <><Check size={12} /> Terminer</> : <><Edit3 size={12} /> Modifier ici</>}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteExercise(critIdx, exIdx)}
-                                    className="p-1.5 bg-white hover:bg-rose-50 text-rose-600 rounded-lg shadow-2xs"
-                                    title="Supprimer cet exercice"
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
+                                  {/* Barre d'actions d'organisation Enseignant sur chaque exercice */}
+                                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-300">
+                                    <button
+                                      type="button"
+                                      disabled={exIdx === 0}
+                                      onClick={() => handleMoveExercise(critIdx, exIdx, 'up')}
+                                      className="p-1.5 bg-white hover:bg-purple-50 text-slate-700 rounded-lg disabled:opacity-30 shadow-2xs"
+                                      title="Monter cet exercice dans l'ordre"
+                                    >
+                                      <ArrowUp size={13} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={exIdx === (activeAssessment.exercises?.length || 1) - 1}
+                                      onClick={() => handleMoveExercise(critIdx, exIdx, 'down')}
+                                      className="p-1.5 bg-white hover:bg-purple-50 text-slate-700 rounded-lg disabled:opacity-30 shadow-2xs"
+                                      title="Descendre cet exercice dans l'ordre"
+                                    >
+                                      <ArrowDown size={13} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setAiModalTarget({
+                                          critIdx,
+                                          exIdx,
+                                          initialStrand: ex.strandIndex || 'i',
+                                          initialType: hasSubQuestions ? 'subquestions' : (ex.type || 'open'),
+                                        })
+                                      }
+                                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-2xs transition"
+                                      title="Générer ou remplacer cette question avec l'IA"
+                                    >
+                                      <Sparkles size={12} className="text-yellow-300" />
+                                      <span>IA</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteExercise(critIdx, exIdx)}
+                                      className="p-1.5 bg-white hover:bg-rose-50 text-rose-600 rounded-lg shadow-2xs"
+                                      title="Supprimer cet exercice"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                </>
+                              ) : (
+                                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
+                                  {hasSubQuestions
+                                    ? `${ex.subQuestions?.length} sous-questions`
+                                    : ex.type === 'multiple_choice'
+                                    ? '☑️ QCM'
+                                    : ex.type === 'true_false'
+                                    ? '⚖️ Vrai / Faux'
+                                    : '📝 Rédaction & Calculs'}
+                                </span>
                               )}
                             </div>
                           </div>
 
-                          {/* Édition rapide sur place de l'énoncé et de la hauteur du cadre */}
-                          {isInlineEditing ? (
-                            <div className="bg-purple-50/60 border border-purple-200 rounded-2xl p-4 space-y-3">
-                              <div className="flex items-center justify-between gap-2 flex-wrap">
-                                <label className="text-[11px] font-black text-purple-900 uppercase">
-                                  Énoncé / Contexte de l'exercice :
-                                </label>
-                                <div className="flex items-center gap-2 text-xs">
-                                  <span className="text-slate-600 font-semibold">Lignes de réponse :</span>
-                                  <select
-                                    value={ex.expectedLines || layout.answerBoxRows || 4}
-                                    onChange={e => handleUpdateExerciseField(critIdx, exIdx, { expectedLines: parseInt(e.target.value) || 4 })}
-                                    className="p-1 bg-white border border-purple-300 rounded font-bold text-xs"
-                                  >
-                                    {[2, 3, 4, 5, 6, 8, 10].map(n => (
-                                      <option key={n} value={n}>{n} lignes</option>
-                                    ))}
-                                  </select>
-                                </div>
+                          {/* Énoncé de l'exercice : directement modifiable en mode 'organize' */}
+                          {viewMode === 'organize' ? (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
+                                <span>
+                                  {hasSubQuestions ? 'Contexte / Énoncé général du problème :' : 'Consigne / Énoncé de la question :'}
+                                </span>
+                                {!hasSubQuestions && (!ex.type || ex.type === 'open') && (
+                                  <div className="flex items-center gap-1.5">
+                                    <span>Hauteur zone de réponse :</span>
+                                    <select
+                                      value={ex.expectedLines || layout.answerBoxRows || 4}
+                                      onChange={e =>
+                                        handleUpdateExerciseField(critIdx, exIdx, {
+                                          expectedLines: parseInt(e.target.value) || 4,
+                                        })
+                                      }
+                                      className="p-1 bg-slate-100 border border-slate-300 rounded font-bold text-xs text-slate-800"
+                                    >
+                                      {[2, 3, 4, 5, 6, 8, 10].map(n => (
+                                        <option key={n} value={n}>
+                                          {n} lignes
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
                               </div>
                               <textarea
                                 value={ex.content}
                                 onChange={e => handleUpdateExerciseField(critIdx, exIdx, { content: e.target.value })}
-                                rows={3}
-                                className="w-full p-3 bg-white border border-purple-300 rounded-xl text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                rows={hasSubQuestions ? 2 : 3}
+                                placeholder="Saisissez l'énoncé de la question ici..."
+                                className="w-full p-3.5 bg-slate-50/90 hover:bg-white focus:bg-white border border-slate-300 focus:border-purple-500 rounded-2xl text-sm text-slate-900 font-medium leading-relaxed focus:outline-none transition"
                               />
                             </div>
                           ) : (
@@ -836,16 +1059,21 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                     className="bg-slate-50/70 border-2 border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3"
                                   >
                                     <div className="flex items-start justify-between gap-2">
-                                      <div className="flex items-baseline gap-2.5 flex-1">
-                                        <span className="font-black text-sm text-white bg-purple-700 px-2.5 py-0.5 rounded-lg flex-shrink-0">
+                                      <div className="flex items-center gap-2.5 flex-1">
+                                        <span className="font-black text-sm text-white bg-purple-700 px-2.5 py-1 rounded-lg flex-shrink-0">
                                           {sub.label || `${sIdx + 1})`}
                                         </span>
-                                        {isInlineEditing ? (
+                                        {viewMode === 'organize' ? (
                                           <input
                                             type="text"
                                             value={sub.content}
-                                            onChange={e => handleUpdateSubQuestionField(critIdx, exIdx, sIdx, { content: e.target.value })}
-                                            className="flex-1 p-1.5 bg-white border border-purple-300 rounded-lg text-sm font-bold text-slate-900"
+                                            onChange={e =>
+                                              handleUpdateSubQuestionField(critIdx, exIdx, sIdx, {
+                                                content: e.target.value,
+                                              })
+                                            }
+                                            placeholder={`Énoncé de la sous-question ${sub.label || `${sIdx + 1})`}...`}
+                                            className="flex-1 p-2 bg-white border border-slate-300 focus:border-purple-500 rounded-xl text-sm font-bold text-slate-900 focus:outline-none"
                                           />
                                         ) : (
                                           <h5 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
@@ -854,9 +1082,26 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                         )}
                                       </div>
 
-                                      {/* Réorganisation de l'ordre des sous-questions */}
+                                      {/* Réorganisation et suppression des sous-questions */}
                                       {viewMode === 'organize' && (
-                                        <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 flex-shrink-0">
+                                        <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 flex-shrink-0">
+                                          <select
+                                            value={sub.type || 'open'}
+                                            onChange={e => {
+                                              const val = e.target.value as any;
+                                              const patch: Partial<AssessmentSubQuestion> = { type: val };
+                                              if (val === 'multiple_choice' && (!sub.options || sub.options.length === 0)) {
+                                                patch.options = ['Option A', 'Option B', 'Option C'];
+                                                patch.correctAnswer = 'Option A';
+                                              }
+                                              handleUpdateSubQuestionField(critIdx, exIdx, sIdx, patch);
+                                            }}
+                                            className="p-1 bg-slate-50 border border-slate-200 rounded text-[11px] font-bold text-slate-700"
+                                          >
+                                            <option value="open">📝 Rédaction</option>
+                                            <option value="multiple_choice">☑️ QCM</option>
+                                            <option value="true_false">⚖️ Vrai/Faux</option>
+                                          </select>
                                           <button
                                             type="button"
                                             disabled={sIdx === 0}
@@ -875,37 +1120,99 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                           >
                                             <ArrowDown size={12} />
                                           </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteSubQuestion(critIdx, exIdx, sIdx)}
+                                            className="p-1 hover:bg-rose-50 text-rose-600 rounded"
+                                            title="Supprimer cette sous-question"
+                                          >
+                                            <Trash2 size={12} />
+                                          </button>
                                         </div>
                                       )}
                                     </div>
 
                                     {layout.showStrandBadges !== false && (
-                                      <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50 px-3 py-1.5 rounded-xl border border-red-200">
-                                        <span className="text-red-700 font-black">
-                                          ● {isEn ? 'Strand' : 'Sous-aspect'} ({sub.strandIndex || 'i'}) : {sub.strandText || 'Compétence évaluée'}
-                                        </span>
+                                      <div className="text-red-600 font-bold text-xs flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-xl border border-red-200 flex-wrap">
+                                        {viewMode === 'organize' ? (
+                                          <>
+                                            <span className="text-red-700 font-black">● {isEn ? 'Strand' : 'Sous-aspect'} :</span>
+                                            <select
+                                              value={sub.strandIndex || 'i'}
+                                              onChange={e => {
+                                                const val = e.target.value;
+                                                const matchedDesc =
+                                                  activeAssessment.strands
+                                                    ?.find(s => s.toLowerCase().startsWith(`${val}.`))
+                                                    ?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
+                                                handleUpdateSubQuestionField(critIdx, exIdx, sIdx, {
+                                                  strandIndex: val,
+                                                  strandText: matchedDesc || sub.strandText || '',
+                                                });
+                                              }}
+                                              className="p-1 bg-white border border-red-300 rounded font-black text-xs text-red-800"
+                                            >
+                                              {ROMAN_NUMERALS.map(r => (
+                                                <option key={r} value={r}>
+                                                  ({r})
+                                                </option>
+                                              ))}
+                                            </select>
+                                            <input
+                                              type="text"
+                                              value={sub.strandText || ''}
+                                              onChange={e =>
+                                                handleUpdateSubQuestionField(critIdx, exIdx, sIdx, {
+                                                  strandText: e.target.value,
+                                                })
+                                              }
+                                              placeholder="Compétence évaluée..."
+                                              className="flex-1 min-w-[180px] p-1 bg-white border border-red-300 rounded text-xs font-bold text-red-900"
+                                            />
+                                          </>
+                                        ) : (
+                                          <span className="text-red-700 font-black">
+                                            ● {isEn ? 'Strand' : 'Sous-aspect'} ({sub.strandIndex || 'i'}) : {sub.strandText || 'Compétence évaluée'}
+                                          </span>
+                                        )}
                                       </div>
                                     )}
 
                                     {subQType === 'multiple_choice' && (
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                                        {(sub.options || ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, oIdx) => {
-                                          const isSelected = subAnswer === opt;
-                                          return (
-                                            <div
-                                              key={oIdx}
-                                              onClick={() => setTestAnswers(prev => ({ ...prev, [subKey]: opt }))}
-                                              className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
-                                                isSelected
-                                                  ? 'bg-purple-100 border-purple-600 text-purple-950 font-bold'
-                                                  : 'bg-white border-slate-200 text-slate-700'
-                                              }`}
-                                            >
-                                              <div className={`w-4 h-4 rounded-full border-2 ${isSelected ? 'border-purple-600 bg-purple-600' : 'border-slate-400'}`} />
-                                              <span className="text-sm">{opt}</span>
-                                            </div>
-                                          );
-                                        })}
+                                      <div className="space-y-2 pt-1">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                          {(sub.options || ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, oIdx) => {
+                                            const isSelected = subAnswer === opt;
+                                            return (
+                                              <div
+                                                key={oIdx}
+                                                onClick={() => setTestAnswers(prev => ({ ...prev, [subKey]: opt }))}
+                                                className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-2.5 ${
+                                                  isSelected
+                                                    ? 'bg-purple-100 border-purple-600 text-purple-950 font-bold'
+                                                    : 'bg-white border-slate-200 text-slate-700'
+                                                }`}
+                                              >
+                                                <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${isSelected ? 'border-purple-600 bg-purple-600' : 'border-slate-400'}`} />
+                                                {viewMode === 'organize' ? (
+                                                  <input
+                                                    type="text"
+                                                    value={opt}
+                                                    onClick={e => e.stopPropagation()}
+                                                    onChange={e => {
+                                                      const nextOpts = [...(sub.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'])];
+                                                      nextOpts[oIdx] = e.target.value;
+                                                      handleUpdateSubQuestionField(critIdx, exIdx, sIdx, { options: nextOpts });
+                                                    }}
+                                                    className="flex-1 p-1 bg-slate-50 border border-slate-300 rounded text-xs font-semibold text-slate-900"
+                                                  />
+                                                ) : (
+                                                  <span className="text-sm">{opt}</span>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
                                       </div>
                                     )}
 
@@ -961,36 +1268,135 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                   </div>
                                 );
                               })}
+
+                              {viewMode === 'organize' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddSubQuestion(critIdx, exIdx)}
+                                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-dashed border-indigo-300 rounded-xl text-xs font-bold transition"
+                                >
+                                  <Plus size={14} />
+                                  <span>+ Ajouter une sous-question ({(ex.subQuestions?.length || 0) + 1}))</span>
+                                </button>
+                              )}
                             </div>
                           ) : (
                             <div className="space-y-4">
                               {layout.showStrandBadges !== false && (
-                                <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50/70 px-3 py-1.5 rounded-xl border border-red-200">
-                                  <span className="text-red-700 font-black">
-                                    ● {isEn ? 'Strand' : 'Sous-aspect'} ({ex.strandIndex || 'i'}) : {ex.strandText || ex.criterionReference || 'Compétence évaluée'}
-                                  </span>
+                                <div className="text-red-600 font-bold text-xs flex items-center justify-between gap-2 bg-red-50/70 px-3 py-2 rounded-xl border border-red-200 flex-wrap">
+                                  {viewMode === 'organize' ? (
+                                    <div className="flex items-center gap-2 flex-1 flex-wrap">
+                                      <span className="text-red-700 font-black">● {isEn ? 'Strand' : 'Sous-aspect'} :</span>
+                                      <select
+                                        value={ex.strandIndex || 'i'}
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const matchedDesc =
+                                            activeAssessment.strands
+                                              ?.find(s => s.toLowerCase().startsWith(`${val}.`))
+                                              ?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
+                                          handleUpdateExerciseField(critIdx, exIdx, {
+                                            strandIndex: val,
+                                            strandText: matchedDesc || ex.strandText || '',
+                                            criterionReference: `Critère ${activeAssessment.criterion} : ${val}.`,
+                                          });
+                                        }}
+                                        className="p-1 bg-white border border-red-300 rounded font-black text-xs text-red-800"
+                                      >
+                                        {ROMAN_NUMERALS.map(r => (
+                                          <option key={r} value={r}>
+                                            Sous-aspect ({r})
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="text"
+                                        value={ex.strandText || ''}
+                                        onChange={e => handleUpdateExerciseField(critIdx, exIdx, { strandText: e.target.value })}
+                                        placeholder="Description de la compétence évaluée..."
+                                        className="flex-1 min-w-[200px] p-1 bg-white border border-red-300 rounded text-xs font-bold text-red-900"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleAddSubQuestion(critIdx, exIdx)}
+                                        className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-bold"
+                                      >
+                                        + Diviser en 1), 2)...
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-red-700 font-black">
+                                      ● {isEn ? 'Strand' : 'Sous-aspect'} ({ex.strandIndex || 'i'}) : {ex.strandText || ex.criterionReference || 'Compétence évaluée'}
+                                    </span>
+                                  )}
                                 </div>
                               )}
 
                               {ex.type === 'multiple_choice' && (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                                  {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, oIdx) => {
-                                    const isSelected = testAnswers[editKey] === opt;
-                                    return (
-                                      <div
-                                        key={oIdx}
-                                        onClick={() => setTestAnswers(prev => ({ ...prev, [editKey]: opt }))}
-                                        className={`p-3.5 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
-                                          isSelected
-                                            ? 'bg-purple-50 border-purple-600 text-purple-950 font-bold'
-                                            : 'bg-white border-slate-200 text-slate-700'
-                                        }`}
-                                      >
-                                        <div className={`w-4 h-4 rounded-full border-2 ${isSelected ? 'border-purple-600 bg-purple-600' : 'border-slate-300'}`} />
-                                        <span className="text-sm">{opt}</span>
-                                      </div>
-                                    );
-                                  })}
+                                <div className="space-y-2.5 pt-1">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, oIdx) => {
+                                      const isSelected = testAnswers[editKey] === opt;
+                                      return (
+                                        <div
+                                          key={oIdx}
+                                          onClick={() => setTestAnswers(prev => ({ ...prev, [editKey]: opt }))}
+                                          className={`p-3.5 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
+                                            isSelected
+                                              ? 'bg-purple-50 border-purple-600 text-purple-950 font-bold'
+                                              : 'bg-white border-slate-200 text-slate-700'
+                                          }`}
+                                        >
+                                          <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${isSelected ? 'border-purple-600 bg-purple-600' : 'border-slate-300'}`} />
+                                          {viewMode === 'organize' ? (
+                                            <div className="flex items-center gap-1.5 flex-1" onClick={e => e.stopPropagation()}>
+                                              <input
+                                                type="text"
+                                                value={opt}
+                                                onChange={e => {
+                                                  const nextOptions = [...(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'])];
+                                                  const oldVal = nextOptions[oIdx];
+                                                  nextOptions[oIdx] = e.target.value;
+                                                  const patch: Partial<AssessmentExercise> = { options: nextOptions };
+                                                  if (ex.correctAnswer === oldVal) patch.correctAnswer = e.target.value;
+                                                  handleUpdateExerciseField(critIdx, exIdx, patch);
+                                                }}
+                                                className="flex-1 p-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-semibold text-slate-900"
+                                              />
+                                              {(ex.options || []).length > 2 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const nextOptions = (ex.options || []).filter((_, i) => i !== oIdx);
+                                                    handleUpdateExerciseField(critIdx, exIdx, { options: nextOptions });
+                                                  }}
+                                                  className="text-slate-400 hover:text-rose-600 px-1"
+                                                  title="Supprimer cette option"
+                                                >
+                                                  ✕
+                                                </button>
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <span className="text-sm">{opt}</span>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {viewMode === 'organize' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const curr = ex.options || ['Proposition A', 'Proposition B'];
+                                        const nextLabel = `Proposition ${String.fromCharCode(65 + curr.length)}`;
+                                        handleUpdateExerciseField(critIdx, exIdx, { options: [...curr, nextLabel] });
+                                      }}
+                                      className="text-xs font-bold text-purple-700 hover:text-purple-900"
+                                    >
+                                      + Ajouter une proposition au QCM
+                                    </button>
+                                  )}
                                 </div>
                               )}
 
@@ -1052,6 +1458,39 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
               );
             })}
           </div>
+
+          {/* Barre de sauvegarde en bas de page d'examen */}
+          <div className="bg-white rounded-2xl p-4 border-2 border-slate-200 shadow-sm flex items-center justify-between flex-wrap gap-3">
+            <div className="text-xs text-slate-600 font-medium">
+              {saveSuccess ? (
+                <span className="text-emerald-700 font-black flex items-center gap-1.5">
+                  <CheckCircle size={16} /> Vos modifications de questions et de mise en page ont bien été enregistrées !
+                </span>
+              ) : (
+                <span>
+                  N'oubliez pas d'enregistrer vos modifications d'organisation et de mise en page pour les appliquer aux élèves.
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+              >
+                Fermer
+              </button>
+              <button
+                type="button"
+                disabled={isBusySaving}
+                onClick={handleTriggerSave}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Save size={15} />
+                <span>{isBusySaving ? 'Enregistrement…' : '💾 Enregistrer les modifications'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1066,6 +1505,46 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
           }
         }}
       />
+
+      {/* Modale de génération IA directement depuis la feuille d'examen élève */}
+      {aiModalTarget && draftEval.assessments[aiModalTarget.critIdx] && (
+        <GenerateCriterialQuestionModal
+          isOpen={true}
+          onClose={() => setAiModalTarget(null)}
+          onAddQuestion={newEx => {
+            const cIdx = aiModalTarget.critIdx;
+            const nextAssessments = draftEval.assessments.map((c, idx) =>
+              idx === cIdx ? { ...c, exercises: [...(c.exercises || []), newEx] } : c
+            );
+            setDraftEval(prev => ({ ...prev, assessments: nextAssessments }));
+            setAiModalTarget(null);
+          }}
+          onReplaceQuestion={(qIdx, newEx) => {
+            const cIdx = aiModalTarget.critIdx;
+            const nextAssessments = draftEval.assessments.map((c, idx) => {
+              if (idx !== cIdx) return c;
+              const nextExs = [...(c.exercises || [])];
+              nextExs[qIdx] = newEx;
+              return { ...c, exercises: nextExs };
+            });
+            setDraftEval(prev => ({ ...prev, assessments: nextAssessments }));
+            setAiModalTarget(null);
+          }}
+          targetQuestionIndex={aiModalTarget.exIdx}
+          initialQuestionType={aiModalTarget.initialType}
+          initialStrandIndex={aiModalTarget.initialStrand}
+          subject={draftEval.subject}
+          gradeLevel={draftEval.grade}
+          criterion={draftEval.assessments[aiModalTarget.critIdx].criterion}
+          criterionName={draftEval.assessments[aiModalTarget.critIdx].criterionName}
+          availableStrands={draftEval.assessments[aiModalTarget.critIdx].strands || []}
+          unitTitle={draftEval.unitTitle || draftEval.title}
+          statementOfInquiry={draftEval.statementOfInquiry}
+          keyConcept={draftEval.keyConcept}
+          relatedConcepts={draftEval.relatedConcepts}
+          existingQuestionsCount={draftEval.assessments[aiModalTarget.critIdx].exercises?.length || 0}
+        />
+      )}
     </div>
   );
 };

@@ -148,29 +148,78 @@ export async function deleteEvaluation(id: string): Promise<boolean> {
 export async function deleteStudentSubmission(
   submissionId: string,
   accessCode?: string,
-  studentNumber?: string
+  studentNumber?: string,
+  evaluationId?: string
 ): Promise<boolean> {
+  const normMat = (v: any) => String(v || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+  const cleanCode = (accessCode || '').trim().toUpperCase();
+  const cleanNum = (studentNumber || '').trim();
+  const normTargetNum = normMat(cleanNum);
+
   try {
-    const res = await fetch(
-      `${API_BASE}?action=delete_submission&submissionId=${encodeURIComponent(submissionId)}`,
-      { method: 'DELETE' }
-    );
+    const params = new URLSearchParams({
+      action: 'delete_submission',
+      submissionId,
+    });
+    if (cleanCode) params.set('accessCode', cleanCode);
+    if (cleanNum) params.set('studentNumber', cleanNum);
+    if (evaluationId) params.set('evalId', evaluationId);
+
+    const res = await fetch(`${API_BASE}?${params.toString()}`, { method: 'DELETE' });
     if (res.ok) {
-      const locals = getLocalSubmissions().filter(s => s.id !== submissionId);
-      saveLocalSubmissions(locals);
+      const data = await res.json().catch(() => ({}));
+      if (data?.updatedEvaluation) {
+        const localEvals = getLocalEvaluations();
+        const idx = localEvals.findIndex(e => e.id === data.updatedEvaluation.id);
+        if (idx !== -1) {
+          localEvals[idx] = data.updatedEvaluation;
+          saveLocalEvaluations(localEvals);
+        }
+      }
     }
   } catch (err) {
     console.warn('[EvaluationService] Erreur suppression copie élève:', err);
   }
 
-  const locals = getLocalSubmissions().filter(s => s.id !== submissionId);
+  // Purger la copie supprimée du stockage local
+  const locals = getLocalSubmissions().filter(s => {
+    if (s.id === submissionId) return false;
+    if (normTargetNum && normMat(s.studentNumber) === normTargetNum) {
+      if ((evaluationId && s.evaluationId === evaluationId) || (cleanCode && s.accessCode?.trim().toUpperCase() === cleanCode)) {
+        return false;
+      }
+    }
+    return true;
+  });
   saveLocalSubmissions(locals);
 
+  // Réouvrir également le matricule dans l'évaluation en cache local
+  if (normTargetNum && (evaluationId || cleanCode)) {
+    const localEvals = getLocalEvaluations().map(ev => {
+      const isMatch = (evaluationId && ev.id === evaluationId) || (cleanCode && ev.accessCode?.trim().toUpperCase() === cleanCode);
+      if (!isMatch || !ev.studentAccessCodes) return ev;
+      return {
+        ...ev,
+        studentAccessCodes: ev.studentAccessCodes.map(sc => {
+          if (sc.submissionId === submissionId || normMat(sc.studentNumber) === normTargetNum) {
+            return {
+              ...sc,
+              isUsed: false,
+              allowedRetake: true,
+              usedAt: undefined,
+              submissionId: undefined,
+            };
+          }
+          return sc;
+        }),
+      };
+    });
+    saveLocalEvaluations(localEvals);
+  }
+
   // Déverrouiller également en local si présent sur cet appareil
-  if (accessCode && studentNumber) {
+  if (cleanCode && cleanNum) {
     try {
-      const cleanCode = accessCode.trim().toUpperCase();
-      const cleanNum = studentNumber.trim();
       localStorage.removeItem(`ib_locked_${cleanCode}_${cleanNum}`);
       localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
       localStorage.removeItem(`timer_${cleanCode}_${cleanNum}`);
@@ -240,7 +289,8 @@ export async function getSubmissionsForEvaluation(evaluationId: string): Promise
 
 export async function getStudentSubmission(accessCode: string, studentNumber: string): Promise<StudentSubmission | null> {
   const code = accessCode.trim().toUpperCase();
-  const num = studentNumber.trim().toLowerCase();
+  const num = studentNumber.trim();
+  const normNum = num.toLowerCase();
 
   try {
     const res = await fetch(
@@ -249,6 +299,15 @@ export async function getStudentSubmission(accessCode: string, studentNumber: st
     if (res.ok) {
       const data = await res.json();
       if (data && data.submission) return data.submission as StudentSubmission;
+      // Le serveur répond 200 OK avec submission: null -> aucune copie (ou copie supprimée par l'Admin)
+      const locals = getLocalSubmissions().filter(
+        s => !(s.accessCode?.trim().toUpperCase() === code && s.studentNumber?.trim().toLowerCase() === normNum)
+      );
+      saveLocalSubmissions(locals);
+      try {
+        localStorage.removeItem(`ib_locked_${code}_${num}`);
+      } catch {}
+      return null;
     }
   } catch (err) {
     console.warn('[EvaluationService] API offline pour student submission');
@@ -257,7 +316,7 @@ export async function getStudentSubmission(accessCode: string, studentNumber: st
   const locals = getLocalSubmissions();
   const found = locals.find(
     s => s.accessCode?.trim().toUpperCase() === code &&
-         s.studentNumber?.trim().toLowerCase() === num
+         s.studentNumber?.trim().toLowerCase() === normNum
   );
   return found || null;
 }

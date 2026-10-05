@@ -405,21 +405,6 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
       const matchedStudentRecord = matchedCodeByMat || legacyIndividualCode;
 
-      // Si le matricule correspond à un élève ayant déjà composé et non réautorisé par l'enseignant, bloquer l'accès
-      if (matchedStudentRecord && matchedStudentRecord.isUsed && !matchedStudentRecord.allowedRetake) {
-        setLoginError(
-          `❌ Accès refusé : Le matricule "${cleanNum}"${matchedStudentRecord.studentName ? ` (${matchedStudentRecord.studentName})` : ''} a déjà été utilisé pour composer cette évaluation. Un seul essai est autorisé, sauf si votre enseignant réouvre votre accès.`
-        );
-        setIsValidating(false);
-        return;
-      }
-
-      // Si l'enseignant a réouvert un 2e essai pour le matricule de cet élève, lever le verrou local
-      if (matchedStudentRecord && matchedStudentRecord.isUsed && matchedStudentRecord.allowedRetake) {
-        localStorage.removeItem(`ib_locked_${cleanCode}_${cleanNum}`);
-        localStorage.removeItem(`ib_locked_${evalData.accessCode}_${cleanNum}`);
-      }
-
       const officialName = matchedStudentRecord?.studentName || matchedRosterByMat?.name || '';
       if (!cleanName && officialName) {
         cleanName = officialName;
@@ -432,35 +417,47 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         return;
       }
 
+      // Réinitialiser l'état local avant vérification
+      setExistingSubmission(null);
+      setIsLockedAlready(false);
+      setTerminatedReason(null);
+
+      // Vérifier sur le serveur si une copie existe actuellement pour cet élève
+      // (Si l'Admin a supprimé la copie de l'élève, prevSub sera null !)
+      const prevSub = await getStudentSubmission(evalData.accessCode, cleanNum);
+      const isRetakeAuthorized = Boolean(matchedStudentRecord && matchedStudentRecord.allowedRetake);
+
+      // Si aucune copie n'existe sur le serveur (jamais remise ou supprimée par l'Admin) OU si un 2e essai est autorisé :
+      // on lève tout verrou local résiduel pour permettre à l'élève de refaire l'évaluation !
+      if (!prevSub || isRetakeAuthorized) {
+        const lockKey1 = `ib_locked_${evalData.accessCode}_${cleanNum}`;
+        const lockKey2 = `ib_locked_${cleanCode}_${cleanNum}`;
+        const wasLocallyLocked = localStorage.getItem(lockKey1) === 'true' || localStorage.getItem(lockKey2) === 'true';
+
+        localStorage.removeItem(lockKey1);
+        localStorage.removeItem(lockKey2);
+
+        // Si l'élève avait déjà remis une copie et que l'Admin l'a supprimée (ou réouverte), repartir sur une copie neuve
+        if (wasLocallyLocked || isRetakeAuthorized) {
+          localStorage.removeItem(`draft_eval_${evalData.accessCode}_${cleanNum}`);
+          localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
+          localStorage.removeItem(`timer_${evalData.accessCode}_${cleanNum}`);
+          setAnswers({});
+          setDrawings({});
+        }
+      } else {
+        // Une copie valide existe sur le serveur et n'a pas été supprimée par l'Admin
+        setEvaluation(evalData);
+        setExistingSubmission(prevSub);
+        setIsLockedAlready(true);
+        setIsValidating(false);
+        return;
+      }
+
       // 1. Sauvegarder l'identité permanente de l'élève
       localStorage.setItem('ib_permanent_matricule', cleanNum);
       localStorage.setItem('ib_permanent_student_name', cleanName);
       localStorage.setItem('ib_student_session', JSON.stringify({ accessCode: evalData.accessCode, studentNumber: cleanNum, studentName: cleanName }));
-
-      // 2. Vérifier si une copie a DÉJÀ été soumise par ce matricule (sauf si 2e essai autorisé par l'enseignant)
-      if (!(matchedStudentRecord && matchedStudentRecord.allowedRetake)) {
-        const lockKey = `ib_locked_${evalData.accessCode}_${cleanNum}`;
-        const isLocallyLocked = localStorage.getItem(lockKey) === 'true';
-
-        const prevSub = await getStudentSubmission(evalData.accessCode, cleanNum);
-        if (prevSub || isLocallyLocked) {
-          setEvaluation(evalData);
-          setExistingSubmission(prevSub || {
-            id: `locked_${cleanNum}`,
-            evaluationId: evalData.id,
-            accessCode: evalData.accessCode,
-            studentNumber: cleanNum,
-            studentName: cleanName,
-            submittedAt: new Date().toISOString(),
-            status: 'submitted',
-            isLocked: true,
-            answers: [],
-          });
-          setIsLockedAlready(true);
-          setIsValidating(false);
-          return;
-        }
-      }
 
       // 4. Charger l'évaluation et le brouillon existant
       setEvaluation(evalData);
@@ -994,6 +991,34 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
           <div className="flex items-center gap-2">
             <button
+              onClick={async () => {
+                const cleanNum = (existingSubmission?.studentNumber || studentNumber || '').trim();
+                const latestSub = await getStudentSubmission(evaluation.accessCode, cleanNum);
+                const latestEval = await getEvaluationByAccessCode(evaluation.accessCode);
+                const enteredMat = normalizeMatricule(cleanNum);
+                const matched = latestEval?.studentAccessCodes?.find(
+                  sc => sc.studentNumber && normalizeMatricule(sc.studentNumber) === enteredMat
+                );
+                if (!latestSub || matched?.allowedRetake) {
+                  localStorage.removeItem(`ib_locked_${evaluation.accessCode}_${cleanNum}`);
+                  localStorage.removeItem(`draft_eval_${evaluation.accessCode}_${cleanNum}`);
+                  localStorage.removeItem(`timer_${evaluation.accessCode}_${cleanNum}`);
+                  setAnswers({});
+                  setDrawings({});
+                  setExistingSubmission(null);
+                  setIsLockedAlready(false);
+                  setTerminatedReason(null);
+                  if (latestEval) setEvaluation(latestEval);
+                } else {
+                  alert('Votre copie est toujours enregistrée. Seul l\'Administrateur peut supprimer votre copie pour vous autoriser à refaire l\'évaluation.');
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-lg transition"
+              title="Si l'Administrateur a supprimé votre copie, cliquez ici pour recommencer l'évaluation"
+            >
+              🔄 Refaire l'évaluation (si copie supprimée)
+            </button>
+            <button
               onClick={() => setShowPrintModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition"
             >
@@ -1003,6 +1028,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               onClick={() => {
                 setEvaluation(null);
                 setExistingSubmission(null);
+                setIsLockedAlready(false);
                 onExit();
               }}
               className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition"

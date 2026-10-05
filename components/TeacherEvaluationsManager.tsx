@@ -594,25 +594,33 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   };
 
   // Suppression définitive d'une copie d'élève (réservée à l'Admin après validation explicite)
+  // Une fois supprimée, l'élève peut immédiatement refaire l'évaluation
   const handleConfirmAdminDeleteSubmission = async () => {
     if (!isAdmin || !submissionToDelete || !adminDeleteValidated) return;
     setIsDeletingSubmission(true);
     try {
       const targetEvalId = selectedEvaluation?.id || submissionToDelete.evaluationId;
-      await deleteStudentSubmission(submissionToDelete.id, 'admin', targetEvalId);
+      const targetAccessCode = selectedEvaluation?.accessCode || submissionToDelete.accessCode;
+      await deleteStudentSubmission(
+        submissionToDelete.id,
+        targetAccessCode,
+        submissionToDelete.studentNumber,
+        targetEvalId
+      );
 
-      // Si l'admin a coché la réinitialisation du matricule de l'élève
-      if (adminResetMatriculeOnDelete && selectedEvaluation && selectedEvaluation.studentAccessCodes) {
-        const cleanNum = (submissionToDelete.studentNumber || '').trim().toUpperCase();
+      // Réouvrir systématiquement le matricule de l'élève pour qu'il puisse refaire cette évaluation
+      if (selectedEvaluation && selectedEvaluation.studentAccessCodes) {
+        const normMat = (v: any) => String(v || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+        const cleanNum = normMat(submissionToDelete.studentNumber);
         const updatedCodes = selectedEvaluation.studentAccessCodes.map(sc => {
-          const scNum = (sc.studentNumber || '').trim().toUpperCase();
+          const scNum = normMat(sc.studentNumber);
           if (sc.submissionId === submissionToDelete.id || (cleanNum && scNum === cleanNum)) {
             return {
               ...sc,
               isUsed: false,
               usedAt: undefined,
               submissionId: undefined,
-              allowedRetake: false,
+              allowedRetake: true,
             };
           }
           return sc;
@@ -3332,9 +3340,16 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             ═════════════════════════════════════════════════════════════════ */}
         {studentPreviewEvaluation && (
           <StudentViewLayoutEditorModal
+            isOpen={true}
             evaluation={studentPreviewEvaluation}
             onClose={() => setStudentPreviewEvaluation(null)}
             onSave={handleSaveStudentViewLayout}
+            onSaveEvaluation={handleSaveStudentViewLayout}
+            onOpenDetailedQuestionEditor={(updated, critIdx) => {
+              setEditingEvaluation(JSON.parse(JSON.stringify(updated)));
+              setEditingCriterionIdx(critIdx || 0);
+              setStudentPreviewEvaluation(null);
+            }}
           />
         )}
 

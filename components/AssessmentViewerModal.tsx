@@ -7,6 +7,7 @@ import {
 import { UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, OnlineEvaluation } from '../types';
 import EvaluationPrintView from './EvaluationPrintView';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
+import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
 import { createOrUpdateEvaluation } from '../services/onlineEvaluationService';
 import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import { generateCleanStudentCodesForEvaluation } from '../services/studentRosterService';
@@ -34,6 +35,7 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [showStudentViewModal, setShowStudentViewModal] = useState(false);
   const [publishedCode, setPublishedCode] = useState<string | null>(null);
   const [publishedRosterCount, setPublishedRosterCount] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -412,6 +414,15 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
           <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
             {assessments.length > 0 && (
               <>
+                <button
+                  onClick={() => setShowStudentViewModal(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black shadow transition"
+                  title="Voir la page d'examen exactement comme chez l'élève et modifier l'organisation ou la mise en page"
+                >
+                  <Eye size={14} />
+                  <span>{isEn ? 'Student View & Layout' : '👁️ Voir Version Élève & Mise en Page'}</span>
+                </button>
+
                 <button
                   onClick={() => setShowPrintModal(true)}
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-white/15 hover:bg-white/25 text-white rounded-xl text-xs font-bold transition"
@@ -1140,6 +1151,18 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
         <EvaluationPrintView
           evaluation={getEvaluationForPrint()}
           onClose={() => setShowPrintModal(false)}
+        />
+      )}
+
+      {/* Version Élève & Mise en Page */}
+      {showStudentViewModal && plan && (
+        <StudentViewLayoutEditorModal
+          isOpen={showStudentViewModal}
+          evaluation={getEvaluationForPrint()}
+          onClose={() => setShowStudentViewModal(false)}
+          onSave={async (updatedEval) => {
+            persistChanges(updatedEval.assessments);
+          }}
         />
       )}
     </div>
