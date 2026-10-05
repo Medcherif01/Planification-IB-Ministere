@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Award, CheckCircle, Clock, FileText, LogOut, Printer, Send, ShieldCheck, User, AlertCircle,
   ChevronRight, Save, Image as ImageIcon, Check, Lock, AlertTriangle, Palette, Compass, Ruler,
-  Square, Circle, Triangle, Edit3
+  Square, Circle, Triangle, Edit3, Calculator, Layers, List
 } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation, createOrUpdateEvaluation } from '../services/onlineEvaluationService';
 import { fetchAllStudents, normalizeMatricule, normalizeGradeLabel } from '../services/studentRosterService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GeometricDrawingModal from './GeometricDrawingModal';
+import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './ScientificCalculatorAndMathBar';
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 
 interface StudentEvaluationPortalProps {
@@ -197,6 +198,12 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   // Geometric & Art drawing modal state
   const [drawingModalTarget, setDrawingModalTarget] = useState<string | null>(null);
   const [drawingModalLabel, setDrawingModalLabel] = useState<string>('');
+
+  // Calculatrice scientifique & cible de saisie active
+  const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
+  const [activeTextareaKey, setActiveTextareaKey] = useState<string | null>(null);
+  const [activeTextareaLabel, setActiveTextareaLabel] = useState<string>('');
+  const [studentDisplayModeOverride, setStudentDisplayModeOverride] = useState<'full_page' | 'tabs' | null>(null);
 
   // 45 min timer
   const [secondsRemaining, setSecondsRemaining] = useState<number>(45 * 60);
@@ -514,20 +521,33 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     });
   };
 
-  // Insertion de symboles mathématiques dans le textarea ciblé
-  const handleInsertMathSymbol = (key: string, symbol: string) => {
+  // Insertion de symboles mathématiques, parenthèses (), accolades {}, crochets [] dans le textarea ciblé
+  const handleInsertMathSymbol = (key: string, symbol: string, cursorOffset?: number) => {
     if (isLockedAlready) return;
+    setActiveTextareaKey(key);
     const textarea = document.getElementById(`textarea_${key}`) as HTMLTextAreaElement | null;
     const current = answers[key] || '';
 
     let updated = current;
-    let newCursorPos = current.length + symbol.length;
+    let newCursorPos = current.length + symbol.length + (cursorOffset || 0);
 
     if (textarea && typeof textarea.selectionStart === 'number' && typeof textarea.selectionEnd === 'number') {
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
-      updated = current.substring(0, start) + symbol + current.substring(end);
-      newCursorPos = start + symbol.length;
+      const selectedText = current.substring(start, end);
+
+      // Si l'élève a sélectionné du texte et clique sur ( ), { }, [ ], | |, √( ), ∛( ), on entoure la sélection !
+      if (selectedText && cursorOffset === -1 && symbol.length >= 2) {
+        const openPart = symbol.slice(0, symbol.length - 1);
+        const closePart = symbol.slice(symbol.length - 1);
+        const wrapped = `${openPart}${selectedText}${closePart}`;
+        updated = current.substring(0, start) + wrapped + current.substring(end);
+        newCursorPos = start + wrapped.length;
+      } else {
+        updated = current.substring(0, start) + symbol + current.substring(end);
+        newCursorPos = start + symbol.length + (cursorOffset || 0);
+      }
+
       setTimeout(() => {
         try {
           textarea.focus();
@@ -1188,37 +1208,52 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VUE 3 : PASSATION EN LIGNE (INTERACTIVE - 45 MIN AVEC OUTILS MATHS & GÉOMÉTRIE & ART)
+  // VUE 3 : PASSATION EN LIGNE BIEN ORGANISÉE (AVEC CALCULATRICE, PARENTHÈSES, ACCOLADES & MISE EN PAGE)
   // ═══════════════════════════════════════════════════════════════════════════
-  const activeAssessment = evaluation.assessments[activeCriterionIdx];
-  const activeColors = activeAssessment
-    ? (CRITERION_COLORS[activeAssessment.criterion] || CRITERION_COLORS.A)
-    : CRITERION_COLORS.A;
+  const layout = evaluation.layoutConfig || {};
+  const effectiveDisplayMode: 'full_page' | 'tabs' =
+    studentDisplayModeOverride || layout.displayMode || 'full_page';
+  const numberingStyle = layout.numberingStyle || 'continuous';
+  const spacingMode = layout.spacing || 'normal';
+  const headerStyle = layout.headerStyle || 'official_ib';
+  const defaultRows = layout.answerBoxRows || 4;
+  const showCalculator = layout.showCalculator !== false;
+  const showMathToolbar = layout.showMathToolbar !== false;
+  const showStrandBadges = layout.showStrandBadges !== false;
+  const showPointsPerCriterion = layout.showPointsPerCriterion !== false;
+  const showSummaryNav = layout.showSummaryNav !== false;
 
   const isTimeCritical = secondsRemaining <= 300; // < 5 minutes
 
-  // Symboles mathématiques pour barre d'outils
-  const MATH_SYMBOLS = [
-    { label: 'x²', val: '²' },
-    { label: 'x³', val: '³' },
-    { label: 'xⁿ', val: '^()' },
-    { label: '√x', val: '√()' },
-    { label: '∛x', val: '∛()' },
-    { label: 'a/b', val: ' / ' },
-    { label: 'π', val: 'π' },
-    { label: '°', val: '°' },
-    { label: '±', val: '±' },
-    { label: '×', val: '×' },
-    { label: '÷', val: '÷' },
-    { label: '≠', val: '≠' },
-    { label: '≤', val: '≤' },
-    { label: '≥', val: '≥' },
-    { label: '∠', val: '∠' },
-    { label: '△', val: '△' },
-    { label: '⊥', val: '⊥' },
-    { label: '∥', val: '∥' },
-    { label: '[AB]', val: '[AB]' },
-  ];
+  // Calcul de la numérotation continue des exercices sur toute l'évaluation
+  const getGlobalExerciseNumber = (critIdx: number, exIdx: number): number => {
+    if (numberingStyle === 'by_criterion') return exIdx + 1;
+    let count = 0;
+    for (let c = 0; c < critIdx; c++) {
+      count += evaluation.assessments[c]?.exercises?.length || 0;
+    }
+    return count + exIdx + 1;
+  };
+
+  // Vérifier si un exercice est entièrement répondu
+  const isExerciseAnswered = (crit: typeof evaluation.assessments[0], ex: AssessmentExercise, exIdx: number): boolean => {
+    const subs = getExerciseSubQuestions(ex, crit.criterion, crit.strands);
+    if (subs.length > 0) {
+      return subs.every((_, sIdx) => {
+        const k = `${crit.criterion}_${exIdx}_sub_${sIdx}`;
+        return Boolean((answers[k] && answers[k].trim().length > 0) || drawings[k]);
+      });
+    }
+    const k = `${crit.criterion}_${exIdx}`;
+    return Boolean((answers[k] && answers[k].trim().length > 0) || drawings[k]);
+  };
+
+  const criteriaToRender =
+    effectiveDisplayMode === 'full_page'
+      ? evaluation.assessments.map((c, idx) => ({ crit: c, critIdx: idx }))
+      : evaluation.assessments[activeCriterionIdx]
+      ? [{ crit: evaluation.assessments[activeCriterionIdx], critIdx: activeCriterionIdx }]
+      : [];
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col select-none">
@@ -1247,9 +1282,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         </div>
       )}
 
-      {/* ── TOP BAR STICKY AVEC CHRONO 45 MIN & AUTO-SAVE ── */}
+      {/* ── TOP BAR STICKY AVEC CHRONO, CALCULATRICE & PROGRESSION ── */}
       <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
+        <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-indigo-600 text-white rounded-xl flex items-center justify-center font-black flex-shrink-0 shadow">
               PEI
@@ -1257,32 +1292,69 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             <div className="min-w-0">
               <h2 className="font-black text-sm text-slate-800 truncate">{evaluation.title}</h2>
               <p className="text-xs text-slate-500 truncate">
-                Élève : <span className="font-semibold text-slate-700">{studentName}</span> (Matricule {studentNumber}) · {evaluation.subject}
+                Élève : <span className="font-semibold text-slate-700">{studentName}</span> (Matricule <span className="font-mono font-bold text-purple-800">{studentNumber}</span>) · {evaluation.subject} ({evaluation.grade})
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 flex-shrink-0">
-            {/* ⏱️ CHRONOMÈTRE 45 MINUTES */}
-            <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black shadow-inner transition ${
+          <div className="flex items-center gap-2 sm:gap-2.5 flex-shrink-0 flex-wrap">
+            {/* 🧮 BOUTON CALCULATRICE SCIENTIFIQUE TOUJOURS ACCESSIBLE */}
+            {showCalculator && (
+              <button
+                type="button"
+                onClick={() => setIsCalculatorOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs transition"
+                title="Ouvrir la calculatrice scientifique (avec parenthèses, accolades, racines...)"
+              >
+                <Calculator size={15} />
+                <span>Calculatrice</span>
+              </button>
+            )}
+
+            {/* Bascule Feuille complète / Par onglets */}
+            <div className="hidden sm:flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setStudentDisplayModeOverride('full_page')}
+                className={`px-2.5 py-1 rounded-lg transition flex items-center gap-1 ${
+                  effectiveDisplayMode === 'full_page'
+                    ? 'bg-white text-purple-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Afficher toute l'évaluation bien organisée sur une seule feuille"
+              >
+                <List size={12} />
+                <span>Feuille complète</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStudentDisplayModeOverride('tabs')}
+                className={`px-2.5 py-1 rounded-lg transition flex items-center gap-1 ${
+                  effectiveDisplayMode === 'tabs'
+                    ? 'bg-white text-purple-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Afficher critère par critère"
+              >
+                <Layers size={12} />
+                <span>Par critère</span>
+              </button>
+            </div>
+
+            {/* ⏱️ CHRONOMÈTRE */}
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black shadow-inner transition ${
               isTimeCritical
                 ? 'bg-rose-100 text-rose-700 border border-rose-300 animate-pulse'
                 : 'bg-purple-100 text-purple-900 border border-purple-200'
             }`}>
-              <Clock size={15} className={isTimeCritical ? 'text-rose-600' : 'text-purple-600'} />
-              <span>Temps restant : {formatTimeRemaining(secondsRemaining)}</span>
+              <Clock size={14} className={isTimeCritical ? 'text-rose-600' : 'text-purple-600'} />
+              <span>{formatTimeRemaining(secondsRemaining)}</span>
             </div>
 
             {/* Progression */}
-            <div className="hidden md:flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700">
+            <div className="hidden md:flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700">
               <CheckCircle size={14} className={answeredQuestionsCount === totalQuestionsCount && totalQuestionsCount > 0 ? 'text-green-600' : 'text-purple-600'} />
-              <span>{answeredQuestionsCount} / {totalQuestionsCount} répondues</span>
-            </div>
-
-            {/* 🔒 Indicateur plein écran & surveillance */}
-            <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold shadow-2xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Plein écran actif · Surveillance anti-fraude</span>
+              <span>{answeredQuestionsCount} / {totalQuestionsCount}</span>
             </div>
 
             <button
@@ -1295,503 +1367,619 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         </div>
       </header>
 
-      {/* ── CADRE DE RECHERCHE PEI ── */}
-      {evaluation.statementOfInquiry && (
-        <div className="bg-gradient-to-r from-purple-900 to-indigo-900 text-white px-4 py-2.5 shadow-inner">
-          <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs">
-            <div className="flex items-start gap-2">
-              <span className="font-black uppercase tracking-wider text-purple-300 text-[10px] bg-purple-800/80 px-2 py-0.5 rounded">
-                Énoncé de recherche
-              </span>
-              <p className="italic text-purple-100 font-medium">"{evaluation.statementOfInquiry}"</p>
-            </div>
-            <div className="flex items-center gap-3 text-[11px] text-purple-200">
-              {evaluation.keyConcept && (
-                <span>Concept clé : <strong className="text-white">{evaluation.keyConcept}</strong></span>
-              )}
-              {evaluation.globalContext && (
-                <span>Contexte : <strong className="text-white">{evaluation.globalContext}</strong></span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── CORPS DE L'ÉVALUATION ── */}
-      <main className="max-w-6xl mx-auto w-full p-4 sm:p-6 flex-1 flex flex-col space-y-5">
-        {/* Navigation par critères */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200">
-          {evaluation.assessments.map((crit, idx) => {
-            const colors = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
-            const critExercisesCount = crit.exercises?.length || 0;
-            const isCurrent = activeCriterionIdx === idx;
-            return (
-              <button
-                key={crit.criterion}
-                onClick={() => setActiveCriterionIdx(idx)}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-bold text-xs transition border flex-shrink-0 ${
-                  isCurrent
-                    ? 'bg-white border-purple-500 shadow-md text-purple-900'
-                    : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300'
-                }`}
-              >
-                <span className={`w-6 h-6 rounded-lg ${colors.badge} text-white text-xs font-black flex items-center justify-center`}>
-                  {crit.criterion}
+      {/* ── CORPS DE L'ÉVALUATION BIEN STRUCTURÉ ── */}
+      <main className={`max-w-5xl mx-auto w-full p-4 sm:p-6 flex-1 flex flex-col ${
+        spacingMode === 'compact' ? 'space-y-4' : spacingMode === 'spacious' ? 'space-y-8' : 'space-y-6'
+      }`}>
+        {/* 1. EN-TÊTE OFFICIEL DE L'ÉPREUVE & CONSIGNES GÉNÉRALES */}
+        {headerStyle === 'official_ib' ? (
+          <div className="bg-white rounded-3xl border-2 border-slate-300 shadow-xs overflow-hidden">
+            <div className="bg-gradient-to-r from-slate-900 via-purple-950 to-indigo-950 text-white px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-purple-300 bg-white/10 px-2.5 py-0.5 rounded-md">
+                  Les Écoles Internationales Al-Kawthar · Baccalauréat International (PEI)
                 </span>
-                <span>{crit.criterionName}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-600">
-                  {critExercisesCount} tâche(s)
+                <h1 className="text-lg sm:text-xl font-black mt-1 text-white">{evaluation.title}</h1>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                <span className="bg-white/15 px-3 py-1 rounded-xl font-bold text-purple-100">
+                  📚 {evaluation.subject}
                 </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Détail du critère actif */}
-        {activeAssessment && (
-          <div className="space-y-6">
-            {/* Bannière du critère */}
-            <div className={`rounded-2xl p-5 border ${activeColors.border} ${activeColors.bg}`}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${activeColors.light} ${activeColors.text}`}>
-                    Critère {activeAssessment.criterion} · Échelle 1-8
-                  </span>
-                  <h3 className="text-lg font-black text-slate-800 mt-1">
-                    {activeAssessment.criterionName}
-                  </h3>
-                </div>
-
-                <span className={`text-xs font-black px-3 py-1 rounded-xl ${activeColors.light} ${activeColors.text}`}>
-                  Max : {activeAssessment.maxPoints || 8} pts
+                <span className="bg-white/15 px-3 py-1 rounded-xl font-bold text-purple-100">
+                  🎓 {evaluation.grade}
+                </span>
+                <span className="bg-amber-400/20 border border-amber-300/40 px-3 py-1 rounded-xl font-black text-amber-200">
+                  ⏱️ {evaluation.durationMinutes || 45} min
                 </span>
               </div>
             </div>
 
-            {/* Questions / Tâches du critère */}
-            <div className="space-y-6">
-              {(activeAssessment.exercises || []).map((ex, exIdx) => {
-                const subQuestions = getExerciseSubQuestions(ex, activeAssessment.criterion, activeAssessment.strands);
-                const hasSubQuestions = subQuestions.length > 0;
-                const mainStrand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx, isEn);
-
-                return (
-                  <div
-                    key={exIdx}
-                    className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-sm space-y-5 hover:border-purple-300 transition"
-                  >
-                    {/* Header de la question principale */}
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                      <div className="flex items-center gap-3">
-                        <span className={`px-3 py-1 rounded-xl text-xs font-black text-white ${activeColors.badge}`}>
-                          Question {exIdx + 1}
-                        </span>
-                        <h4 className="font-black text-base text-slate-900">{ex.title}</h4>
-                      </div>
-                      <span className="text-xs font-semibold text-slate-400">
-                        {hasSubQuestions
-                          ? `${subQuestions.length} sous-questions`
-                          : ex.type === 'multiple_choice' ? 'QCM' : ex.type === 'true_false' ? 'Vrai/Faux' : 'Rédaction'}
+            <div className="p-4 sm:p-5 bg-slate-50/70 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs border-b border-slate-200">
+              <div className="bg-white p-3 rounded-xl border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Candidat(e) :</span>
+                <span className="font-black text-slate-800 text-sm">{studentName}</span>
+                <span className="block text-[11px] font-mono text-purple-700 font-bold mt-0.5">
+                  Matricule : {studentNumber}
+                </span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Critères évalués :</span>
+                <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                  {evaluation.assessments.map(a => {
+                    const c = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
+                    return (
+                      <span key={a.criterion} className={`px-2 py-0.5 rounded-md text-white font-black text-[11px] ${c.badge}`}>
+                        Critère {a.criterion} ({a.maxPoints || 8} pts)
                       </span>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Outils autorisés :</span>
+                <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px] font-bold text-slate-700">
+                  {showCalculator && <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">🧮 Calculatrice</span>}
+                  {showMathToolbar && <span className="text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">( ) &#123; &#125; [ ] Symboles</span>}
+                  <span className="text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">📐 Géométrie / Croquis</span>
+                </div>
+              </div>
+            </div>
+
+            {(evaluation.statementOfInquiry || evaluation.instructions) && (
+              <div className="p-4 sm:p-5 space-y-2.5 bg-white text-xs">
+                {evaluation.statementOfInquiry && (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-purple-50/70 border border-purple-200 rounded-xl p-3">
+                    <div>
+                      <span className="font-black uppercase text-[10px] text-purple-800 mr-2">
+                        🔎 Énoncé de recherche :
+                      </span>
+                      <span className="italic font-semibold text-purple-950">"{evaluation.statementOfInquiry}"</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-purple-800 flex-shrink-0">
+                      {evaluation.keyConcept && <span>Concept : <strong>{evaluation.keyConcept}</strong></span>}
+                      {evaluation.globalContext && <span>· Contexte : <strong>{evaluation.globalContext}</strong></span>}
+                    </div>
+                  </div>
+                )}
+                {evaluation.instructions && (
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-amber-950">
+                    <span className="font-black uppercase text-[10px] text-amber-800 block mb-0.5">
+                      📌 Consignes générales de l'évaluation :
+                    </span>
+                    <p className="text-xs leading-relaxed whitespace-pre-wrap">{evaluation.instructions}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          evaluation.statementOfInquiry && (
+            <div className="bg-gradient-to-r from-purple-900 to-indigo-900 text-white p-4 rounded-2xl shadow-xs text-xs flex flex-col md:flex-row md:items-center justify-between gap-2">
+              <div>
+                <span className="font-black uppercase tracking-wider text-purple-300 text-[10px] bg-purple-800/80 px-2 py-0.5 rounded mr-2">
+                  Énoncé de recherche
+                </span>
+                <span className="italic text-purple-100 font-medium">"{evaluation.statementOfInquiry}"</span>
+              </div>
+              {evaluation.instructions && (
+                <span className="text-purple-200 text-[11px]">{evaluation.instructions}</span>
+              )}
+            </div>
+          )
+        )}
+
+        {/* 2. SOMMAIRE DE NAVIGATION RAPIDE DES EXERCICES */}
+        {showSummaryNav && (
+          <div className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-2xs flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider mr-1">
+                📋 Plan de l'évaluation :
+              </span>
+              {evaluation.assessments.map((crit, cIdx) => {
+                const colors = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
+                return (crit.exercises || []).map((ex, eIdx) => {
+                  const globalNum = getGlobalExerciseNumber(cIdx, eIdx);
+                  const done = isExerciseAnswered(crit, ex, eIdx);
+                  return (
+                    <button
+                      key={`${crit.criterion}_${eIdx}`}
+                      type="button"
+                      onClick={() => {
+                        setActiveCriterionIdx(cIdx);
+                        const el = document.getElementById(`eval_ex_${crit.criterion}_${eIdx}`);
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                      className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition ${
+                        done
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-purple-300 hover:bg-purple-50/50'
+                      }`}
+                    >
+                      <span className={`w-4 h-4 rounded text-[10px] font-black text-white flex items-center justify-center ${colors.badge}`}>
+                        {crit.criterion}
+                      </span>
+                      <span>Ex. {globalNum}</span>
+                      {done && <Check size={12} className="text-emerald-600 stroke-[3]" />}
+                    </button>
+                  );
+                });
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Navigation par critères si mode Onglets ('tabs') */}
+        {effectiveDisplayMode === 'tabs' && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200">
+            {evaluation.assessments.map((crit, idx) => {
+              const colors = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
+              const critExercisesCount = crit.exercises?.length || 0;
+              const isCurrent = activeCriterionIdx === idx;
+              return (
+                <button
+                  key={crit.criterion}
+                  onClick={() => setActiveCriterionIdx(idx)}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-bold text-xs transition border flex-shrink-0 ${
+                    isCurrent
+                      ? 'bg-white border-purple-500 shadow-md text-purple-900'
+                      : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <span className={`w-6 h-6 rounded-lg ${colors.badge} text-white text-xs font-black flex items-center justify-center`}>
+                    {crit.criterion}
+                  </span>
+                  <span>Critère {crit.criterion} — {crit.criterionName}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-600">
+                    {critExercisesCount} exercice(s)
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 3. LISTE STRUCTURÉE DES CRITÈRES ET EXERCICES */}
+        <div className={spacingMode === 'compact' ? 'space-y-5' : spacingMode === 'spacious' ? 'space-y-10' : 'space-y-8'}>
+          {criteriaToRender.map(({ crit: activeAssessment, critIdx }) => {
+            const activeColors = CRITERION_COLORS[activeAssessment.criterion] || CRITERION_COLORS.A;
+
+            return (
+              <section
+                key={activeAssessment.criterion}
+                className={spacingMode === 'compact' ? 'space-y-4' : 'space-y-6'}
+              >
+                {/* Bannière de section du Critère */}
+                <div className={`rounded-2xl p-4 sm:p-5 border-2 ${activeColors.border} ${activeColors.bg} shadow-2xs`}>
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl ${activeColors.badge} text-white font-black text-base flex items-center justify-center shadow-xs`}>
+                        {activeAssessment.criterion}
+                      </div>
+                      <div>
+                        <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${activeColors.light} ${activeColors.text}`}>
+                          Critère {activeAssessment.criterion} · Objectif PEI
+                        </span>
+                        <h3 className="text-base sm:text-lg font-black text-slate-900 mt-0.5">
+                          {activeAssessment.criterionName}
+                        </h3>
+                      </div>
                     </div>
 
-                    {/* OEUVRE D'ART / PHOTO / SCHÉMA SI PRÉSENT */}
-                    {ex.imageUrl && (
-                      <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
-                        <img
-                          src={ex.imageUrl}
-                          alt={ex.imageCaption || 'Illustration oeuvre d\'art'}
-                          className="max-h-64 max-w-full mx-auto object-contain rounded-xl shadow-xs"
-                        />
-                        {ex.imageCaption && (
-                          <p className="text-xs text-slate-600 italic mt-2 font-medium">
-                            🖼️ {ex.imageCaption}
-                          </p>
-                        )}
-                      </div>
+                    {showPointsPerCriterion && (
+                      <span className={`text-xs font-black px-3.5 py-1.5 rounded-xl border ${activeColors.border} bg-white ${activeColors.text}`}>
+                        Barème : Niveau 1 à {activeAssessment.maxPoints || 8}
+                      </span>
                     )}
+                  </div>
+                </div>
 
-                    {/* Énoncé global / Contexte de la question */}
-                    {ex.content && (
-                      <div className="bg-slate-50 p-4 rounded-2xl text-sm text-slate-800 whitespace-pre-wrap leading-relaxed border border-slate-100 font-normal">
-                        {ex.content}
-                      </div>
-                    )}
+                {/* Exercices / Tâches du critère */}
+                <div className={spacingMode === 'compact' ? 'space-y-4' : spacingMode === 'spacious' ? 'space-y-8' : 'space-y-6'}>
+                  {(activeAssessment.exercises || []).map((ex, exIdx) => {
+                    const subQuestions = getExerciseSubQuestions(ex, activeAssessment.criterion, activeAssessment.strands);
+                    const hasSubQuestions = subQuestions.length > 0;
+                    const mainStrand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx, isEn);
+                    const exerciseNum = getGlobalExerciseNumber(critIdx, exIdx);
+                    const exDone = isExerciseAnswered(activeAssessment, ex, exIdx);
 
-                    {/* ═══════════════════════════════════════════════════════════
-                        CAS 1 : LA QUESTION CONTIENT DES SOUS-QUESTIONS 1), 2), 3)...
-                        Chaque sous-question a son sous-aspect en rouge, sa réponse et ses outils !
-                        ═══════════════════════════════════════════════════════════ */}
-                    {hasSubQuestions ? (
-                      <div className="space-y-6 pt-2">
-                        <div className="text-xs font-bold uppercase tracking-wider text-purple-900 flex items-center gap-2">
-                          <span>📋</span>
-                          <span>Sous-questions à traiter :</span>
+                    return (
+                      <div
+                        id={`eval_ex_${activeAssessment.criterion}_${exIdx}`}
+                        key={exIdx}
+                        className={`bg-white rounded-3xl ${
+                          spacingMode === 'compact' ? 'p-4 sm:p-5 space-y-4' : spacingMode === 'spacious' ? 'p-7 sm:p-8 space-y-6' : 'p-6 sm:p-7 space-y-5'
+                        } border-2 ${exDone ? 'border-emerald-300/80' : 'border-slate-200'} shadow-sm hover:border-purple-300 transition`}
+                      >
+                        {/* En-tête de l'exercice */}
+                        <div className="flex items-center justify-between border-b-2 border-slate-100 pb-3.5 flex-wrap gap-2">
+                          <div className="flex items-center gap-3">
+                            <span className={`px-3.5 py-1.5 rounded-xl text-xs font-black text-white shadow-2xs ${activeColors.badge}`}>
+                              Exercice {exerciseNum}
+                            </span>
+                            <h4 className="font-black text-base sm:text-lg text-slate-900">
+                              {ex.title || `Exercice ${exerciseNum}`}
+                            </h4>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {exDone && (
+                              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                                <Check size={12} /> Répondu
+                              </span>
+                            )}
+                            <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
+                              {hasSubQuestions
+                                ? `${subQuestions.length} sous-questions`
+                                : ex.type === 'multiple_choice' ? '☑️ QCM' : ex.type === 'true_false' ? '⚖️ Vrai / Faux' : '📝 Rédaction & Calculs'}
+                            </span>
+                          </div>
                         </div>
 
-                        {subQuestions.map((sub, sIdx) => {
-                          const subKey = `${activeAssessment.criterion}_${exIdx}_sub_${sIdx}`;
-                          const subAnswer = answers[subKey] || '';
-                          const subDrawing = drawings[subKey];
-                          const subStrand = resolveStrandForSubQuestion(activeAssessment.criterion, activeAssessment.strands, sub, sIdx, isEn);
-                          const subQType = sub.type || ex.type || 'open';
+                        {/* OEUVRE D'ART / PHOTO / SCHÉMA SI PRÉSENT */}
+                        {ex.imageUrl && (
+                          <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+                            <img
+                              src={ex.imageUrl}
+                              alt={ex.imageCaption || 'Illustration'}
+                              className="max-h-64 max-w-full mx-auto object-contain rounded-xl shadow-xs"
+                            />
+                            {ex.imageCaption && (
+                              <p className="text-xs text-slate-600 italic mt-2 font-medium">
+                                🖼️ {ex.imageCaption}
+                              </p>
+                            )}
+                          </div>
+                        )}
 
-                          return (
-                            <div
-                              key={sub.id || sIdx}
-                              className="bg-purple-50/20 border-2 border-purple-100 rounded-2xl p-5 space-y-4 hover:border-purple-300 transition"
-                            >
-                              {/* Intitulé de la sous-question */}
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-baseline gap-2">
-                                  <span className="font-black text-sm text-purple-700 bg-purple-100 px-2.5 py-0.5 rounded-lg flex-shrink-0">
-                                    {sub.label || `${sIdx + 1})`}
-                                  </span>
-                                  <h5 className="font-bold text-sm text-slate-900 leading-snug">
-                                    {sub.content || `Sous-question ${sIdx + 1}`}
-                                  </h5>
-                                </div>
-                                <span className="text-[11px] font-semibold text-slate-400 flex-shrink-0">
-                                  {subQType === 'multiple_choice' ? '☑️ QCM' : subQType === 'true_false' ? '⚖️ Vrai/Faux' : '📝 Rédaction'}
-                                </span>
-                              </div>
+                        {/* Énoncé global / Contexte de l'exercice */}
+                        {ex.content && (
+                          <div className="bg-slate-50/90 p-4 rounded-2xl text-sm text-slate-800 whitespace-pre-wrap leading-relaxed border border-slate-200/80 font-medium">
+                            {ex.content}
+                          </div>
+                        )}
 
-                              {/* 🔴 SOUS-ASPECT INDIVIDUEL EN ROUGE SOUS CETTE SOUS-QUESTION (EXIGENCE BRIEF) */}
-                              <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50 px-3 py-1.5 rounded-xl border border-red-200">
-                                <span className="text-red-700 font-black">● {subStrand.fullLabel}</span>
-                              </div>
+                        {/* ═══════════════════════════════════════════════════════════
+                            CAS 1 : L'EXERCICE CONTIENT DES SOUS-QUESTIONS 1), 2), 3)...
+                            ═══════════════════════════════════════════════════════════ */}
+                        {hasSubQuestions ? (
+                          <div className="space-y-5 pt-1">
+                            <div className="text-xs font-black uppercase tracking-wider text-purple-900 flex items-center gap-2 bg-purple-50 px-3 py-1.5 rounded-xl border border-purple-100 w-fit">
+                              <span>📋</span>
+                              <span>Questions à traiter dans l'ordre ({subQuestions.length}) :</span>
+                            </div>
 
-                              {/* ── ZONE DE RÉPONSE INTERACTIVE SELON LE TYPE DE LA SOUS-QUESTION ── */}
+                            {subQuestions.map((sub, sIdx) => {
+                              const subKey = `${activeAssessment.criterion}_${exIdx}_sub_${sIdx}`;
+                              const subAnswer = answers[subKey] || '';
+                              const subDrawing = drawings[subKey];
+                              const subStrand = resolveStrandForSubQuestion(activeAssessment.criterion, activeAssessment.strands, sub, sIdx, isEn);
+                              const subQType = sub.type || ex.type || 'open';
 
-                              {/* A. QCM : COCHER LA BONNE RÉPONSE */}
-                              {subQType === 'multiple_choice' && (
-                                <div className="space-y-2 pt-1">
-                                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                                    Cochez la bonne réponse :
-                                  </label>
-                                  <div className="space-y-2">
-                                    {(sub.options || ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => {
-                                      const isSelected = subAnswer === opt;
-                                      return (
-                                        <div
-                                          key={optIdx}
-                                          onClick={() => handleResponseChange(subKey, opt)}
-                                          className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
-                                            isSelected
-                                              ? 'bg-purple-100/90 border-purple-600 text-purple-950 font-bold shadow-xs'
-                                              : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
-                                          }`}
-                                        >
-                                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                                            isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-400 bg-white'
-                                          }`}>
-                                            {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
-                                          </div>
-                                          <span className="text-sm">{opt}</span>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* B. VRAI OU FAUX */}
-                              {subQType === 'true_false' && (
-                                <div className="space-y-2.5 pt-1">
-                                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                                    Indiquez votre réponse :
-                                  </label>
-                                  <div className="grid grid-cols-2 gap-3 max-w-xs">
-                                    {['Vrai', 'Faux'].map(opt => {
-                                      const isSelected = subAnswer.startsWith(opt);
-                                      return (
-                                        <button
-                                          key={opt}
-                                          type="button"
-                                          onClick={() => handleResponseChange(subKey, opt)}
-                                          className={`py-2.5 px-4 rounded-xl font-bold text-xs border-2 transition flex items-center justify-center gap-2 ${
-                                            isSelected
-                                              ? 'bg-purple-600 border-purple-600 text-white shadow-md'
-                                              : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
-                                          }`}
-                                        >
-                                          {isSelected && <Check size={14} />}
-                                          <span>{opt}</span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* C. RÉDACTION LIBRE AVEC OUTILS MATHS & GÉOMÉTRIE OU ART */}
-                              {subQType === 'open' && (
-                                <div className="space-y-2 pt-1">
-                                  {/* BARRE D'OUTILS SPÉCIALISÉE SOUS LA SOUS-QUESTION */}
-                                  <div className="bg-white border border-slate-200 rounded-xl p-2 flex items-center justify-between flex-wrap gap-2 text-xs shadow-2xs">
-                                    {/* Outils Maths si matière scientifique */}
-                                    {isMathSubject && (
-                                      <div className="flex items-center gap-1 flex-wrap">
-                                        <span className="text-[10px] font-bold text-slate-500 uppercase mr-1">Maths :</span>
-                                        {MATH_SYMBOLS.slice(0, 10).map(item => (
-                                          <button
-                                            key={item.label}
-                                            type="button"
-                                            onClick={() => handleInsertMathSymbol(subKey, item.val)}
-                                            className="px-2 py-0.5 bg-slate-50 hover:bg-purple-100 text-slate-700 hover:text-purple-900 border border-slate-200 rounded font-bold text-xs transition"
-                                            title={`Insérer ${item.label}`}
-                                          >
-                                            {item.label}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-
-                                    {/* Palette rapide si matière d'art */}
-                                    {isArtSubject && (
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="text-[10px] font-bold text-purple-700 uppercase">🎨 Outils d'Art :</span>
-                                        <span className="text-[11px] text-slate-500 italic">Pinceaux, fusain, lavis et palette disponibles</span>
-                                      </div>
-                                    )}
-
-                                    {/* Bouton pour ouvrir l'outil de dessin adapté */}
-                                    <div className="flex items-center gap-1.5 ml-auto">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setDrawingModalTarget(subKey);
-                                          setDrawingModalLabel(`Question ${exIdx + 1} - ${sub.label}`);
-                                        }}
-                                        className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
-                                        title="Ouvrir le studio de tracé (Équerre, Rapporteur, Compas ou Art)"
-                                      >
-                                        {isArtSubject ? <span>🎨 Dessiner / Esquisser</span> : <span>📐 Géométrie (Équerre, Compas)</span>}
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  {/* Zone de saisie directe pour cette sous-question */}
-                                  <textarea
-                                    id={`textarea_${subKey}`}
-                                    value={subAnswer}
-                                    onChange={e => handleResponseChange(subKey, e.target.value)}
-                                    placeholder={`Rédigez votre réponse détaillée pour la sous-question ${sub.label}...`}
-                                    rows={4}
-                                    className="w-full p-3.5 bg-white border border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition font-sans leading-relaxed"
-                                  />
-
-                                  {/* Tracé rattaché à cette sous-question */}
-                                  {subDrawing && (
-                                    <div className="relative inline-block bg-white border border-slate-300 rounded-xl p-2.5 text-center mt-1 shadow-2xs">
-                                      <span className="text-[10px] font-bold text-slate-600 block mb-1">
-                                        {isArtSubject ? '🎨 Dessin / Croquis rattaché :' : '📐 Figure géométrique rattachée :'}
+                              return (
+                                <div
+                                  key={sub.id || sIdx}
+                                  className="bg-slate-50/60 border-2 border-slate-200/90 rounded-2xl p-4 sm:p-5 space-y-3.5 hover:border-purple-300 transition"
+                                >
+                                  {/* Intitulé de la sous-question */}
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-baseline gap-2.5">
+                                      <span className="font-black text-sm text-white bg-purple-700 px-2.5 py-0.5 rounded-lg flex-shrink-0 shadow-2xs">
+                                        {sub.label || `${sIdx + 1})`}
                                       </span>
-                                      <img
-                                        src={subDrawing}
-                                        alt="Figure élève"
-                                        className="max-h-40 max-w-full mx-auto border border-slate-200 rounded bg-white"
-                                      />
-                                      <div className="flex items-center justify-center gap-3 mt-1.5">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setDrawingModalTarget(subKey);
-                                            setDrawingModalLabel(`Question ${exIdx + 1} - ${sub.label}`);
-                                          }}
-                                          className="text-[11px] text-purple-600 hover:text-purple-800 font-bold"
-                                        >
-                                          Modifier le tracé
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const next = { ...drawings };
-                                            delete next[subKey];
-                                            setDrawings(next);
-                                          }}
-                                          className="text-[11px] text-rose-600 hover:text-rose-800 font-bold"
-                                        >
-                                          Supprimer
-                                        </button>
+                                      <h5 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
+                                        {sub.content || `Sous-question ${sIdx + 1}`}
+                                      </h5>
+                                    </div>
+                                    <span className="text-[11px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200 flex-shrink-0">
+                                      {subQType === 'multiple_choice' ? '☑️ QCM' : subQType === 'true_false' ? '⚖️ Vrai/Faux' : '📝 Rédaction'}
+                                    </span>
+                                  </div>
+
+                                  {/* 🔴 SOUS-ASPECT INDIVIDUEL EN ROUGE */}
+                                  {showStrandBadges && (
+                                    <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50 px-3 py-1.5 rounded-xl border border-red-200">
+                                      <span className="text-red-700 font-black">● {subStrand.fullLabel}</span>
+                                    </div>
+                                  )}
+
+                                  {/* A. QCM */}
+                                  {subQType === 'multiple_choice' && (
+                                    <div className="space-y-2 pt-1">
+                                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                                        Cochez la bonne réponse :
+                                      </label>
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {(sub.options || ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => {
+                                          const isSelected = subAnswer === opt;
+                                          return (
+                                            <div
+                                              key={optIdx}
+                                              onClick={() => handleResponseChange(subKey, opt)}
+                                              className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
+                                                isSelected
+                                                  ? 'bg-purple-100/90 border-purple-600 text-purple-950 font-bold shadow-xs'
+                                                  : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
+                                              }`}
+                                            >
+                                              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                                isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-400 bg-white'
+                                              }`}>
+                                                {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                              </div>
+                                              <span className="text-sm">{opt}</span>
+                                            </div>
+                                          );
+                                        })}
                                       </div>
                                     </div>
                                   )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      /* ═══════════════════════════════════════════════════════════
-                          CAS 2 : QUESTION UNIQUE SANS SOUS-QUESTIONS
-                          Affichage classique avec son sous-aspect unique en rouge
-                          ═══════════════════════════════════════════════════════════ */
-                      <div className="space-y-4">
-                        {/* 🔴 SOUS-ASPECT INDIVIDUEL EN ROUGE SOUS LA QUESTION */}
-                        <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50/70 px-3 py-1.5 rounded-xl border border-red-200">
-                          <span className="text-red-700 font-black">● {mainStrand.fullLabel}</span>
-                        </div>
 
-                        {/* TYPE QCM */}
-                        {ex.type === 'multiple_choice' && (
-                          <div className="space-y-2.5 pt-1">
-                            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                              Cochez la bonne réponse :
-                            </label>
-                            <div className="space-y-2">
-                              {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => {
-                                const answerKey = `${activeAssessment.criterion}_${exIdx}`;
-                                const currentAnswer = answers[answerKey] || '';
-                                const isSelected = currentAnswer === opt;
-                                return (
-                                  <div
-                                    key={optIdx}
-                                    onClick={() => handleResponseChange(answerKey, opt)}
-                                    className={`p-3 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
-                                      isSelected
-                                        ? 'bg-purple-50 border-purple-600 text-purple-950 font-bold shadow-xs'
-                                        : 'bg-white border-slate-200 hover:border-purple-200 text-slate-700'
-                                    }`}
-                                  >
-                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                                      isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-300 bg-white'
-                                    }`}>
-                                      {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                  {/* B. VRAI OU FAUX */}
+                                  {subQType === 'true_false' && (
+                                    <div className="space-y-2.5 pt-1">
+                                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                                        Indiquez votre réponse :
+                                      </label>
+                                      <div className="grid grid-cols-2 gap-3 max-w-xs">
+                                        {['Vrai', 'Faux'].map(opt => {
+                                          const isSelected = subAnswer.startsWith(opt);
+                                          return (
+                                            <button
+                                              key={opt}
+                                              type="button"
+                                              onClick={() => handleResponseChange(subKey, opt)}
+                                              className={`py-2.5 px-4 rounded-xl font-bold text-xs border-2 transition flex items-center justify-center gap-2 ${
+                                                isSelected
+                                                  ? 'bg-purple-600 border-purple-600 text-white shadow-md'
+                                                  : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
+                                              }`}
+                                            >
+                                              {isSelected && <Check size={14} />}
+                                              <span>{opt}</span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
                                     </div>
-                                    <span className="text-sm">{opt}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
+                                  )}
 
-                        {/* TYPE VRAI / FAUX */}
-                        {ex.type === 'true_false' && (
-                          <div className="space-y-3 pt-1">
-                            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                              Indiquez votre réponse :
-                            </label>
-                            <div className="grid grid-cols-2 gap-3 max-w-md">
-                              {['Vrai', 'Faux'].map(option => {
-                                const answerKey = `${activeAssessment.criterion}_${exIdx}`;
-                                const currentAnswer = answers[answerKey] || '';
-                                const isSelected = currentAnswer.startsWith(option);
-                                return (
-                                  <button
-                                    key={option}
-                                    type="button"
-                                    onClick={() => handleResponseChange(answerKey, option)}
-                                    className={`py-3 px-4 rounded-xl font-bold text-sm border-2 transition flex items-center justify-center gap-2 ${
-                                      isSelected
-                                        ? 'bg-purple-600 border-purple-600 text-white shadow-md'
-                                        : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
-                                    }`}
-                                  >
-                                    {isSelected && <Check size={16} />}
-                                    <span>{option}</span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
+                                  {/* C. RÉDACTION LIBRE AVEC PARENTHÈSES (), ACCOLADES {}, CROCHETS [], CALCULATRICE & GÉOMÉTRIE */}
+                                  {subQType === 'open' && (
+                                    <div className="space-y-2 pt-1">
+                                      {showMathToolbar && (
+                                        <MathSymbolsAndBracketsToolbar
+                                          targetKey={subKey}
+                                          onInsertSymbol={handleInsertMathSymbol}
+                                          showCalculatorButton={showCalculator}
+                                          onOpenCalculator={() => {
+                                            setActiveTextareaKey(subKey);
+                                            setActiveTextareaLabel(`Ex. ${exerciseNum} - ${sub.label || sIdx + 1}`);
+                                            setIsCalculatorOpen(true);
+                                          }}
+                                          onOpenDrawingStudio={() => {
+                                            setDrawingModalTarget(subKey);
+                                            setDrawingModalLabel(`Exercice ${exerciseNum} - ${sub.label}`);
+                                          }}
+                                          isArtSubject={isArtSubject}
+                                          compact
+                                        />
+                                      )}
 
-                        {/* TYPE RÉDACTION LIBRE AVEC OUTILS MATHS & GÉOMÉTRIE OU ART */}
-                        {(!ex.type || ex.type === 'open') && (
-                          <div className="space-y-2">
-                            {/* 📐 BARRE D'OUTILS MATHÉMATIQUES & GÉOMÉTRIE & ART */}
-                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 flex items-center justify-between flex-wrap gap-1.5 text-xs">
-                              <div className="flex items-center gap-1 flex-wrap">
-                                <span className="text-[11px] font-bold text-slate-500 uppercase mr-1">
-                                  {isArtSubject ? 'Art :' : 'Maths :'}
-                                </span>
-                                {MATH_SYMBOLS.map(item => (
-                                  <button
-                                    key={item.label}
-                                    type="button"
-                                    onClick={() => handleInsertMathSymbol(`${activeAssessment.criterion}_${exIdx}`, item.val)}
-                                    className="px-2 py-1 bg-white hover:bg-purple-100 text-slate-700 hover:text-purple-800 border border-slate-200 rounded font-bold text-xs transition shadow-2xs"
-                                    title={`Insérer ${item.label}`}
-                                  >
-                                    {item.label}
-                                  </button>
-                                ))}
-                              </div>
+                                      <textarea
+                                        id={`textarea_${subKey}`}
+                                        value={subAnswer}
+                                        onFocus={() => {
+                                          setActiveTextareaKey(subKey);
+                                          setActiveTextareaLabel(`Ex. ${exerciseNum} - ${sub.label || sIdx + 1}`);
+                                        }}
+                                        onChange={e => handleResponseChange(subKey, e.target.value)}
+                                        placeholder={`Rédigez votre réponse ou vos calculs pour la question ${sub.label || sIdx + 1}...`}
+                                        rows={sub.expectedLines || defaultRows}
+                                        className="w-full p-3.5 bg-white border-2 border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition font-sans leading-relaxed"
+                                      />
 
-                              {/* Bouton outil de tracé */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDrawingModalTarget(`${activeAssessment.criterion}_${exIdx}`);
-                                  setDrawingModalLabel(`Question ${exIdx + 1}`);
-                                }}
-                                className="flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
-                                title="Ouvrir le studio de tracé (Équerre, Rapporteur, Compas ou Art)"
-                              >
-                                {isArtSubject ? <span>🎨 Studio de dessin & croquis</span> : <span>📐 Tracer une figure (Équerre, Compas)</span>}
-                              </button>
-                            </div>
-
-                            {/* Zone de saisie directe */}
-                            <textarea
-                              id={`textarea_${activeAssessment.criterion}_${exIdx}`}
-                              value={answers[`${activeAssessment.criterion}_${exIdx}`] || ''}
-                              onChange={e => handleResponseChange(`${activeAssessment.criterion}_${exIdx}`, e.target.value)}
-                              placeholder="Écrivez directement ici votre réponse rédigée et détaillée..."
-                              rows={5}
-                              className="w-full p-4 border border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition leading-relaxed resize-y font-sans"
-                            />
-
-                            {/* Aperçu du tracé rattaché */}
-                            {drawings[`${activeAssessment.criterion}_${exIdx}`] && (
-                              <div className="relative inline-block bg-slate-50 border border-slate-300 rounded-xl p-2 text-center mt-2">
-                                <span className="text-[10px] font-bold text-slate-600 block mb-1">
-                                  {isArtSubject ? '🎨 Dessin / Croquis rattaché :' : '📐 Figure géométrique rattachée :'}
-                                </span>
-                                <img
-                                  src={drawings[`${activeAssessment.criterion}_${exIdx}`]}
-                                  alt="Tracé élève"
-                                  className="max-h-48 max-w-full mx-auto border border-slate-200 rounded bg-white shadow-xs"
-                                />
-                                <div className="flex items-center justify-center gap-3 mt-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setDrawingModalTarget(`${activeAssessment.criterion}_${exIdx}`);
-                                      setDrawingModalLabel(`Question ${exIdx + 1}`);
-                                    }}
-                                    className="text-[11px] text-purple-600 hover:text-purple-800 font-bold"
-                                  >
-                                    Modifier le tracé
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const next = { ...drawings };
-                                      delete next[`${activeAssessment.criterion}_${exIdx}`];
-                                      setDrawings(next);
-                                    }}
-                                    className="text-[11px] text-rose-600 hover:text-rose-800 font-bold"
-                                  >
-                                    Supprimer
-                                  </button>
+                                      {subDrawing && (
+                                        <div className="relative inline-block bg-white border border-slate-300 rounded-xl p-2.5 text-center mt-1 shadow-2xs">
+                                          <span className="text-[10px] font-bold text-slate-600 block mb-1">
+                                            {isArtSubject ? '🎨 Dessin / Croquis rattaché :' : '📐 Figure géométrique rattachée :'}
+                                          </span>
+                                          <img
+                                            src={subDrawing}
+                                            alt="Figure élève"
+                                            className="max-h-40 max-w-full mx-auto border border-slate-200 rounded bg-white"
+                                          />
+                                          <div className="flex items-center justify-center gap-3 mt-1.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setDrawingModalTarget(subKey);
+                                                setDrawingModalLabel(`Exercice ${exerciseNum} - ${sub.label}`);
+                                              }}
+                                              className="text-[11px] text-purple-600 hover:text-purple-800 font-bold"
+                                            >
+                                              Modifier le tracé
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const next = { ...drawings };
+                                                delete next[subKey];
+                                                setDrawings(next);
+                                              }}
+                                              className="text-[11px] text-rose-600 hover:text-rose-800 font-bold"
+                                            >
+                                              Supprimer
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          /* ═══════════════════════════════════════════════════════════
+                              CAS 2 : QUESTION UNIQUE SANS SOUS-QUESTIONS
+                              ═══════════════════════════════════════════════════════════ */
+                          <div className="space-y-4">
+                            {showStrandBadges && (
+                              <div className="text-red-600 font-bold text-xs flex items-center gap-1.5 bg-red-50/70 px-3 py-1.5 rounded-xl border border-red-200">
+                                <span className="text-red-700 font-black">● {mainStrand.fullLabel}</span>
+                              </div>
+                            )}
+
+                            {/* TYPE QCM */}
+                            {ex.type === 'multiple_choice' && (
+                              <div className="space-y-2.5 pt-1">
+                                <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                                  Cochez la bonne réponse :
+                                </label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                  {(ex.options || ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D']).map((opt, optIdx) => {
+                                    const answerKey = `${activeAssessment.criterion}_${exIdx}`;
+                                    const currentAnswer = answers[answerKey] || '';
+                                    const isSelected = currentAnswer === opt;
+                                    return (
+                                      <div
+                                        key={optIdx}
+                                        onClick={() => handleResponseChange(answerKey, opt)}
+                                        className={`p-3.5 rounded-xl border-2 cursor-pointer transition flex items-center gap-3 ${
+                                          isSelected
+                                            ? 'bg-purple-50 border-purple-600 text-purple-950 font-bold shadow-xs'
+                                            : 'bg-white border-slate-200 hover:border-purple-200 text-slate-700'
+                                        }`}
+                                      >
+                                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                          isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-slate-300 bg-white'
+                                        }`}>
+                                          {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                        </div>
+                                        <span className="text-sm">{opt}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* TYPE VRAI / FAUX */}
+                            {ex.type === 'true_false' && (
+                              <div className="space-y-3 pt-1">
+                                <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
+                                  Indiquez votre réponse :
+                                </label>
+                                <div className="grid grid-cols-2 gap-3 max-w-md">
+                                  {['Vrai', 'Faux'].map(option => {
+                                    const answerKey = `${activeAssessment.criterion}_${exIdx}`;
+                                    const currentAnswer = answers[answerKey] || '';
+                                    const isSelected = currentAnswer.startsWith(option);
+                                    return (
+                                      <button
+                                        key={option}
+                                        type="button"
+                                        onClick={() => handleResponseChange(answerKey, option)}
+                                        className={`py-3 px-4 rounded-xl font-bold text-sm border-2 transition flex items-center justify-center gap-2 ${
+                                          isSelected
+                                            ? 'bg-purple-600 border-purple-600 text-white shadow-md'
+                                            : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
+                                        }`}
+                                      >
+                                        {isSelected && <Check size={16} />}
+                                        <span>{option}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* TYPE RÉDACTION LIBRE AVEC PARENTHÈSES (), ACCOLADES {}, CROCHETS [], CALCULATRICE & GÉOMÉTRIE */}
+                            {(!ex.type || ex.type === 'open') && (
+                              <div className="space-y-2.5">
+                                {showMathToolbar && (
+                                  <MathSymbolsAndBracketsToolbar
+                                    targetKey={`${activeAssessment.criterion}_${exIdx}`}
+                                    onInsertSymbol={handleInsertMathSymbol}
+                                    showCalculatorButton={showCalculator}
+                                    onOpenCalculator={() => {
+                                      setActiveTextareaKey(`${activeAssessment.criterion}_${exIdx}`);
+                                      setActiveTextareaLabel(`Exercice ${exerciseNum}`);
+                                      setIsCalculatorOpen(true);
+                                    }}
+                                    onOpenDrawingStudio={() => {
+                                      setDrawingModalTarget(`${activeAssessment.criterion}_${exIdx}`);
+                                      setDrawingModalLabel(`Exercice ${exerciseNum}`);
+                                    }}
+                                    isArtSubject={isArtSubject}
+                                  />
+                                )}
+
+                                <textarea
+                                  id={`textarea_${activeAssessment.criterion}_${exIdx}`}
+                                  value={answers[`${activeAssessment.criterion}_${exIdx}`] || ''}
+                                  onFocus={() => {
+                                    setActiveTextareaKey(`${activeAssessment.criterion}_${exIdx}`);
+                                    setActiveTextareaLabel(`Exercice ${exerciseNum}`);
+                                  }}
+                                  onChange={e => handleResponseChange(`${activeAssessment.criterion}_${exIdx}`, e.target.value)}
+                                  placeholder="Écrivez directement ici votre réponse rédigée, vos formules et vos calculs..."
+                                  rows={ex.expectedLines || defaultRows + 1}
+                                  className="w-full p-4 border-2 border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-sm outline-none transition leading-relaxed resize-y font-sans"
+                                />
+
+                                {drawings[`${activeAssessment.criterion}_${exIdx}`] && (
+                                  <div className="relative inline-block bg-slate-50 border border-slate-300 rounded-xl p-2 text-center mt-2">
+                                    <span className="text-[10px] font-bold text-slate-600 block mb-1">
+                                      {isArtSubject ? '🎨 Dessin / Croquis rattaché :' : '📐 Figure géométrique rattachée :'}
+                                    </span>
+                                    <img
+                                      src={drawings[`${activeAssessment.criterion}_${exIdx}`]}
+                                      alt="Tracé élève"
+                                      className="max-h-48 max-w-full mx-auto border border-slate-200 rounded bg-white shadow-xs"
+                                    />
+                                    <div className="flex items-center justify-center gap-3 mt-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setDrawingModalTarget(`${activeAssessment.criterion}_${exIdx}`);
+                                          setDrawingModalLabel(`Exercice ${exerciseNum}`);
+                                        }}
+                                        className="text-[11px] text-purple-600 hover:text-purple-800 font-bold"
+                                      >
+                                        Modifier le tracé
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const next = { ...drawings };
+                                          delete next[`${activeAssessment.criterion}_${exIdx}`];
+                                          setDrawings(next);
+                                        }}
+                                        className="text-[11px] text-rose-600 hover:text-rose-800 font-bold"
+                                      >
+                                        Supprimer
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
 
-            {/* Navigation bas de page */}
-            <div className="flex items-center justify-between pt-4 border-t border-slate-200">
+        {/* Navigation bas de page */}
+        <div className="flex items-center justify-between pt-4 border-t border-slate-200">
+          {effectiveDisplayMode === 'tabs' ? (
+            <>
               <button
                 onClick={() => setActiveCriterionIdx(i => Math.max(0, i - 1))}
                 disabled={activeCriterionIdx === 0}
@@ -1815,10 +2003,34 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                   <Send size={14} /> Vérifier & Terminer
                 </button>
               )}
+            </>
+          ) : (
+            <div className="w-full flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+              <div className="text-xs text-slate-600">
+                Progression : <strong className="text-purple-800">{answeredQuestionsCount} / {totalQuestionsCount}</strong> question(s) répondue(s)
+              </div>
+              <button
+                onClick={() => setShowConfirmSubmit(true)}
+                className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-black shadow-lg transition flex items-center gap-2"
+              >
+                <Send size={15} /> Vérifier & Soumettre ma copie
+              </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </main>
+
+      {/* ── MODALE CALCULATRICE SCIENTIFIQUE & STANDARD ── */}
+      <ScientificCalculatorModal
+        isOpen={isCalculatorOpen}
+        onClose={() => setIsCalculatorOpen(false)}
+        activeTargetLabel={activeTextareaLabel}
+        onInsertText={(txt) => {
+          if (activeTextareaKey) {
+            handleInsertMathSymbol(activeTextareaKey, txt);
+          }
+        }}
+      />
 
       {/* ── MODALE GÉOMÉTRIQUE & ART (ÉQUERRE, RAPPORTEUR, COMPAS, COULEURS) ── */}
       {drawingModalTarget && (

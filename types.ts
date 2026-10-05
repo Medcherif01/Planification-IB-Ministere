@@ -9,6 +9,7 @@ export interface AssessmentSubQuestion {
   correctAnswer?: string;
   answer?: string; // Corrigé indicatif pour la sous-question
   points?: number;
+  expectedLines?: number; // Hauteur de la zone de réponse (nombre de lignes)
 }
 
 export interface AssessmentExercise {
@@ -22,6 +23,7 @@ export interface AssessmentExercise {
   correctAnswer?: string; // Pour QCM ou Vrai/Faux
   answer?: string; // Corrigé type / Grille de correction attendue
   workspaceNeeded?: boolean;
+  expectedLines?: number; // Hauteur de la zone de réponse (nombre de lignes)
   imageUrl?: string; // Photo / oeuvre d'art / figure géométrique
   imageCaption?: string; // Légende de l'oeuvre (titre, artiste, date)
   subQuestions?: AssessmentSubQuestion[]; // Sous-questions 1), 2), 3)... avec chacune son sous-aspect individuel
@@ -544,6 +546,19 @@ export interface IndividualAccessCode {
   createdAt?: string;
 }
 
+export interface EvaluationLayoutConfig {
+  displayMode?: 'full_page' | 'tabs'; // 'full_page' = tous les exercices bien structurés sur une page, 'tabs' = onglets par critère
+  numberingStyle?: 'continuous' | 'by_criterion'; // 'continuous' = Exercice 1, 2, 3... | 'by_criterion' = par critère
+  spacing?: 'compact' | 'normal' | 'spacious'; // Densité de mise en page
+  headerStyle?: 'official_ib' | 'modern_card'; // En-tête officiel type Examen IB vs Bannière moderne
+  answerBoxRows?: number; // Hauteur par défaut des zones de rédaction (ex: 4, 6, 8)
+  showCalculator?: boolean; // Calculatrice scientifique autorisée et visible (défaut: true)
+  showMathToolbar?: boolean; // Barre de parenthèses (), accolades {}, crochets [] et symboles (défaut: true)
+  showStrandBadges?: boolean; // Afficher les sous-aspects en rouge sous chaque question (défaut: true)
+  showPointsPerCriterion?: boolean; // Afficher le barème /8 (défaut: true)
+  showSummaryNav?: boolean; // Afficher le sommaire de navigation rapide des questions (défaut: true)
+}
+
 export interface OnlineEvaluation {
   id: string; // e.g. "eval_17112345678"
   accessCode: string; // e.g. "EVAL-8492" (code principal / groupe)
@@ -565,6 +580,7 @@ export interface OnlineEvaluation {
   assessments: AssessmentData[];
   allowStudentFeedbackView?: boolean;
   studentAccessCodes?: IndividualAccessCode[]; // Codes individuels à usage unique par élève
+  layoutConfig?: EvaluationLayoutConfig; // Organisation et mise en page personnalisée par l'enseignant
 }
 
 export interface StudentAnswer {

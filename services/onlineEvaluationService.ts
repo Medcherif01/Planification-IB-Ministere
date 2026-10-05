@@ -145,6 +145,41 @@ export async function deleteEvaluation(id: string): Promise<boolean> {
   return true;
 }
 
+export async function deleteStudentSubmission(
+  submissionId: string,
+  accessCode?: string,
+  studentNumber?: string
+): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${API_BASE}?action=delete_submission&submissionId=${encodeURIComponent(submissionId)}`,
+      { method: 'DELETE' }
+    );
+    if (res.ok) {
+      const locals = getLocalSubmissions().filter(s => s.id !== submissionId);
+      saveLocalSubmissions(locals);
+    }
+  } catch (err) {
+    console.warn('[EvaluationService] Erreur suppression copie élève:', err);
+  }
+
+  const locals = getLocalSubmissions().filter(s => s.id !== submissionId);
+  saveLocalSubmissions(locals);
+
+  // Déverrouiller également en local si présent sur cet appareil
+  if (accessCode && studentNumber) {
+    try {
+      const cleanCode = accessCode.trim().toUpperCase();
+      const cleanNum = studentNumber.trim();
+      localStorage.removeItem(`ib_locked_${cleanCode}_${cleanNum}`);
+      localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
+      localStorage.removeItem(`timer_${cleanCode}_${cleanNum}`);
+    } catch {}
+  }
+
+  return true;
+}
+
 // ── Student Submissions ──────────────────────────────────────────────────────
 
 export async function submitStudentEvaluation(

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users } from 'lucide-react';
+import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
-import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini } from '../services/onlineEvaluationService';
+import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini, deleteStudentSubmission } from '../services/onlineEvaluationService';
 import { generateCleanStudentCodesForEvaluation, fetchAllStudents } from '../services/studentRosterService';
 import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
+import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
 
 interface TeacherEvaluationsManagerProps {
   currentSubject?: string;
@@ -106,6 +107,16 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   // Print view
   const [printEvaluation, setPrintEvaluation] = useState<OnlineEvaluation | null>(null);
   const [printSubmission, setPrintSubmission] = useState<StudentSubmission | null>(null);
+
+  // Version Élève & Mise en Page / Organisation (aperçu interactif enseignant)
+  const [studentPreviewEvaluation, setStudentPreviewEvaluation] = useState<OnlineEvaluation | null>(null);
+
+  // Validation Administrateur pour suppression d'une copie d'élève (Admin uniquement)
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.username === 'admin';
+  const [submissionToDelete, setSubmissionToDelete] = useState<StudentSubmission | null>(null);
+  const [adminDeleteValidated, setAdminDeleteValidated] = useState(false);
+  const [adminResetMatriculeOnDelete, setAdminResetMatriculeOnDelete] = useState(true);
+  const [isDeletingSubmission, setIsDeletingSubmission] = useState(false);
 
   // Gestion des codes d'accès individuels des élèves
   const [studentCodesCountToCreate, setStudentCodesCountToCreate] = useState('25');
@@ -571,6 +582,60 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
     targetCrit.exercises.splice(exIdx, 1);
     setEditingEvaluation(newEval);
+  };
+
+  // Sauvegarder depuis la modale Version Élève & Mise en Page / Organisation
+  const handleSaveStudentViewLayout = async (updatedEval: OnlineEvaluation) => {
+    const saved = await createOrUpdateEvaluation(updatedEval);
+    setEvaluations(prev => prev.map(e => (e.id === saved.id ? saved : e)));
+    if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
+    if (editingEvaluation?.id === saved.id) setEditingEvaluation(JSON.parse(JSON.stringify(saved)));
+    setStudentPreviewEvaluation(saved);
+  };
+
+  // Suppression définitive d'une copie d'élève (réservée à l'Admin après validation explicite)
+  const handleConfirmAdminDeleteSubmission = async () => {
+    if (!isAdmin || !submissionToDelete || !adminDeleteValidated) return;
+    setIsDeletingSubmission(true);
+    try {
+      const targetEvalId = selectedEvaluation?.id || submissionToDelete.evaluationId;
+      await deleteStudentSubmission(submissionToDelete.id, 'admin', targetEvalId);
+
+      // Si l'admin a coché la réinitialisation du matricule de l'élève
+      if (adminResetMatriculeOnDelete && selectedEvaluation && selectedEvaluation.studentAccessCodes) {
+        const cleanNum = (submissionToDelete.studentNumber || '').trim().toUpperCase();
+        const updatedCodes = selectedEvaluation.studentAccessCodes.map(sc => {
+          const scNum = (sc.studentNumber || '').trim().toUpperCase();
+          if (sc.submissionId === submissionToDelete.id || (cleanNum && scNum === cleanNum)) {
+            return {
+              ...sc,
+              isUsed: false,
+              usedAt: undefined,
+              submissionId: undefined,
+              allowedRetake: false,
+            };
+          }
+          return sc;
+        });
+        const updatedEval = await createOrUpdateEvaluation({
+          ...selectedEvaluation,
+          studentAccessCodes: updatedCodes,
+        });
+        setSelectedEvaluation(updatedEval);
+        setEvaluations(prev => prev.map(e => (e.id === updatedEval.id ? updatedEval : e)));
+      }
+
+      setSubmissions(prev => prev.filter(s => s.id !== submissionToDelete.id));
+      if (activeSubmission?.id === submissionToDelete.id) {
+        setActiveSubmission(null);
+      }
+      setSubmissionToDelete(null);
+      setAdminDeleteValidated(false);
+    } catch (err: any) {
+      alert(`Erreur lors de la suppression de la copie : ${err.message || 'Accès refusé'}`);
+    } finally {
+      setIsDeletingSubmission(false);
+    }
   };
 
   // Créer une nouvelle évaluation en ligne depuis une unité
@@ -1151,13 +1216,23 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     </div>
 
                     <div className="pt-3 border-t border-slate-100 space-y-2">
-                      {/* BOUTON PRINCIPAL : Voir & Modifier l'évaluation existante et ses questions (avec IA par question) */}
+                      {/* BOUTON 1 : Version Élève & Organisation / Mise en Page en direct */}
+                      <button
+                        onClick={() => setStudentPreviewEvaluation(JSON.parse(JSON.stringify(ev)))}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-extrabold transition shadow-xs"
+                        title="Voir l'évaluation exactement comme elle apparaît chez l'élève et modifier l'organisation ou la mise en page"
+                      >
+                        <Sliders size={14} />
+                        <span>👁️ Voir Version Élève & Mise en Page</span>
+                      </button>
+
+                      {/* BOUTON 2 : Voir & Modifier l'évaluation existante et ses questions (avec IA par question) */}
                       <button
                         onClick={() => {
                           setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
                           setEditingCriterionIdx(0);
                         }}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition shadow-xs"
+                        className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition shadow-xs"
                         title="Ouvrir l'évaluation existante avec toutes ses questions pour les modifier, changer leur nature, en ajouter ou générer chaque question par IA"
                       >
                         <Edit3 size={14} />
@@ -1346,6 +1421,27 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               >
                                 <Printer size={15} />
                               </button>
+                              {isAdmin ? (
+                                <button
+                                  onClick={() => {
+                                    setSubmissionToDelete(sub);
+                                    setAdminDeleteValidated(false);
+                                    setAdminResetMatriculeOnDelete(true);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1"
+                                  title="Supprimer cette copie d'élève après validation Administrateur"
+                                >
+                                  <Trash2 size={13} />
+                                  <span>Supprimer (Admin)</span>
+                                </button>
+                              ) : (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-400 rounded-lg text-[10px] font-semibold cursor-not-allowed"
+                                  title="Seul l'Administrateur peut supprimer des copies d'élèves après validation"
+                                >
+                                  <Lock size={11} /> Admin seul
+                                </span>
+                              )}
                             </td>
                           </tr>
                         );
@@ -1787,6 +1883,19 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {isAdmin && (
+                    <button
+                      onClick={() => {
+                        setSubmissionToDelete(activeSubmission);
+                        setAdminDeleteValidated(false);
+                        setAdminResetMatriculeOnDelete(true);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-xs font-bold rounded-xl transition"
+                      title="Supprimer cette copie après validation Administrateur"
+                    >
+                      <Trash2 size={14} /> Supprimer la copie (Admin)
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setPrintEvaluation(selectedEvaluation);
@@ -1847,6 +1956,17 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStudentPreviewEvaluation(JSON.parse(JSON.stringify(editingEvaluation)));
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black shadow-md transition"
+                    title="Voir l'évaluation exactement comme chez l'élève et organiser la mise en page"
+                  >
+                    <Eye size={15} />
+                    <span>Version Élève & Mise en Page</span>
+                  </button>
                   <button
                     onClick={() => setEditingEvaluation(null)}
                     className="p-2 text-white/70 hover:text-white rounded-xl hover:bg-white/10 transition"
@@ -3205,6 +3325,126 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             relatedConcepts={editingEvaluation.relatedConcepts}
             existingQuestionsCount={editingEvaluation.assessments[editingCriterionIdx].exercises?.length || 0}
           />
+        )}
+
+        {/* ═════════════════════════════════════════════════════════════════
+            MODALE : VERSION ÉLÈVE & ORGANISATION / MISE EN PAGE EN DIRECT
+            ═════════════════════════════════════════════════════════════════ */}
+        {studentPreviewEvaluation && (
+          <StudentViewLayoutEditorModal
+            evaluation={studentPreviewEvaluation}
+            onClose={() => setStudentPreviewEvaluation(null)}
+            onSave={handleSaveStudentViewLayout}
+          />
+        )}
+
+        {/* ═════════════════════════════════════════════════════════════════
+            MODALE : VALIDATION ADMINISTRATEUR POUR SUPPRESSION D'UNE COPIE
+            ═════════════════════════════════════════════════════════════════ */}
+        {isAdmin && submissionToDelete && (
+          <div className="fixed inset-0 z-[120] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border-2 border-rose-200 animate-fadeIn">
+              <div className="bg-gradient-to-r from-rose-700 to-red-800 p-5 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                    <ShieldCheck size={22} />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-black/25 px-2 py-0.5 rounded">
+                      Action Réservée à l'Administrateur
+                    </span>
+                    <h3 className="text-base font-black mt-0.5">
+                      Validation de Suppression de Copie
+                    </h3>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setSubmissionToDelete(null);
+                    setAdminDeleteValidated(false);
+                  }}
+                  className="p-1.5 text-white/80 hover:text-white rounded-lg"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-1.5 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-semibold">Élève :</span>
+                    <span className="font-black text-slate-900">{submissionToDelete.studentName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-semibold">Matricule :</span>
+                    <span className="font-mono font-bold text-indigo-800">{submissionToDelete.studentNumber}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-semibold">Date de remise :</span>
+                    <span className="font-semibold text-slate-700">
+                      {new Date(submissionToDelete.submittedAt).toLocaleString('fr-FR')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-semibold">Statut :</span>
+                    <span className="font-bold text-slate-800">
+                      {submissionToDelete.status === 'graded'
+                        ? `Corrigée (${submissionToDelete.totalScore ?? 0} pts)`
+                        : 'En attente de correction'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Case de validation obligatoire de l'Admin */}
+                <label className="flex items-start gap-3 p-3.5 rounded-2xl border-2 border-rose-300 bg-rose-50/50 cursor-pointer hover:bg-rose-50 transition">
+                  <input
+                    type="checkbox"
+                    checked={adminDeleteValidated}
+                    onChange={e => setAdminDeleteValidated(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-rose-600 rounded"
+                  />
+                  <span className="text-xs font-bold text-rose-950 leading-snug">
+                    Je valide en tant qu'Administrateur la suppression définitive de cette copie d'élève.
+                  </span>
+                </label>
+
+                {/* Option pour réinitialiser l'accès du matricule */}
+                <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100 transition">
+                  <input
+                    type="checkbox"
+                    checked={adminResetMatriculeOnDelete}
+                    onChange={e => setAdminResetMatriculeOnDelete(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-indigo-600 rounded"
+                  />
+                  <span className="text-xs text-slate-700 leading-snug">
+                    <strong>Réouvrir le matricule ({submissionToDelete.studentNumber})</strong> pour autoriser l'élève à recomposer proprement.
+                  </span>
+                </label>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubmissionToDelete(null);
+                      setAdminDeleteValidated(false);
+                    }}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!adminDeleteValidated || isDeletingSubmission}
+                    onClick={handleConfirmAdminDeleteSubmission}
+                    className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 disabled:text-slate-500 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-1.5"
+                  >
+                    <Trash2 size={14} />
+                    <span>{isDeletingSubmission ? 'Suppression…' : 'Valider & Supprimer'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
 
       </div>

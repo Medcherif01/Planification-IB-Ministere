@@ -11,7 +11,13 @@ import {
   type AppUser, type ModificationRequest
 } from '../services/authService';
 import { SUBJECTS, PEI_GRADES } from '../constants';
-import { ClassStudent } from '../types';
+import { ClassStudent, OnlineEvaluation, StudentSubmission } from '../types';
+import {
+  getEvaluations,
+  getSubmissionsForEvaluation,
+  deleteStudentSubmission,
+  createOrUpdateEvaluation,
+} from '../services/onlineEvaluationService';
 import {
   fetchAllStudents,
   saveStudentsForGrade,
@@ -34,7 +40,7 @@ interface AdminPanelProps {
   onImportCSV?: (file: File) => void;
 }
 
-type AdminTab = 'users' | 'students' | 'requests' | 'data';
+type AdminTab = 'users' | 'students' | 'copies' | 'requests' | 'data';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -74,6 +80,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   const [requests, setRequests] = useState<ModificationRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [requestFilter, setRequestFilter] = useState<string>('pending');
+
+  // ── Admin Student Copies (Validation & Deletion) state ───────────────────
+  const [adminEvaluations, setAdminEvaluations] = useState<OnlineEvaluation[]>([]);
+  const [adminSubmissionsByEval, setAdminSubmissionsByEval] = useState<Record<string, StudentSubmission[]>>({});
+  const [copiesLoading, setCopiesLoading] = useState(false);
+  const [validatedCopyIds, setValidatedCopyIds] = useState<Record<string, boolean>>({});
+  const [resetMatriculeCopyIds, setResetMatriculeCopyIds] = useState<Record<string, boolean>>({});
+  const [deletingCopyId, setDeletingCopyId] = useState<string | null>(null);
 
   // ── Import ref ────────────────────────────────────────────────────────────
   const importRef = useRef<HTMLInputElement>(null);
@@ -119,6 +133,60 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   useEffect(() => { loadUsers(); loadStudents(); }, []);
   useEffect(() => { if (activeTab === 'requests') loadRequests(); }, [activeTab, requestFilter]);
   useEffect(() => { if (activeTab === 'students') loadStudents(); }, [activeTab]);
+  useEffect(() => { if (activeTab === 'copies') loadAdminCopies(); }, [activeTab]);
+
+  const loadAdminCopies = async () => {
+    setCopiesLoading(true);
+    try {
+      const evals = await getEvaluations();
+      setAdminEvaluations(evals);
+      const map: Record<string, StudentSubmission[]> = {};
+      await Promise.all(
+        evals.map(async ev => {
+          if (ev.id) {
+            const subs = await getSubmissionsForEvaluation(ev.id);
+            map[ev.id] = subs;
+          }
+        })
+      );
+      setAdminSubmissionsByEval(map);
+    } catch (e) {
+      console.error('Erreur chargement copies admin:', e);
+    } finally {
+      setCopiesLoading(false);
+    }
+  };
+
+  const handleAdminDeleteCopy = async (ev: OnlineEvaluation, sub: StudentSubmission) => {
+    if (!validatedCopyIds[sub.id]) return;
+    setDeletingCopyId(sub.id);
+    try {
+      await deleteStudentSubmission(sub.id, 'admin', ev.id);
+      const shouldResetMatricule = resetMatriculeCopyIds[sub.id] !== false;
+      if (shouldResetMatricule && ev.studentAccessCodes) {
+        const cleanNum = (sub.studentNumber || '').trim().toUpperCase();
+        const updatedCodes = ev.studentAccessCodes.map(sc => {
+          const scNum = (sc.studentNumber || '').trim().toUpperCase();
+          if (sc.submissionId === sub.id || (cleanNum && scNum === cleanNum)) {
+            return {
+              ...sc,
+              isUsed: false,
+              usedAt: undefined,
+              submissionId: undefined,
+              allowedRetake: false,
+            };
+          }
+          return sc;
+        });
+        await createOrUpdateEvaluation({ ...ev, studentAccessCodes: updatedCodes });
+      }
+      await loadAdminCopies();
+    } catch (err: any) {
+      alert(`Erreur lors de la suppression : ${err.message || 'Impossible de supprimer la copie'}`);
+    } finally {
+      setDeletingCopyId(null);
+    }
+  };
 
   const studentsForCurrentGrade = allClassStudents.filter(
     s => s.grade === selectedStudentGrade
@@ -454,6 +522,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
             {[
               { id: 'users' as AdminTab, label: 'Enseignants', icon: <Users size={15} /> },
               { id: 'students' as AdminTab, label: `Élèves par classe (${allClassStudents.length})`, icon: <UserCheck size={15} /> },
+              { id: 'copies' as AdminTab, label: 'Copies d\'élèves (Suppression Admin)', icon: <FileText size={15} /> },
               { id: 'requests' as AdminTab, label: `Demandes${pendingCount > 0 ? ` (${pendingCount})` : ''}`, icon: <Bell size={15} /> },
               { id: 'data' as AdminTab, label: 'Données', icon: <Database size={15} /> },
             ].map(tab => (
@@ -928,6 +997,130 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* ══ TAB: COPIES D'ÉLÈVES (VALIDATION & SUPPRESSION ADMIN SEUL) ══ */}
+            {activeTab === 'copies' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-3 bg-rose-50 border border-rose-200 rounded-2xl p-4">
+                  <div>
+                    <h3 className="font-bold text-rose-950 text-sm flex items-center gap-2">
+                      <Shield size={16} className="text-rose-700" />
+                      Suppression des copies d'élèves (Réservée exclusivement à l'Administrateur)
+                    </h3>
+                    <p className="text-xs text-rose-800 mt-0.5">
+                      Seul l'Administrateur peut supprimer la copie d'un élève après avoir coché la validation explicite ci-dessous.
+                    </p>
+                  </div>
+                  <button
+                    onClick={loadAdminCopies}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-xl text-xs font-bold transition"
+                  >
+                    <RefreshCw size={13} /> Actualiser les copies
+                  </button>
+                </div>
+
+                {copiesLoading ? (
+                  <div className="py-12 text-center text-slate-500 text-xs flex items-center justify-center gap-2">
+                    <Loader2 size={18} className="animate-spin text-indigo-600" /> Chargement des évaluations et copies d'élèves...
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {adminEvaluations.filter(ev => ev.id && (adminSubmissionsByEval[ev.id]?.length || 0) > 0).length === 0 ? (
+                      <div className="p-10 text-center bg-slate-50 border border-slate-200 rounded-2xl text-slate-500 text-xs">
+                        Aucune copie d'élève soumise pour le moment.
+                      </div>
+                    ) : (
+                      adminEvaluations
+                        .filter(ev => ev.id && (adminSubmissionsByEval[ev.id]?.length || 0) > 0)
+                        .map(ev => {
+                          const subs = adminSubmissionsByEval[ev.id!] || [];
+                          return (
+                            <div key={ev.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                              <div className="bg-slate-800 text-white px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+                                <div>
+                                  <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-500/40 px-2 py-0.5 rounded mr-2">
+                                    {ev.subject} · {ev.grade}
+                                  </span>
+                                  <span className="font-bold text-sm">{ev.title}</span>
+                                </div>
+                                <span className="text-xs font-mono bg-white/10 px-2.5 py-0.5 rounded">
+                                  Code Classe : {ev.accessCode} · {subs.length} copie(s)
+                                </span>
+                              </div>
+
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs text-left">
+                                  <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                                    <tr>
+                                      <th className="px-4 py-2.5">Élève</th>
+                                      <th className="px-4 py-2.5">Matricule</th>
+                                      <th className="px-4 py-2.5">Remise</th>
+                                      <th className="px-4 py-2.5">Validation Administrateur</th>
+                                      <th className="px-4 py-2.5 text-right">Suppression</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {subs.map(sub => {
+                                      const isValidated = Boolean(validatedCopyIds[sub.id]);
+                                      const shouldReset = resetMatriculeCopyIds[sub.id] !== false;
+                                      return (
+                                        <tr key={sub.id} className="hover:bg-slate-50">
+                                          <td className="px-4 py-3 font-bold text-slate-900">{sub.studentName}</td>
+                                          <td className="px-4 py-3 font-mono font-bold text-indigo-700">{sub.studentNumber}</td>
+                                          <td className="px-4 py-3 text-slate-500">
+                                            {new Date(sub.submittedAt).toLocaleString('fr-FR')}
+                                          </td>
+                                          <td className="px-4 py-3 space-y-1">
+                                            <label className="flex items-center gap-2 cursor-pointer font-bold text-rose-900">
+                                              <input
+                                                type="checkbox"
+                                                checked={isValidated}
+                                                onChange={e =>
+                                                  setValidatedCopyIds(prev => ({ ...prev, [sub.id]: e.target.checked }))
+                                                }
+                                                className="w-4 h-4 accent-rose-600 rounded"
+                                              />
+                                              <span>✓ Je valide la suppression de cette copie</span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer text-[11px] text-slate-600">
+                                              <input
+                                                type="checkbox"
+                                                checked={shouldReset}
+                                                onChange={e =>
+                                                  setResetMatriculeCopyIds(prev => ({ ...prev, [sub.id]: e.target.checked }))
+                                                }
+                                                className="w-3.5 h-3.5 accent-indigo-600 rounded"
+                                              />
+                                              <span>Réouvrir le matricule de l'élève</span>
+                                            </label>
+                                          </td>
+                                          <td className="px-4 py-3 text-right">
+                                            <button
+                                              type="button"
+                                              disabled={!isValidated || deletingCopyId === sub.id}
+                                              onClick={() => handleAdminDeleteCopy(ev, sub)}
+                                              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl font-bold text-xs transition inline-flex items-center gap-1.5"
+                                            >
+                                              <Trash2 size={13} />
+                                              <span>
+                                                {deletingCopyId === sub.id ? 'Suppression…' : 'Supprimer la copie'}
+                                              </span>
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

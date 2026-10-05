@@ -204,6 +204,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 3. DELETE Requests
       if (req.method === 'DELETE') {
+        if (action === 'delete_submission') {
+          const { submissionId } = req.query;
+          if (!submissionId) return res.status(400).json({ error: 'submissionId requis' });
+          const subIdx = inMemorySubmissions.findIndex(s => s.id === submissionId);
+          let deletedSub: any = null;
+          if (subIdx !== -1) {
+            deletedSub = inMemorySubmissions[subIdx];
+            inMemorySubmissions.splice(subIdx, 1);
+          }
+          return res.status(200).json({ success: true, deleted: subIdx !== -1 ? 1 : 0, deletedSubmission: deletedSub });
+        }
         const { id } = req.query;
         if (!id) return res.status(400).json({ error: 'ID requis pour la suppression' });
         const idx = inMemoryEvaluations.findIndex(e => e.id === id);
@@ -341,6 +352,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 3. DELETE Requests
     if (req.method === 'DELETE') {
+      if (action === 'delete_submission') {
+        const { submissionId } = req.query;
+        if (!submissionId) return res.status(400).json({ error: 'submissionId requis' });
+        const result = await subCol.deleteOne({ id: submissionId });
+        return res.status(200).json({ success: true, deleted: result.deletedCount });
+      }
       const { id } = req.query;
       if (!id) return res.status(400).json({ error: 'ID requis' });
       const result = await evalCol.deleteOne({ id });
