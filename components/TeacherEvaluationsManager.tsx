@@ -197,12 +197,21 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     setTimeout(() => setCopiedCode(null), 2500);
   };
 
-  // Copier le lien direct pour les élèves
+  // Copier le lien direct pour les élèves (Tablettes / Ordinateurs / Classroom)
   const handleCopyStudentLink = (code: string) => {
     const url = `${window.location.origin}?mode=student&code=${encodeURIComponent(code)}`;
     navigator.clipboard.writeText(url);
     setCopiedCode(`link_${code}`);
     setTimeout(() => setCopiedCode(null), 2500);
+  };
+
+  // Copier le message prêt à publier sur Google Classroom
+  const handleCopyClassroomPost = (ev: OnlineEvaluation) => {
+    const url = `${window.location.origin}?mode=student&code=${encodeURIComponent(ev.accessCode)}`;
+    const text = `📝 ÉVALUATION CRITÉRÉE EN LIGNE : ${ev.title} (${ev.subject} - ${ev.grade})\n\n🔗 Lien direct à ouvrir sur votre tablette ou ordinateur :\n${url}\n\n🔑 Code d'accès unique de la classe : ${ev.accessCode}\n🔒 Important : Saisissez obligatoirement votre N° de Matricule personnel fourni par votre enseignant pour déverrouiller l'accès à l'évaluation.`;
+    navigator.clipboard.writeText(text);
+    setCopiedCode(`classroom_${ev.accessCode}`);
+    setTimeout(() => setCopiedCode(null), 3000);
   };
 
   // Supprimer une évaluation
@@ -624,11 +633,11 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     setEditingEvaluation(JSON.parse(JSON.stringify(newEval)));
     setEditingCriterionIdx(0);
     if (fromClassRoster) {
-      alert(`✅ Évaluation créée avec succès !\n\n🎓 ${rosterCount} codes d'accès nominatifs propres ont été générés automatiquement pour chaque élève de la classe ${targetGrade}.\n\nVous pouvez maintenant vérifier, modifier ou générer vos questions par IA.`);
+      alert(`✅ Évaluation créée avec succès !\n\n🔑 Code d'Accès Unique pour toute la classe : ${code}\n🎓 ${rosterCount} élèves de la classe ${targetGrade} ont leur Matricule personnel configuré pour l'accès.\n\nVous pouvez publier le lien unique sur Classroom ou le coller sur les tablettes/ordinateurs.`);
     }
   };
 
-  // Synchroniser / Régénérer les codes propres pour chaque élève de la classe depuis la liste Admin
+  // Synchroniser / Charger les élèves et leurs matricules depuis la liste de classe Admin
   const handleSyncCodesWithClassRoster = async () => {
     if (!managingCodesEval) return;
     setIsSavingCodes(true);
@@ -640,7 +649,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         managingCodesEval.studentAccessCodes || []
       );
       if (!fromClassRoster || rosterCount === 0) {
-        alert(`Aucun élève n'est encore enregistré dans la classe ${managingCodesEval.grade} par l'Administrateur.\n\nOuvrez le Panneau Admin → onglet "Élèves par classe" pour ajouter la liste des élèves.`);
+        alert(`Aucun élève n'est encore enregistré dans la classe ${managingCodesEval.grade} par l'Administrateur.\n\nVous pouvez saisir directement les noms et matricules de vos élèves ci-dessous.`);
         return;
       }
       const updatedEval: OnlineEvaluation = {
@@ -652,25 +661,67 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
       if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
     } catch (err: any) {
-      alert(`Erreur : ${err.message || 'Impossible de synchroniser les codes avec la classe'}`);
+      alert(`Erreur : ${err.message || 'Impossible de synchroniser les matricules avec la classe'}`);
     } finally {
       setIsSavingCodes(false);
     }
   };
 
-  // ── GESTION DES CODES D'ACCÈS INDIVIDUELS ÉLÈVES ─────────────────────────────
-  // Réouvrir l'accès pour un deuxième essai (ou reverrouiller)
-  const handleToggleCodeRetake = async (targetCode: string) => {
+  // ── GESTION DES MATRICULES D'ACCÈS PAR ÉLÈVE (AVEC UN SEUL CODE D'ÉVALUATION UNIQUE) ──
+  // Mettre à jour en direct le nom ou le matricule d'un élève dans la liste
+  const handleUpdateStudentRowField = (rowIndex: number, field: 'studentName' | 'studentNumber', value: string) => {
+    if (!managingCodesEval) return;
+    const currentCodes = [...(managingCodesEval.studentAccessCodes || [])];
+    if (!currentCodes[rowIndex]) return;
+    currentCodes[rowIndex] = {
+      ...currentCodes[rowIndex],
+      [field]: value,
+    };
+    setManagingCodesEval({
+      ...managingCodesEval,
+      studentAccessCodes: currentCodes,
+    });
+  };
+
+  // Sauvegarder toutes les modifications de noms et matricules des élèves
+  const handleSaveAllStudentMatricules = async (evalToSave?: OnlineEvaluation) => {
+    const target = evalToSave || managingCodesEval;
+    if (!target) return;
+    setIsSavingCodes(true);
+    try {
+      const gradeDigit = (target.grade || '').replace(/[^1-5]/g, '') || '1';
+      const normalizedCodes = (target.studentAccessCodes || []).map((c, idx) => ({
+        ...c,
+        code: target.accessCode,
+        studentName: (c.studentName || '').trim(),
+        studentNumber: (c.studentNumber || '').trim() || `PEI${gradeDigit}-${String(idx + 1).padStart(3, '0')}`,
+      }));
+      const updatedEval: OnlineEvaluation = {
+        ...target,
+        studentAccessCodes: normalizedCodes,
+      };
+      const saved = await createOrUpdateEvaluation(updatedEval);
+      setManagingCodesEval(saved);
+      setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
+      if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
+    } catch (err: any) {
+      alert(`Erreur : ${err.message || 'Impossible d\'enregistrer les matricules'}`);
+    } finally {
+      setIsSavingCodes(false);
+    }
+  };
+
+  // Réouvrir l'accès pour un deuxième essai (ou reverrouiller) pour un élève (par index)
+  const handleToggleCodeRetake = async (rowIndex: number) => {
     if (!managingCodesEval) return;
     setIsSavingCodes(true);
     try {
       const currentCodes = managingCodesEval.studentAccessCodes || [];
-      const updatedCodes = currentCodes.map(c => {
-        if (c.code === targetCode) {
-          const nextAllowed = !c.allowedRetake;
+      const updatedCodes = currentCodes.map((c, idx) => {
+        if (idx === rowIndex) {
           return {
             ...c,
-            allowedRetake: nextAllowed,
+            allowedRetake: !c.allowedRetake,
           };
         }
         return c;
@@ -686,22 +737,24 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
       if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
     } catch (err: any) {
-      alert(`Erreur : ${err.message || 'Impossible de modifier le statut du code'}`);
+      alert(`Erreur : ${err.message || 'Impossible de modifier le statut d\'accès de l\'élève'}`);
     } finally {
       setIsSavingCodes(false);
     }
   };
 
-  // Réinitialiser complètement un code (efface l'utilisation pour le remettre à neuf)
-  const handleResetCodeUsage = async (targetCode: string) => {
+  // Réinitialiser l'accès d'un élève (conserve son nom et son matricule mais remet son statut à Disponible)
+  const handleResetCodeUsage = async (rowIndex: number) => {
     if (!managingCodesEval) return;
-    if (!window.confirm(`Voulez-vous réinitialiser le code ${targetCode} ?\n\nIl redeviendra utilisable par n'importe quel élève et son statut redeviendra disponible.`)) return;
+    const targetStudent = managingCodesEval.studentAccessCodes?.[rowIndex];
+    if (!targetStudent) return;
+    if (!window.confirm(`Voulez-vous réinitialiser l'accès pour le matricule "${targetStudent.studentNumber}" ${targetStudent.studentName ? `(${targetStudent.studentName})` : ''} ?\n\nL'élève pourra à nouveau accéder à l'évaluation avec son matricule.`)) return;
 
     setIsSavingCodes(true);
     try {
       const currentCodes = managingCodesEval.studentAccessCodes || [];
-      const updatedCodes = currentCodes.map(c => {
-        if (c.code === targetCode) {
+      const updatedCodes = currentCodes.map((c, idx) => {
+        if (idx === rowIndex) {
           return {
             ...c,
             isUsed: false,
@@ -722,21 +775,23 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
       if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
     } catch (err: any) {
-      alert(`Erreur : ${err.message || 'Impossible de réinitialiser le code'}`);
+      alert(`Erreur : ${err.message || 'Impossible de réinitialiser l\'accès'}`);
     } finally {
       setIsSavingCodes(false);
     }
   };
 
-  // Supprimer un code
-  const handleDeleteCode = async (targetCode: string) => {
+  // Supprimer un élève / matricule de la liste
+  const handleDeleteCode = async (rowIndex: number) => {
     if (!managingCodesEval) return;
-    if (!window.confirm(`Supprimer définitivement le code d'accès ${targetCode} ?`)) return;
+    const targetStudent = managingCodesEval.studentAccessCodes?.[rowIndex];
+    if (!targetStudent) return;
+    if (!window.confirm(`Supprimer le matricule "${targetStudent.studentNumber}" ${targetStudent.studentName ? `(${targetStudent.studentName})` : ''} de la liste d'accès ?`)) return;
 
     setIsSavingCodes(true);
     try {
       const currentCodes = managingCodesEval.studentAccessCodes || [];
-      const updatedCodes = currentCodes.filter(c => c.code !== targetCode);
+      const updatedCodes = currentCodes.filter((_, idx) => idx !== rowIndex);
 
       const updatedEval: OnlineEvaluation = {
         ...managingCodesEval,
@@ -748,31 +803,31 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
       if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
     } catch (err: any) {
-      alert(`Erreur : ${err.message || 'Impossible de supprimer le code'}`);
+      alert(`Erreur : ${err.message || 'Impossible de supprimer ce matricule'}`);
     } finally {
       setIsSavingCodes(false);
     }
   };
 
-  // Ajouter un code personnalisé ou assigné
+  // Ajouter un élève avec son Matricule obligatoire
   const handleAddCustomCode = async () => {
     if (!managingCodesEval) return;
-    const cleanCode = (newCustomCode.trim() || `${managingCodesEval.accessCode}-${Math.floor(100 + Math.random() * 900)}`).toUpperCase();
     const currentCodes = managingCodesEval.studentAccessCodes || [];
+    const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
+    const defaultMat = `PEI${gradeDigit}-${String(currentCodes.length + 1).padStart(3, '0')}`;
+    const cleanMat = (newCustomStudentNumber.trim() || defaultMat).toUpperCase();
 
-    if (currentCodes.some(c => c.code.toUpperCase() === cleanCode)) {
-      alert('Ce code d\'accès existe déjà dans cette évaluation.');
+    if (currentCodes.some(c => (c.studentNumber || '').trim().toUpperCase() === cleanMat)) {
+      alert(`Le matricule "${cleanMat}" existe déjà dans la liste des élèves de cette évaluation.`);
       return;
     }
 
     setIsSavingCodes(true);
     try {
-      const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
-      const defaultMat = `PEI${gradeDigit}-${String(currentCodes.length + 1).padStart(3, '0')}`;
       const newCodeObj: IndividualAccessCode = {
-        code: cleanCode,
+        code: managingCodesEval.accessCode,
         studentName: newCustomStudentName.trim(),
-        studentNumber: newCustomStudentNumber.trim() || defaultMat,
+        studentNumber: cleanMat,
         isUsed: false,
         allowedRetake: false,
         createdAt: new Date().toISOString(),
@@ -793,32 +848,25 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       setNewCustomStudentName('');
       setNewCustomStudentNumber('');
     } catch (err: any) {
-      alert(`Erreur : ${err.message || 'Impossible d\'ajouter le code'}`);
+      alert(`Erreur : ${err.message || 'Impossible d\'ajouter le matricule élève'}`);
     } finally {
       setIsSavingCodes(false);
     }
   };
 
-  // Générer un lot de N codes supplémentaires
+  // Générer un lot de N matricules élèves supplémentaires
   const handleGenerateBatchCodes = async (qty: number) => {
     if (!managingCodesEval) return;
     setIsSavingCodes(true);
     try {
       const currentCodes = managingCodesEval.studentAccessCodes || [];
-      const existingNumbers = currentCodes
-        .map(c => {
-          const m = c.code.match(/-([0-9]+)$/);
-          return m ? parseInt(m[1]) : 0;
-        })
-        .filter(n => n > 0);
-      let nextNum = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : currentCodes.length + 1;
-
+      const nextNum = currentCodes.length + 1;
       const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
       const newCodes: IndividualAccessCode[] = [];
       for (let i = 0; i < qty; i++) {
         const seq = nextNum + i;
         newCodes.push({
-          code: `${managingCodesEval.accessCode}-${String(seq).padStart(2, '0')}`,
+          code: managingCodesEval.accessCode,
           studentName: '',
           studentNumber: `PEI${gradeDigit}-${String(seq).padStart(3, '0')}`,
           isUsed: false,
@@ -838,29 +886,26 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
       if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);
     } catch (err: any) {
-      alert(`Erreur : ${err.message || 'Impossible de générer les codes'}`);
+      alert(`Erreur : ${err.message || 'Impossible d\'ajouter les lignes de matricules'}`);
     } finally {
       setIsSavingCodes(false);
     }
   };
 
-  // Copier tous les codes avec statut
+  // Copier la liste des matricules élèves avec le code et lien unique de la classe
   const handleCopyAllCodes = () => {
     if (!managingCodesEval) return;
     const codes = managingCodesEval.studentAccessCodes || [];
-    if (codes.length === 0) {
-      alert('Aucun code individuel à copier.');
-      return;
-    }
+    const directUrl = `${window.location.origin}?mode=student&code=${encodeURIComponent(managingCodesEval.accessCode)}`;
+    const header = `ÉVALUATION : ${managingCodesEval.title} (${managingCodesEval.subject} - ${managingCodesEval.grade})\nCODE D'ACCÈS UNIQUE DE LA CLASSE : ${managingCodesEval.accessCode}\nLIEN DIRECT (Classroom / Tablettes / PC) : ${directUrl}\n\nLISTE DES MATRICULES ÉLÈVES AUTORISÉS :\n`;
     const lines = codes.map((c, i) => {
-      const statusText = c.isUsed ? (c.allowedRetake ? 'Accès réouvert (2e essai)' : 'Utilisé / Verrouillé') : 'Disponible';
-      const studentText = c.studentName ? `Élève: ${c.studentName} (${c.studentNumber || '—'})` : 'Non assigné';
-      return `${i + 1}. Code: ${c.code} | Statut: ${statusText} | ${studentText} | Lien direct: ${window.location.origin}?mode=student&code=${encodeURIComponent(c.code)}`;
+      const statusText = c.isUsed ? (c.allowedRetake ? 'Accès réouvert (2e essai)' : 'A déjà composé (Verrouillé)') : 'Autorisé / Disponible';
+      return `${i + 1}. Élève: ${c.studentName || '(À compléter)'} | Matricule obligatoire: ${c.studentNumber || '—'} | Statut: ${statusText}`;
     });
-    navigator.clipboard.writeText(lines.join('\n'));
+    navigator.clipboard.writeText(header + lines.join('\n'));
     setCopiedCode('all_codes');
     setTimeout(() => setCopiedCode(null), 3000);
-    alert(`📋 ${codes.length} codes d'accès copiés dans le presse-papiers avec statuts et liens !`);
+    alert(`📋 Le Code d'Accès Unique (${managingCodesEval.accessCode}), le lien direct et la liste des ${codes.length} matricules élèves ont été copiés !`);
   };
 
   // ── CORRECTION AUTOMATIQUE PAR IA (GEMINI) ─────────────────────────────────
@@ -1119,46 +1164,55 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                         <span>Voir & Modifier les Questions (IA)</span>
                       </button>
 
-                      {/* Boutons de copie de code et lien */}
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <button
-                          onClick={() => handleCopyCode(ev.accessCode)}
-                          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition"
-                          title="Copier le code d'accès pour les élèves"
-                        >
-                          {isCopied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
-                          <span>{isCopied ? 'Code copié !' : 'Copier Code'}</span>
-                        </button>
-                        <button
-                          onClick={() => handleCopyStudentLink(ev.accessCode)}
-                          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg font-medium transition"
-                          title="Copier le lien direct de passation"
-                        >
-                          {isLinkCopied ? <Check size={13} className="text-green-600" /> : <ExternalLink size={13} />}
-                          <span>{isLinkCopied ? 'Lien copié !' : 'Lien élève'}</span>
-                        </button>
+                      {/* Encadré Code d'Accès Unique de la classe + Lien Classroom / Tablettes / PC */}
+                      <div className="bg-purple-50/80 border border-purple-200 rounded-xl p-2.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-purple-800 uppercase">
+                            🔑 Code Unique Classe :
+                          </span>
+                          <span className="font-mono font-black text-xs text-purple-950 bg-white px-2 py-0.5 rounded border border-purple-300">
+                            {ev.accessCode}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5 text-xs">
+                          <button
+                            onClick={() => handleCopyStudentLink(ev.accessCode)}
+                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold transition text-[11px]"
+                            title="Copier le lien unique à coller sur Classroom, les tablettes ou les ordinateurs des élèves"
+                          >
+                            {isLinkCopied ? <Check size={12} /> : <ExternalLink size={12} />}
+                            <span>{isLinkCopied ? 'Lien copié !' : 'Copier Lien Classe'}</span>
+                          </button>
+                          <button
+                            onClick={() => handleCopyClassroomPost(ev)}
+                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-white hover:bg-purple-100 text-purple-800 border border-purple-300 rounded-lg font-bold transition text-[11px]"
+                            title="Copier le message complet prêt à publier sur Google Classroom (avec lien et code)"
+                          >
+                            {copiedCode === `classroom_${ev.accessCode}` ? <Check size={12} className="text-green-600" /> : <Copy size={12} />}
+                            <span>{copiedCode === `classroom_${ev.accessCode}` ? 'Copié !' : 'Publier Classroom'}</span>
+                          </button>
+                        </div>
                       </div>
 
                       {/* Boutons actions principales */}
                       <div className="flex flex-col gap-2 pt-1">
-                        {/* 🔑 GESTION DES CODES D'ACCÈS INDIVIDUELS ÉLÈVES (Usage unique & 2e essai) */}
+                        {/* 🎓 GESTION DES MATRICULES ÉLÈVES POUR AVOIR ACCÈS */}
                         {(() => {
                           const codes = ev.studentAccessCodes || [];
                           const totalCodes = codes.length;
                           const usedCodes = codes.filter(c => c.isUsed).length;
                           const retakeCodes = codes.filter(c => c.isUsed && c.allowedRetake).length;
-                          const namedCodes = codes.filter(c => c.studentName && c.studentName.trim().length > 0).length;
 
                           return (
                             <button
                               onClick={() => setManagingCodesEval(ev)}
-                              className="w-full flex items-center justify-between px-3 py-2 bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 text-purple-900 rounded-xl text-xs font-bold transition border border-purple-200 shadow-2xs"
-                              title="Gérer les codes individuels propres à chaque élève, autoriser un 2e essai ou synchroniser avec la classe"
+                              className="w-full flex items-center justify-between px-3 py-2 bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 text-indigo-950 rounded-xl text-xs font-bold transition border border-indigo-200 shadow-2xs"
+                              title="Définir et modifier le Matricule de chaque élève pour lui autoriser l'accès à cette évaluation"
                             >
                               <div className="flex items-center gap-1.5 min-w-0">
-                                <Key size={14} className="text-purple-600 flex-shrink-0" />
+                                <Users size={14} className="text-indigo-600 flex-shrink-0" />
                                 <span className="truncate">
-                                  Codes élèves {namedCodes > 0 ? `(${namedCodes} nominatifs)` : ''}
+                                  Matricules des élèves ({totalCodes})
                                 </span>
                               </div>
                               <div className="flex items-center gap-1 flex-shrink-0">
@@ -1168,9 +1222,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                   </span>
                                 )}
                                 <span className={`text-[10px] px-2 py-0.5 rounded-lg font-black ${
-                                  usedCodes > 0 ? 'bg-purple-600 text-white' : 'bg-white text-purple-700 border border-purple-200'
+                                  usedCodes > 0 ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-700 border border-indigo-200'
                                 }`}>
-                                  {usedCodes} / {totalCodes} utilisé(s)
+                                  {usedCodes} / {totalCodes} ont composé
                                 </span>
                               </div>
                             </button>
@@ -1485,32 +1539,26 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </div>
                 )}
 
-                 {/* 🔑 Configuration des codes d'accès individuels à usage unique */}
+                 {/* 🔑 Code d'Accès Unique de la classe + Matricules par élève */}
                 <div className="bg-purple-50/70 border border-purple-200 rounded-2xl p-3.5 space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold text-purple-950 uppercase tracking-wide flex items-center gap-1.5">
                       <Key size={14} className="text-purple-700" />
-                      Codes d'accès propres par élève ({selectedPlanForCreate?.gradeLevel || currentGrade || 'PEI'})
+                      1 Code d'Accès Unique + Matricule par élève ({selectedPlanForCreate?.gradeLevel || currentGrade || 'PEI'})
                     </label>
                     <span className="text-[10px] font-bold text-purple-700 bg-white px-2 py-0.5 rounded-lg border border-purple-200">
                       {classRosterCountForCreate > 0
-                        ? `🎓 ${classRosterCountForCreate} élèves dans la classe`
-                        : 'Sécurité & Usage unique'}
+                        ? `🎓 ${classRosterCountForCreate} élèves inscrits`
+                        : 'Classroom / Tablettes / PC'}
                     </span>
                   </div>
-                  {classRosterCountForCreate > 0 ? (
-                    <p className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-2 font-semibold">
-                      ✔ Liste de classe détectée ({classRosterCountForCreate} élèves en {selectedPlanForCreate?.gradeLevel || currentGrade}). Chaque élève recevra automatiquement son code nominatif propre !
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-slate-600 leading-relaxed">
-                      Chaque élève recevra un code unique (ex: <code>EVAL-XXXX-01</code>). Astuce : ajoutez les noms des élèves par classe dans le <strong>Panneau Admin → Élèves par classe</strong> pour générer des codes nominatifs propres à chaque élève.
-                    </p>
-                  )}
+                  <p className="text-[11px] text-slate-700 leading-relaxed">
+                    Un <strong>seul Code d'Accès Unique</strong> et un <strong>seul lien</strong> seront générés pour toute la classe (à publier sur <strong>Google Classroom</strong> ou coller dans les <strong>tablettes / ordinateurs</strong>). Chaque élève devra saisir son <strong>Matricule</strong> défini par vous pour avoir accès.
+                  </p>
                   <div className="flex items-center gap-3">
                     <div className="flex-1">
                       <label className="text-[10px] text-slate-500 font-bold block uppercase mb-1">
-                        Nombre de codes à générer :
+                        Nombre d'élèves (matricules à préparer) :
                       </label>
                       <input
                         type="number"
@@ -2578,7 +2626,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         )}
 
         {/* ═════════════════════════════════════════════════════════════════
-            MODALE DE GESTION DES CODES D'ACCÈS INDIVIDUELS ÉLÈVES
+            MODALE : CODE D'ACCÈS UNIQUE DE LA CLASSE & MATRICULES PAR ÉLÈVE
             ═════════════════════════════════════════════════════════════════ */}
         {managingCodesEval && (
           <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
@@ -2592,19 +2640,27 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </div>
                   <div>
                     <h3 className="text-base font-black tracking-tight">
-                      Codes d'Accès Individuels à Usage Unique
+                      Code d'Accès Unique de la Classe & Matricules des Élèves
                     </h3>
                     <p className="text-xs text-purple-200">
-                      {managingCodesEval.title} · Code de base : <strong className="text-white">{managingCodesEval.accessCode}</strong>
+                      {managingCodesEval.title} ({managingCodesEval.subject} · {managingCodesEval.grade})
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <button
+                    onClick={() => handleSaveAllStudentMatricules()}
+                    disabled={isSavingCodes}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl text-xs font-black shadow transition disabled:opacity-60"
+                    title="Enregistrer les noms et matricules modifiés"
+                  >
+                    <Check size={14} /> {isSavingCodes ? 'Enregistrement…' : 'Enregistrer les matricules'}
+                  </button>
+                  <button
                     onClick={() => setShowPrintCodesModal(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-400 hover:bg-yellow-300 text-yellow-950 rounded-xl text-xs font-black shadow transition"
-                    title="Imprimer les coupons de codes d'accès individuels (Format A4 à découper pour les élèves)"
+                    title="Imprimer les fiches avec le code unique de la classe et le matricule de chaque élève"
                   >
                     <Printer size={14} /> Imprimer fiches A4
                   </button>
@@ -2619,6 +2675,65 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
               {/* Contenu */}
               <div className="p-6 space-y-5 overflow-y-auto flex-1">
+                {/* ── BANNIÈRE : UN SEUL CODE D'ACCÈS UNIQUE + LIEN POUR CLASSROOM / TABLETTES / ORDINATEURS ── */}
+                <div className="bg-gradient-to-r from-purple-50 via-indigo-50 to-violet-50 border-2 border-purple-300 rounded-2xl p-4 space-y-3 shadow-xs">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-purple-800 bg-purple-100 px-2.5 py-0.5 rounded-full">
+                        🔑 Un seul Code d'Accès Unique pour tous les élèves de la classe
+                      </span>
+                      <div className="flex items-center gap-3 pt-1">
+                        <span className="text-2xl font-mono font-black text-purple-950 bg-white px-4 py-1.5 rounded-xl border-2 border-purple-400 tracking-wider shadow-2xs">
+                          {managingCodesEval.accessCode}
+                        </span>
+                        <button
+                          onClick={() => handleCopyCode(managingCodesEval.accessCode)}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-purple-100 text-purple-800 border border-purple-300 rounded-xl text-xs font-bold transition shadow-2xs"
+                        >
+                          {copiedCode === managingCodesEval.accessCode ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+                          <span>{copiedCode === managingCodesEval.accessCode ? 'Code copié !' : 'Copier le Code'}</span>
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-slate-600 pt-1">
+                        Publiez ce <strong>Code Unique</strong> (ou le lien direct ci-dessous) sur <strong>Google Classroom</strong> ou collez-le dans les <strong>tablettes / ordinateurs</strong> des élèves.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-2 min-w-[260px]">
+                      <button
+                        onClick={() => handleCopyStudentLink(managingCodesEval.accessCode)}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow transition"
+                      >
+                        {copiedCode === `link_${managingCodesEval.accessCode}` ? <Check size={15} /> : <ExternalLink size={15} />}
+                        <span>
+                          {copiedCode === `link_${managingCodesEval.accessCode}`
+                            ? '✔ Lien copié (prêt à coller) !'
+                            : '📋 Copier le Lien (Tablettes / PC / Classroom)'}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => handleCopyClassroomPost(managingCodesEval)}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
+                      >
+                        {copiedCode === `classroom_${managingCodesEval.accessCode}` ? <Check size={15} /> : <Copy size={15} />}
+                        <span>
+                          {copiedCode === `classroom_${managingCodesEval.accessCode}`
+                            ? '✔ Message Classroom copié !'
+                            : '📢 Copier l\'annonce pour Google Classroom'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-white/90 border border-purple-200 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-500 font-semibold flex-shrink-0">Lien direct élève :</span>
+                    <code className="font-mono text-purple-900 font-bold truncate flex-1">
+                      {`${window.location.origin}?mode=student&code=${encodeURIComponent(managingCodesEval.accessCode)}`}
+                    </code>
+                  </div>
+                </div>
+
                 {/* Cartes statistiques */}
                 {(() => {
                   const codes = managingCodesEval.studentAccessCodes || [];
@@ -2630,9 +2745,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                       <div className="bg-purple-50 border border-purple-200 rounded-2xl p-3">
-                        <span className="text-[10px] font-bold text-purple-700 uppercase block">Total Codes</span>
+                        <span className="text-[10px] font-bold text-purple-700 uppercase block">Total Matricules</span>
                         <span className="text-xl font-black text-purple-950">{total}</span>
-                        <span className="text-[10px] text-purple-600 block mt-0.5">élèves prévus</span>
+                        <span className="text-[10px] text-purple-600 block mt-0.5">élèves autorisés</span>
                       </div>
                       <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3">
                         <span className="text-[10px] font-bold text-emerald-700 uppercase block">Disponibles</span>
@@ -2640,7 +2755,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                         <span className="text-[10px] text-emerald-600 block mt-0.5">prêts pour passation</span>
                       </div>
                       <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3">
-                        <span className="text-[10px] font-bold text-rose-700 uppercase block">Utilisés (Verrouillés)</span>
+                        <span className="text-[10px] font-bold text-rose-700 uppercase block">Ont composé (Verrouillés)</span>
                         <span className="text-xl font-black text-rose-950">{used - retakes}</span>
                         <span className="text-[10px] text-rose-600 block mt-0.5">2e essai bloqué</span>
                       </div>
@@ -2654,118 +2769,107 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 })()}
 
                 {/* Explication règles */}
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-xs text-slate-600 flex items-start gap-2.5">
-                  <ShieldCheck size={18} className="text-purple-600 flex-shrink-0 mt-0.5" />
+                <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-950 flex items-start gap-2.5">
+                  <ShieldCheck size={18} className="text-amber-700 flex-shrink-0 mt-0.5" />
                   <div className="space-y-1">
-                    <p className="font-semibold text-slate-800">
-                      Règle de sécurité des codes d'accès :
+                    <p className="font-bold text-amber-900">
+                      Contrôle d'accès par Matricule Élève (défini par l'enseignant) :
                     </p>
-                    <p className="text-[11px] leading-relaxed">
-                      Chaque élève se connecte avec son <strong>code unique</strong>. Dès qu'un code est utilisé pour soumettre l'évaluation, il est automatiquement <strong>verrouillé</strong>. L'élève ne peut plus composer une 2ème fois, <strong>sauf si vous cliquez sur « 🔓 Réouvrir l'accès »</strong> pour lui accorder une nouvelle tentative.
+                    <p className="text-[11px] leading-relaxed text-amber-900">
+                      Tous les élèves utilisent le <strong>même Code d'Accès Unique ({managingCodesEval.accessCode})</strong> ou le même lien, mais <strong>chaque élève doit obligatoirement écrire son Matricule exact</strong> configuré ci-dessous pour avoir accès à l'évaluation. Si le matricule écrit est incorrect, l'accès est bloqué.
                     </p>
                   </div>
                 </div>
 
-                {/* Barre d'outils d'ajout & génération en lot */}
+                {/* Barre d'outils d'ajout & synchronisation des matricules élèves */}
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                       <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
-                        Générer ou ajouter des codes
+                        Définir les élèves et leurs Matricules d'accès
                       </h4>
-                      <p className="text-[11px] text-slate-500">Ajoutez des codes supplémentaires ou assignez des élèves spécifiques</p>
+                      <p className="text-[11px] text-slate-500">
+                        Ajoutez vos élèves et saisissez le matricule de chaque élève directement dans le tableau ci-dessous
+                      </p>
                     </div>
 
-                     <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
                         onClick={handleSyncCodesWithClassRoster}
                         disabled={isSavingCodes}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-xs"
-                        title="Attribuer un code propre nominatif à chaque élève enregistré dans cette classe par l'Admin"
+                        title="Importer la liste des élèves et matricules enregistrés pour cette classe"
                       >
                         <Users size={13} />
-                        <span>🎓 Générer codes propres par élève ({managingCodesEval.grade})</span>
+                        <span>🎓 Charger les élèves de {managingCodesEval.grade}</span>
                       </button>
-                      <span className="text-xs font-semibold text-slate-600">Génération rapide :</span>
                       <button
                         onClick={() => handleGenerateBatchCodes(5)}
                         disabled={isSavingCodes}
                         className="px-2.5 py-1 bg-white hover:bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-xs font-bold transition"
                       >
-                        +5 codes
+                        +5 élèves
                       </button>
                       <button
                         onClick={() => handleGenerateBatchCodes(10)}
                         disabled={isSavingCodes}
                         className="px-2.5 py-1 bg-white hover:bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-xs font-bold transition"
                       >
-                        +10 codes
-                      </button>
-                      <button
-                        onClick={() => handleGenerateBatchCodes(25)}
-                        disabled={isSavingCodes}
-                        className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition shadow-xs"
-                      >
-                        +25 codes
+                        +10 élèves
                       </button>
                       <button
                         onClick={handleCopyAllCodes}
                         className="flex items-center gap-1 px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold transition"
-                        title="Copier toute la liste des codes dans le presse-papiers"
+                        title="Copier le code unique, le lien et la liste des matricules"
                       >
                         <Copy size={13} /> Copier la liste
                       </button>
                     </div>
                   </div>
 
-                  {/* Formulaire ajout personnalisé */}
+                  {/* Formulaire d'ajout d'un élève + son Matricule */}
                   <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row items-center gap-2">
-                    <input
-                      type="text"
-                      value={newCustomCode}
-                      onChange={e => setNewCustomCode(e.target.value.toUpperCase())}
-                      placeholder={`Code (ex: ${managingCodesEval.accessCode}-09)`}
-                      className="w-full sm:w-44 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold uppercase focus:ring-2 focus:ring-purple-400 outline-none"
-                    />
                     <input
                       type="text"
                       value={newCustomStudentName}
                       onChange={e => setNewCustomStudentName(e.target.value)}
-                      placeholder="Nom de l'élève (optionnel)"
-                      className="w-full sm:flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-purple-400 outline-none"
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddCustomCode(); }}
+                      placeholder="Nom et Prénom de l'élève (ex: Yasmine Mansouri)"
+                      className="w-full sm:flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-purple-400 outline-none"
                     />
                     <input
                       type="text"
                       value={newCustomStudentNumber}
-                      onChange={e => setNewCustomStudentNumber(e.target.value)}
-                      placeholder="Matricule (optionnel)"
-                      className="w-full sm:w-32 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-purple-400 outline-none"
+                      onChange={e => setNewCustomStudentNumber(e.target.value.toUpperCase())}
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddCustomCode(); }}
+                      placeholder="Matricule obligatoire de l'élève (ex: PEI1-001)"
+                      className="w-full sm:w-64 px-3 py-2 bg-white border-2 border-indigo-300 rounded-xl text-xs font-mono font-bold text-indigo-950 focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                     <button
                       onClick={handleAddCustomCode}
                       disabled={isSavingCodes}
-                      className="w-full sm:w-auto px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition shadow-xs whitespace-nowrap flex items-center justify-center gap-1"
+                      className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition shadow-xs whitespace-nowrap flex items-center justify-center gap-1"
                     >
-                      <Plus size={14} /> Ajouter ce code
+                      <Plus size={14} /> Ajouter élève & matricule
                     </button>
                   </div>
                 </div>
 
-                {/* Tableau de tous les codes d'accès */}
+                {/* Tableau interactif des élèves et de leurs Matricules */}
                 {(!managingCodesEval.studentAccessCodes || managingCodesEval.studentAccessCodes.length === 0) ? (
                   <div className="p-8 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 space-y-3">
-                    <Key size={36} className="mx-auto text-slate-300" />
+                    <Users size={36} className="mx-auto text-slate-300" />
                     <div>
-                      <p className="font-bold text-slate-700 text-sm">Aucun code d'accès individuel configuré</p>
+                      <p className="font-bold text-slate-700 text-sm">Aucun matricule d'élève configuré</p>
                       <p className="text-xs text-slate-400 mt-1">
-                        Générez automatiquement un jeu de codes pour chaque élève de votre classe.
+                        Ajoutez vos élèves et définissez le matricule de chaque élève pour lui donner accès à l'évaluation.
                       </p>
                     </div>
                     <button
                       onClick={() => handleGenerateBatchCodes(25)}
                       className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
                     >
-                      ⚡ Générer 25 codes d'accès pour la classe
+                      ⚡ Préparer 25 matricules pour la classe
                     </button>
                   </div>
                 ) : (
@@ -2774,71 +2878,67 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                       <thead className="bg-slate-100 text-slate-700 uppercase text-[10px] font-bold border-b border-slate-200">
                         <tr>
                           <th className="px-3 py-2.5 w-12 text-center">N°</th>
-                          <th className="px-4 py-2.5">Code d'Accès Unique</th>
-                          <th className="px-4 py-2.5">Élève assigné / Ayant composé</th>
-                          <th className="px-4 py-2.5">Statut de validité</th>
+                          <th className="px-4 py-2.5">Nom et Prénom de l'élève</th>
+                          <th className="px-4 py-2.5">Matricule d'Accès de l'élève (Obligatoire)</th>
+                          <th className="px-4 py-2.5">Statut d'accès</th>
                           <th className="px-4 py-2.5 text-right">Actions de l'enseignant</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {managingCodesEval.studentAccessCodes.map((codeObj, idx) => {
-                          const isCopied = copiedCode === codeObj.code;
-                          const isLinkCopied = copiedCode === `link_${codeObj.code}`;
                           const isUsed = Boolean(codeObj.isUsed);
                           const isRetakeAllowed = Boolean(codeObj.allowedRetake);
+                          const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
+                          const fallbackMat = `PEI${gradeDigit}-${String(idx + 1).padStart(3, '0')}`;
 
                           return (
-                            <tr key={codeObj.code} className="hover:bg-slate-50/80 transition">
+                            <tr key={`stu_row_${idx}`} className="hover:bg-slate-50/80 transition">
                               <td className="px-3 py-2.5 text-center font-mono text-slate-400 text-[11px]">
                                 {idx + 1}
                               </td>
 
-                              <td className="px-4 py-2.5 font-mono">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-black text-purple-900 bg-purple-50 px-2 py-0.5 rounded border border-purple-200 text-xs">
-                                    {codeObj.code}
-                                  </span>
-                                  <button
-                                    onClick={() => handleCopyCode(codeObj.code)}
-                                    className="p-1 text-slate-400 hover:text-purple-700 rounded transition"
-                                    title="Copier ce code"
-                                  >
-                                    {isCopied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
-                                  </button>
-                                  <button
-                                    onClick={() => handleCopyStudentLink(codeObj.code)}
-                                    className="p-1 text-slate-400 hover:text-indigo-700 rounded transition"
-                                    title="Copier le lien direct avec ce code individuel"
-                                  >
-                                    {isLinkCopied ? <Check size={13} className="text-green-600" /> : <ExternalLink size={13} />}
-                                  </button>
-                                </div>
+                              <td className="px-4 py-2">
+                                <input
+                                  type="text"
+                                  value={codeObj.studentName || ''}
+                                  onChange={e => handleUpdateStudentRowField(idx, 'studentName', e.target.value)}
+                                  onBlur={() => handleSaveAllStudentMatricules()}
+                                  placeholder={`Nom de l'élève ${idx + 1}`}
+                                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 focus:border-purple-500 rounded-lg text-xs font-bold text-slate-800 outline-none transition"
+                                />
                               </td>
 
-                              <td className="px-4 py-2.5">
-                                {(() => {
-                                  const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
-                                  const effectiveMat = codeObj.studentNumber || `PEI${gradeDigit}-${String(idx + 1).padStart(3, '0')}`;
-                                  return (
-                                    <div>
-                                      {codeObj.studentName ? (
-                                        <span className="font-bold text-slate-800 block text-xs">{codeObj.studentName}</span>
-                                      ) : (
-                                        <span className="text-slate-400 italic text-[11px] block">Nom saisi à la connexion</span>
-                                      )}
-                                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded">
-                                        🔒 Matricule obligatoire : {effectiveMat}
-                                      </span>
-                                    </div>
-                                  );
-                                })()}
+                              <td className="px-4 py-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-indigo-600 text-xs">🔒</span>
+                                  <input
+                                    type="text"
+                                    value={codeObj.studentNumber ?? fallbackMat}
+                                    onChange={e => handleUpdateStudentRowField(idx, 'studentNumber', e.target.value.toUpperCase())}
+                                    onBlur={() => handleSaveAllStudentMatricules()}
+                                    placeholder={fallbackMat}
+                                    className="w-40 px-2.5 py-1.5 bg-indigo-50/70 border-2 border-indigo-200 focus:border-indigo-600 rounded-lg text-xs font-mono font-black text-indigo-950 uppercase outline-none transition"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyCode(codeObj.studentNumber || fallbackMat)}
+                                    className="p-1 text-slate-400 hover:text-indigo-700 rounded transition"
+                                    title="Copier ce matricule"
+                                  >
+                                    {copiedCode === (codeObj.studentNumber || fallbackMat) ? (
+                                      <Check size={13} className="text-green-600" />
+                                    ) : (
+                                      <Copy size={13} />
+                                    )}
+                                  </button>
+                                </div>
                               </td>
 
                               <td className="px-4 py-2.5">
                                 {isUsed && !isRetakeAllowed && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
                                     <Lock size={11} className="text-rose-600" />
-                                    <span>Utilisé (2e essai bloqué)</span>
+                                    <span>A composé (2e essai bloqué)</span>
                                   </span>
                                 )}
                                 {isUsed && isRetakeAllowed && (
@@ -2850,7 +2950,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                 {!isUsed && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                                     <CheckCircle size={11} className="text-emerald-600" />
-                                    <span>Disponible (Jamais utilisé)</span>
+                                    <span>Autorisé (Prêt à composer)</span>
                                   </span>
                                 )}
                                 {codeObj.usedAt && (
@@ -2861,27 +2961,27 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               </td>
 
                               <td className="px-4 py-2.5 text-right space-x-1.5 whitespace-nowrap">
-                                {/* Bouton de déblocage / réouverture du code pour un deuxième essai */}
+                                {/* Bouton de déblocage / réouverture du matricule pour un deuxième essai */}
                                 {isUsed && (
                                   <button
-                                    onClick={() => handleToggleCodeRetake(codeObj.code)}
+                                    onClick={() => handleToggleCodeRetake(idx)}
                                     className={`px-3 py-1 rounded-lg text-xs font-bold transition shadow-2xs ${
                                       isRetakeAllowed
                                         ? 'bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300'
                                         : 'bg-amber-400 hover:bg-amber-300 text-amber-950 font-black'
                                     }`}
-                                    title={isRetakeAllowed ? "Reverrouiller le code" : "Autoriser l'élève à repasser l'épreuve avec ce même code"}
+                                    title={isRetakeAllowed ? "Reverrouiller l'accès" : "Autoriser l'élève à repasser l'épreuve avec son matricule"}
                                   >
                                     {isRetakeAllowed ? '🔒 Reverrouiller' : '🔓 Réouvrir l\'accès (2e essai)'}
                                   </button>
                                 )}
 
-                                {/* Réinitialiser le code à neuf */}
+                                {/* Réinitialiser l'accès à neuf */}
                                 {isUsed && (
                                   <button
-                                    onClick={() => handleResetCodeUsage(codeObj.code)}
+                                    onClick={() => handleResetCodeUsage(idx)}
                                     className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-                                    title="Réinitialiser ce code (effacer l'usage précédent et le rendre réutilisable)"
+                                    title="Réinitialiser l'accès de ce matricule"
                                   >
                                     <RefreshCw size={13} />
                                   </button>
@@ -2889,9 +2989,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
                                 {/* Supprimer */}
                                 <button
-                                  onClick={() => handleDeleteCode(codeObj.code)}
+                                  onClick={() => handleDeleteCode(idx)}
                                   className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                                  title="Supprimer ce code"
+                                  title="Supprimer cet élève / matricule"
                                 >
                                   <Trash2 size={13} />
                                 </button>
@@ -2907,16 +3007,25 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
               {/* Footer */}
               <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3 flex-shrink-0">
-                <span className="text-xs text-slate-500">
-                  {managingCodesEval.studentAccessCodes?.length || 0} code(s) configuré(s) au total.
+                <span className="text-xs text-slate-600">
+                  Code d'Accès Unique de la classe : <strong className="font-mono text-purple-900">{managingCodesEval.accessCode}</strong> · {managingCodesEval.studentAccessCodes?.length || 0} matricule(s) élève(s) configuré(s).
                 </span>
 
-                <button
-                  onClick={() => setManagingCodesEval(null)}
-                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
-                >
-                  Fermer
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleSaveAllStudentMatricules()}
+                    disabled={isSavingCodes}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition disabled:opacity-60"
+                  >
+                    {isSavingCodes ? 'Enregistrement…' : '💾 Enregistrer les matricules'}
+                  </button>
+                  <button
+                    onClick={() => setManagingCodesEval(null)}
+                    className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
+                  >
+                    Fermer
+                  </button>
+                </div>
               </div>
 
             </div>
@@ -2924,7 +3033,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         )}
 
         {/* ═════════════════════════════════════════════════════════════════
-            MODALE D'IMPRESSION A4 DES FICHES / COUPONS DE CODES ÉLÈVES
+            MODALE D'IMPRESSION A4 DES FICHES / COUPONS DE MATRICULES ÉLÈVES
             ═════════════════════════════════════════════════════════════════ */}
         {showPrintCodesModal && managingCodesEval && (
           <div className="print-modal-container fixed inset-0 z-[90] bg-slate-900/80 backdrop-blur-sm overflow-y-auto flex flex-col items-center p-0 sm:p-4">
@@ -2932,10 +3041,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             <div className="no-print sticky top-0 z-50 w-full max-w-4xl bg-white border-b border-slate-200 px-6 py-3 shadow-md flex items-center justify-between rounded-t-none sm:rounded-t-2xl">
               <div>
                 <h3 className="font-bold text-slate-800 text-sm">
-                  Fiches d'Accès Élèves — Format A4 Prêt à Découper
+                  Fiches d'Accès Élèves (Code Unique Classe + Matricule Personnel) — Format A4
                 </h3>
                 <p className="text-xs text-slate-500">
-                  {managingCodesEval.studentAccessCodes?.length || 0} coupons élèves avec codes individuels à usage unique
+                  Code Unique de la classe : <strong>{managingCodesEval.accessCode}</strong> · {managingCodesEval.studentAccessCodes?.length || 0} coupons élèves avec matricule personnel
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -3006,64 +3115,67 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   Fiches Individuelles de Passation d'Évaluation en Ligne
                 </p>
                 <p className="text-[11px] text-slate-600 mt-1">
-                  Évaluation : <strong>{managingCodesEval.title}</strong> ({managingCodesEval.subject} - {managingCodesEval.grade})
+                  Évaluation : <strong>{managingCodesEval.title}</strong> ({managingCodesEval.subject} - {managingCodesEval.grade}) · Code Unique de la Classe : <strong className="font-mono">{managingCodesEval.accessCode}</strong>
                 </p>
               </div>
 
               {/* Grille de coupons découpables */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {(managingCodesEval.studentAccessCodes || []).map((codeObj, cIdx) => (
-                  <div
-                    key={codeObj.code}
-                    className="avoid-break-coupon border-2 border-dashed border-slate-400 rounded-2xl p-4 bg-slate-50/50 flex flex-col justify-between space-y-2.5 relative"
-                  >
-                    <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 text-[10px] text-slate-500 font-bold uppercase">
-                      <span>✂️ Découper</span>
-                      <span className="text-purple-700">Coupon N° {cIdx + 1}</span>
-                    </div>
+                {(managingCodesEval.studentAccessCodes || []).map((codeObj, cIdx) => {
+                  const gradeDigit = (managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1';
+                  const studentMat = codeObj.studentNumber || `PEI${gradeDigit}-${String(cIdx + 1).padStart(3, '0')}`;
+                  return (
+                    <div
+                      key={`print_coupon_${cIdx}`}
+                      className="avoid-break-coupon border-2 border-dashed border-slate-400 rounded-2xl p-4 bg-slate-50/50 flex flex-col justify-between space-y-2.5 relative"
+                    >
+                      <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 text-[10px] text-slate-500 font-bold uppercase">
+                        <span>✂️ Découper</span>
+                        <span className="text-purple-700">Élève N° {cIdx + 1}</span>
+                      </div>
 
-                    <div>
-                      <h4 className="font-black text-xs text-slate-900 truncate">
-                        {managingCodesEval.title}
-                      </h4>
-                      <p className="text-[10px] text-slate-500">
-                        {managingCodesEval.subject} · {managingCodesEval.grade}
-                      </p>
-                    </div>
-
-                    <div className="space-y-1 text-xs">
                       <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase block">Nom de l'élève :</span>
-                        <span className="font-bold text-slate-800 block border-b border-slate-300 pb-0.5 min-h-[18px]">
-                          {codeObj.studentName || ''}
+                        <h4 className="font-black text-xs text-slate-900 truncate">
+                          {managingCodesEval.title}
+                        </h4>
+                        <p className="text-[10px] text-slate-500">
+                          {managingCodesEval.subject} · {managingCodesEval.grade}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5 text-xs">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-500 uppercase block">Nom de l'élève :</span>
+                          <span className="font-bold text-slate-800 block border-b border-slate-300 pb-0.5 min-h-[18px]">
+                            {codeObj.studentName || ''}
+                          </span>
+                        </div>
+                        <div className="bg-indigo-50 border-2 border-indigo-400 rounded-xl p-2 text-center">
+                          <span className="text-[9px] font-black uppercase tracking-wider text-indigo-900 block">
+                            🔒 Votre N° de Matricule Personnel (Obligatoire)
+                          </span>
+                          <span className="font-mono font-black text-lg text-indigo-950 tracking-wider">
+                            {studentMat}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Cadre Code Unique de la classe */}
+                      <div className="bg-purple-100/80 border border-purple-400 rounded-xl p-2 text-center">
+                        <span className="block text-[9px] font-black uppercase tracking-wider text-purple-900">
+                          Code d'Accès Unique de l'Évaluation (Classe)
+                        </span>
+                        <span className="text-base font-mono font-black text-purple-950 tracking-wider">
+                          {managingCodesEval.accessCode}
                         </span>
                       </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase block">N° d'inscription (Matricule obligatoire) :</span>
-                        <span className="font-mono font-bold text-slate-900 block border-b border-slate-300 pb-0.5 min-h-[18px]">
-                          {codeObj.studentNumber || `PEI${(managingCodesEval.grade || '').replace(/[^1-5]/g, '') || '1'}-${String(cIdx + 1).padStart(3, '0')}`}
-                        </span>
+
+                      <div className="text-[9px] text-slate-500 leading-tight">
+                        <strong>Consignes :</strong> Ouvrez le lien de l'évaluation (Classroom / tablette / PC), vérifiez le code <strong>{managingCodesEval.accessCode}</strong> et saisissez obligatoirement votre matricule <strong>{studentMat}</strong> pour accéder à l'épreuve.
                       </div>
                     </div>
-
-                    {/* Cadre Code Unique */}
-                    <div className="bg-purple-100/80 border-2 border-purple-500 rounded-xl p-2.5 text-center my-1">
-                      <span className="block text-[9px] font-black uppercase tracking-wider text-purple-900">
-                        Votre Code d'Accès Unique
-                      </span>
-                      <span className="text-xl font-mono font-black text-purple-950 tracking-wider">
-                        {codeObj.code}
-                      </span>
-                      <span className="block text-[9px] font-bold text-purple-700 mt-0.5">
-                        Usage Unique · Verrouillage après soumission
-                      </span>
-                    </div>
-
-                    <div className="text-[9px] text-slate-500 leading-tight">
-                      <strong>Consignes :</strong> Accédez au lien d'examen, saisissez votre nom, matricule et ce code. En mode examen plein écran strict. Aucun 2e essai sans accord du professeur.
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>

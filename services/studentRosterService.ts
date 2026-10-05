@@ -258,27 +258,25 @@ export async function generateCleanStudentCodesForEvaluation(
 
   if (classStudents.length > 0) {
     const generated: IndividualAccessCode[] = classStudents.map((stu, idx) => {
-      const targetCode = `${cleanPrefix}-${String(idx + 1).padStart(2, '0')}`;
       const expectedMat = stu.studentNumber || `PEI${gradeDigit}-${String(idx + 1).padStart(3, '0')}`;
-      // Vérifier si l'élève avait déjà un code assigné dans existingCodes
+      // Vérifier si l'élève avait déjà un matricule assigné dans existingCodes
       const alreadyAssigned = existingCodes.find(
         c =>
           (c.studentNumber && stu.studentNumber && c.studentNumber.toLowerCase() === stu.studentNumber.toLowerCase()) ||
-          (c.studentName && c.studentName.trim().toLowerCase() === stu.name.trim().toLowerCase()) ||
-          c.code.trim().toUpperCase() === targetCode
+          (c.studentName && c.studentName.trim().toLowerCase() === stu.name.trim().toLowerCase())
       );
 
       if (alreadyAssigned) {
         return {
           ...alreadyAssigned,
-          code: targetCode,
+          code: cleanPrefix,
           studentName: stu.name,
           studentNumber: expectedMat,
         };
       }
 
       return {
-        code: targetCode,
+        code: cleanPrefix,
         studentName: stu.name,
         studentNumber: expectedMat,
         isUsed: false,
@@ -294,15 +292,14 @@ export async function generateCleanStudentCodesForEvaluation(
     };
   }
 
-  // Fallback si aucun élève n'est encore enregistré dans cette classe : attribuer un matricule propre obligatoire à chaque code
+  // Fallback si aucun élève n'est encore enregistré dans cette classe : un seul code d'évaluation + un matricule propre obligatoire par élève
   const count = Math.max(1, fallbackCount);
   const fallbackCodes: IndividualAccessCode[] = [];
   for (let i = 1; i <= count; i++) {
-    const targetCode = `${cleanPrefix}-${String(i).padStart(2, '0')}`;
-    const existing = existingCodes.find(c => c.code.trim().toUpperCase() === targetCode);
     const defaultMatricule = `PEI${gradeDigit}-${String(i).padStart(3, '0')}`;
+    const existing = existingCodes[i - 1];
     fallbackCodes.push({
-      code: targetCode,
+      code: cleanPrefix,
       studentName: existing?.studentName || '',
       studentNumber: existing?.studentNumber?.trim() || defaultMatricule,
       isUsed: existing?.isUsed || false,
