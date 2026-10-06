@@ -1,6 +1,62 @@
 import { AssessmentData, AssessmentExercise, AssessmentSubQuestion, UnitPlan } from '../types';
 import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
 
+/**
+ * Nettoie, structure et sécurise le format HTML professionnel généré par l'IA ou saisi par l'enseignant.
+ * Conserve et valorise les balises sémantiques valides (<p>, <strong>, <b>, <em>, <i>, <ul>, <ol>, <li>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <br>, <code>, <blockquote>).
+ * Convertit le texte brut sans balises en paragraphes <p> propres.
+ */
+export function formatProfessionalHtml(content?: string): string {
+  if (!content) return '';
+  let str = content.trim();
+
+  // Si c'est du HTML encodé sous forme d'entités (&lt;p&gt;...), le décoder d'abord
+  if (str.includes('&lt;') && str.includes('&gt;')) {
+    str = str
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/&amp;/gi, '&');
+  }
+
+  // Sécurité : supprimer les balises de script ou dangereuses
+  str = str
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/on\w+="[^"]*"/gi, '')
+    .replace(/on\w+='[^']*'/gi, '');
+
+  // Supprimer les classes polluantes résiduelles du type class="mb-2" pour un HTML propre et sémantique
+  str = str
+    .replace(/\sclass="[^"]*"/gi, '')
+    .replace(/\sstyle="[^"]*"/gi, '');
+
+  // Vérifier si le contenu contient déjà des balises sémantiques HTML
+  const hasSemanticTags = /<(?:p|ul|ol|li|table|div|blockquote|h[1-6])[\s>]/i.test(str);
+
+  if (!hasSemanticTags) {
+    // Si c'est du texte brut, le convertir en paragraphes HTML soignés
+    const paragraphs = str.split(/\n\s*\n/).filter(Boolean);
+    if (paragraphs.length > 0) {
+      str = paragraphs
+        .map(p => {
+          const lines = p.split('\n');
+          if (lines.length > 1 && lines.every(l => l.trim().startsWith('•') || l.trim().startsWith('-'))) {
+            const listItems = lines.map(l => `<li>${l.replace(/^[•\-]\s*/, '').trim()}</li>`).join('');
+            return `<ul>${listItems}</ul>`;
+          }
+          return `<p>${lines.join('<br/>')}</p>`;
+        })
+        .join('');
+    } else {
+      str = `<p>${str}</p>`;
+    }
+  }
+
+  return str.trim();
+}
+
 interface OptimizeEvaluationParams {
   subject: string;
   gradeLevel: string;
@@ -114,10 +170,14 @@ DIRECTIVES CRITIQUES :
    - Chaque question ou sous-question doit être expressément alignée avec un sous-aspect officiel du critère (aspect i, ii, iii...).
    - Pour un critère donné, prévois 2 à 4 tâches/exercices majeurs bien construits (ou 1 tâche progressive à 3-4 sous-questions).
 
-4. TEXTE DIRECT ET LISIBLE SANS AUCUNE BALISE HTML (RÈGLE ABSOLUE) :
-   - N'ÉCRIS JAMAIS DE BALISES HTML : il est FORMELLEMENT INTERDIT d'écrire des balises comme <p class="mb-2">, <strong>, <span>, <ul>, <table>, etc.
-   - Rédige tout le contenu en TEXTE PUR, humain, aéré et soigné, avec des retours à la ligne clairs pour séparer les paragraphes et des puces textuelles (ex: "• ").
-   - Les énoncés doivent être directement lisibles sans balisage.
+4. FORMAT HTML SOIGNÉ ET PROFESSIONNEL (<p>, <strong>, <ul>, <table>...) :
+   - Rédige chaque énoncé, mise en situation et consigne dans un format HTML propre, moderne et structuré.
+   - Utilise judicieusement les balises sémantiques :
+     * <p> pour séparer chaque paragraphe de manière aérée.
+     * <strong> pour mettre en relief les termes directifs IB (Identifier, Déterminer, Calculer, Justifier...) et données clés.
+     * <ul> et <li> pour les listes de données chiffrées, hypothèses ou consignes par étapes.
+     * <table> avec <thead>, <tbody>, <tr>, <th>, <td> pour les tableaux de données, relevés d'expériences ou tableaux comparatifs.
+   - Le balisage doit être du HTML pur et propre (sans classes polluantes comme class="mb-2", sans styles inline).
 
 5. DOCUMENTS VISUELS, SCHÉMAS & DIAGRAMMES À LÉGENDER :
    - Si l'évaluation nécessite un document visuel (Mathématiques, Sciences, Physique, SVT, Géographie, Statistiques), insère si approprié dans le champ "imageCaption" un titre descriptif (ex: "Document 1 : Schéma du circuit électrique à légender [A, B, C, D]", "Figure 1 : Triangle ABC rectangle en B", "Document 2 : Graphique comparatif des données").
@@ -147,7 +207,7 @@ Transforme et optimise l'évaluation critériée existante suivante pour l'unit�
 - Chapitres / Notions : "${chapters || ''}"
 ${customInstructions ? `- Instruction particulière de l'enseignant : "${customInstructions}"` : ''}
 
-Voici l'évaluation existante brute à restructurer, purger des doublons et réécrire en texte clair (ZÉRO BALISE HTML) :
+Voici l'évaluation existante brute à restructurer, purger des doublons et rédiger en format HTML professionnel (<p>, <strong>, <ul>, <table>...) :
 ${JSON.stringify(existingSummary, null, 2)}
 
 FORMAT DE SORTIE ATTENDU :
@@ -171,19 +231,19 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
     "exercises": [
       {
         "title": "Tâche 1 : [Titre explicite]",
-        "content": "Mise en situation : [Contexte concret sans balise HTML]\n\nConsigne : [Consigne claire sans aucune balise HTML]",
+        "content": "<p><strong>Mise en situation :</strong> [Contexte concret structuré]</p><p><strong>Consigne :</strong> [Consigne claire avec termes directifs IB]</p>",
         "criterionReference": "Critère A : i.",
         "strandIndex": "i",
         "strandText": "Sélectionner les concepts et techniques appropriés",
         "type": "open",
-        "answer": "[Corrigé type détaillé pour le professeur en texte pur]",
+        "answer": "<p>[Corrigé type détaillé pour le professeur avec étapes et justification]</p>",
         "imageUrl": "",
         "imageCaption": "",
         "subQuestions": [
           {
             "id": "sub_1",
             "label": "1)",
-            "content": "[Consigne précise de la sous-question 1 en texte pur]",
+            "content": "<p><strong>Calculer</strong> la valeur de...</p>",
             "strandIndex": "i",
             "strandText": "Identifier et sélectionner la méthode",
             "type": "open"
@@ -191,7 +251,7 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
           {
             "id": "sub_2",
             "label": "2)",
-            "content": "[Consigne précise de la sous-question 2 en texte pur]",
+            "content": "<p><strong>Justifier</strong> le résultat obtenu...</p>",
             "strandIndex": "ii",
             "strandText": "Appliquer la formule et calculer",
             "type": "open"
@@ -234,7 +294,7 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
     const parsed = JSON.parse(cleaned);
 
     if (Array.isArray(parsed) && parsed.length > 0) {
-      // Nettoyage rigoureux de toute balise HTML accidentelle et attachement des schémas si nécessaire
+      // Nettoyage et formatage HTML professionnel soigné, attachement des schémas si nécessaire
       const validated: AssessmentData[] = parsed.map((item: any, idx: number) => {
         const original = filteredExisting.find(o => o.criterion === item.criterion) || filteredExisting[idx];
         return {
@@ -245,8 +305,8 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
           rubricRows: Array.isArray(item.rubricRows) && item.rubricRows.length > 0 ? item.rubricRows : original?.rubricRows || [],
           exercises: (Array.isArray(item.exercises) && item.exercises.length > 0 ? item.exercises : original?.exercises || []).map((ex: any, eIdx: number) => {
             const cleanTitle = stripHtmlTags(ex.title) || `Tâche ${eIdx + 1}`;
-            const cleanContent = stripHtmlTags(ex.content) || '';
-            const cleanAnswer = stripHtmlTags(ex.answer);
+            const cleanContent = formatProfessionalHtml(ex.content) || `<p>${cleanTitle}</p>`;
+            const cleanAnswer = ex.answer ? formatProfessionalHtml(ex.answer) : undefined;
 
             // Détection automatique de schéma/diagramme si l'IA n'en a pas fourni
             let imageUrl = ex.imageUrl || '';
@@ -275,7 +335,7 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
                 ? ex.subQuestions.map((sq: any, sIdx: number) => ({
                     id: sq.id || `sub_${sIdx + 1}`,
                     label: sq.label || `${sIdx + 1})`,
-                    content: stripHtmlTags(sq.content) || '',
+                    content: formatProfessionalHtml(sq.content) || '',
                     strandIndex: sq.strandIndex || 'i',
                     strandText: sq.strandText || '',
                     type: sq.type || 'open',
@@ -293,14 +353,14 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
     return filteredExisting;
   } catch (error) {
     console.warn('optimizeEvaluationWithAI: Erreur lors de l\'appel API, utilisation du repli structuré local:', error);
-    // En cas d'erreur réseau, fallback local de mise en forme propre sans balises HTML et sans doublons
+    // En cas d'erreur réseau, fallback local de mise en forme propre sans doublons
     return sanitizeAndFormatLocalAssessments(filteredExisting, subject, unitTitle);
   }
 }
 
 /**
  * Nettoyage et formatage local de sécurité :
- * Élimine les doublons exacts, supprime toute balise HTML résiduelle,
+ * Élimine les doublons exacts, applique le format HTML soigné,
  * et associe si opportun un document/diagramme éducatif.
  */
 export function sanitizeAndFormatLocalAssessments(
@@ -314,7 +374,7 @@ export function sanitizeAndFormatLocalAssessments(
     const uniqueExercises: AssessmentExercise[] = [];
 
     (crit.exercises || []).forEach((ex, idx) => {
-      const cleanContent = stripHtmlTags(ex.content);
+      const cleanContent = formatProfessionalHtml(ex.content);
       const cleanTitle = stripHtmlTags(ex.title) || `Tâche ${idx + 1}`;
       const simpleContentKey = cleanContent.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 80);
       const simpleTitleKey = cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -347,11 +407,11 @@ export function sanitizeAndFormatLocalAssessments(
         content: cleanContent,
         imageUrl: imageUrl || undefined,
         imageCaption: imageCaption || undefined,
-        answer: ex.answer ? stripHtmlTags(ex.answer) : undefined,
+        answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
         options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
         subQuestions: ex.subQuestions?.map(sq => ({
           ...sq,
-          content: stripHtmlTags(sq.content),
+          content: formatProfessionalHtml(sq.content),
           options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
         })),
       });

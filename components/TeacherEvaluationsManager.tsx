@@ -655,11 +655,19 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   };
 
   // Optimiser et restructurer avec l'IA une évaluation ou un critère en cours d'édition
-  const handleOptimizeCurrentEvaluationWithAi = async () => {
+  const handleOptimizeCurrentEvaluationWithAi = async (allCriteria: boolean = false) => {
     if (!editingEvaluation) return;
     const activeCrit = editingEvaluation.assessments[editingCriterionIdx];
     const critLetter = activeCrit?.criterion || 'A';
-    if (!confirm(`Voulez-vous restructurer et optimiser le Critère ${critLetter} avec l'IA ?\n\n• Élimination des questions répétées ou redondantes\n• Correction des questions illogiques ou incomplètes\n• Organisation claire et progressive par sous-aspect\n• Mise en forme HTML professionnelle et aérée\n\nVous pourrez toujours modifier chaque question ensuite.`)) {
+    const targetCriteria = allCriteria
+      ? editingEvaluation.assessments.map(a => a.criterion)
+      : [critLetter];
+
+    const confirmMsg = allCriteria
+      ? `Voulez-vous restructurer et optimiser TOUTE l'évaluation (${targetCriteria.join(', ')}) avec l'IA ?\n\n• Élimination des questions répétées ou redondantes\n• Correction des questions illogiques ou incomplètes\n• Organisation claire et progressive par sous-aspect\n• Mise en forme HTML professionnelle et aérée\n\nVous pourrez toujours modifier chaque question ensuite.`
+      : `Voulez-vous restructurer et optimiser le Critère ${critLetter} avec l'IA ?\n\n• Élimination des questions répétées ou redondantes\n• Correction des questions illogiques ou incomplètes\n• Organisation claire et progressive par sous-aspect\n• Mise en forme HTML professionnelle et aérée\n\nVous pourrez toujours modifier chaque question ensuite.`;
+
+    if (!confirm(confirmMsg)) {
       return;
     }
 
@@ -676,7 +684,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         globalContext: editingEvaluation.globalContext,
         chapters: parentUnit?.chapters,
         existingAssessments: editingEvaluation.assessments,
-        targetCriteria: [critLetter],
+        targetCriteria: targetCriteria,
       });
 
       const updatedEval: OnlineEvaluation = {
@@ -688,7 +696,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       };
 
       setEditingEvaluation(updatedEval);
-      alert(`✅ Critère ${critLetter} restructuré et optimisé avec succès par l'IA !\n\nToutes les questions sont bien ordonnées, sans répétitions, au format HTML pro et 100% modifiables ci-dessous.`);
+      alert(allCriteria
+        ? `✅ Toute l'évaluation (${targetCriteria.join(', ')}) a été restructurée et optimisée avec succès par l'IA !\n\nToutes les questions sont ordonnées, sans répétitions, au format HTML pro et 100% modifiables ci-dessous.`
+        : `✅ Critère ${critLetter} restructuré et optimisé avec succès par l'IA !\n\nToutes les questions sont bien ordonnées, sans répétitions, au format HTML pro et 100% modifiables ci-dessous.`
+      );
     } catch (err: any) {
       alert(`Erreur d'optimisation IA : ${err.message || 'Impossible de restructurer avec l\'IA'}`);
     } finally {
@@ -2120,6 +2131,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           <EvaluationPrintView
             evaluation={printEvaluation}
             submission={printSubmission}
+            defaultStudentName={printSubmission?.studentName}
             onClose={() => {
               setPrintEvaluation(null);
               setPrintSubmission(null);
@@ -2151,7 +2163,28 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  {/* Bouton IA pour restructurer TOUTE l'évaluation d'un coup */}
+                  <button
+                    type="button"
+                    onClick={() => handleOptimizeCurrentEvaluationWithAi(true)}
+                    disabled={isOptimizingEvalWithAi}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white rounded-xl text-xs font-black shadow-md transition disabled:opacity-60"
+                    title="Restructurer toute l'évaluation avec l'IA (tous les critères) : élimine doublons et questions illogiques"
+                  >
+                    {isOptimizingEvalWithAi ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Optimisation…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={14} className="text-yellow-300" />
+                        <span>✨ Restructurer toute l'éval (IA)</span>
+                      </>
+                    )}
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -2309,7 +2342,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           {/* Bouton IA pour restructurer et optimiser le critère */}
                           <button
                             type="button"
-                            onClick={handleOptimizeCurrentEvaluationWithAi}
+                            onClick={() => handleOptimizeCurrentEvaluationWithAi(false)}
                             disabled={isOptimizingEvalWithAi}
                             className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md transition disabled:opacity-60"
                             title="Restructurer ce critère avec l'IA : élimine les questions répétées ou illogiques et applique un format HTML pro"

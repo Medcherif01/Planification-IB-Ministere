@@ -4,6 +4,7 @@ import { X, Printer, Award, Clock, Download } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../types';
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import { stripHtmlTags } from '../services/educationalDiagramService';
+import RichExerciseContent from './RichExerciseContent';
 
 interface EvaluationPrintViewProps {
   evaluation: OnlineEvaluation;
@@ -67,41 +68,11 @@ function sanitizeText(text: string): string {
 
 /**
  * Rendu imprimé soigné sans aucune balise HTML brute (<p>, <strong>...)
- * Formate le gras markdown proprement et sépare les paragraphes avec une belle typographie
+ * Formate le gras, les paragraphes, les listes et les tableaux avec une belle typographie
  */
 function CleanFormattedText({ text, className = '' }: { text?: string; className?: string }) {
   if (!text) return null;
-  const clean = sanitizeText(text);
-  const paragraphs = clean.split(/\n\s*\n/).filter(Boolean);
-
-  const renderInline = (str: string) => {
-    const parts = str.split(/(\*\*[^*]+\*\*)/g);
-    if (parts.length === 1) return str;
-    return parts.map((part, i) => {
-      if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
-        return (
-          <strong key={i} className="font-bold text-slate-900">
-            {part.slice(2, -2)}
-          </strong>
-        );
-      }
-      return part;
-    });
-  };
-
-  if (paragraphs.length <= 1) {
-    return <span className={className}>{renderInline(clean)}</span>;
-  }
-
-  return (
-    <div className={`space-y-1.5 ${className}`}>
-      {paragraphs.map((p, idx) => (
-        <p key={idx} className="leading-relaxed">
-          {renderInline(p)}
-        </p>
-      ))}
-    </div>
-  );
+  return <RichExerciseContent content={text} className={className} />;
 }
 
 // Helper: Extraire le texte support (stimulus) et les sous-questions proprement sans duplication
