@@ -7,7 +7,7 @@ import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorS
 import EvaluationPrintView from './EvaluationPrintView';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
-import { optimizeEvaluationWithAI } from '../services/evaluationAiOptimizerService';
+import { optimizeEvaluationWithAI, formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
 import RichExerciseContent from './RichExerciseContent';
 import { EDUCATIONAL_DIAGRAMS, detectAndAttachEducationalDiagram, stripHtmlTags } from '../services/educationalDiagramService';
 
@@ -762,21 +762,38 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         });
       }
 
-      // Nettoyage systématique de sécurité (zéro balise HTML résiduelle et intégration des diagrammes/schémas)
+      // Nettoyage et formatage HTML professionnel soigné (conservation absolue des tableaux, gras, listes)
       finalAssessments = finalAssessments.map(crit => ({
         ...crit,
         exercises: (crit.exercises || []).map(ex => {
           const cleanTitle = stripHtmlTags(ex.title);
-          const cleanContent = stripHtmlTags(ex.content);
+          const cleanContent = formatProfessionalHtml(ex.content);
           let imageUrl = ex.imageUrl || '';
           let imageCaption = ex.imageCaption || '';
+
+          // Valider que imageUrl est bien une source d'image (data URI, url http/https, chemin, svg)
+          const isRealImage = Boolean(
+            imageUrl && (
+              imageUrl.startsWith('data:image/') ||
+              imageUrl.startsWith('http://') ||
+              imageUrl.startsWith('https://') ||
+              imageUrl.startsWith('/') ||
+              imageUrl.startsWith('<svg')
+            )
+          );
+          if (!isRealImage) {
+            if (!imageCaption && imageUrl.length > 5) {
+              imageCaption = imageUrl;
+            }
+            imageUrl = '';
+          }
 
           if (!imageUrl && insertVisualDiagramsOnCreate) {
             const detected = detectAndAttachEducationalDiagram(
               selectedPlanForCreate.subject || currentSubject || '',
               selectedPlanForCreate.title || '',
               cleanTitle,
-              cleanContent
+              stripHtmlTags(cleanContent)
             );
             if (detected) {
               imageUrl = detected.imageUrl;
@@ -790,11 +807,11 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             content: cleanContent,
             imageUrl: imageUrl || undefined,
             imageCaption: imageCaption || undefined,
-            answer: ex.answer ? stripHtmlTags(ex.answer) : undefined,
+            answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
             options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
             subQuestions: ex.subQuestions?.map(sq => ({
               ...sq,
-              content: stripHtmlTags(sq.content),
+              content: formatProfessionalHtml(sq.content),
               options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
             })),
           };
@@ -1442,10 +1459,11 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           );
                         })()}
 
-                        <div className="flex items-center gap-2">
+                        <div className="grid grid-cols-2 gap-2">
                           <button
                             onClick={() => handleOpenSubmissions(ev)}
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow transition"
+                            className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow transition"
+                            title="Consulter et corriger les copies remises par les élèves"
                           >
                             <Eye size={14} /> Copies d'élèves
                           </button>
@@ -1454,10 +1472,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               setPrintEvaluation(ev);
                               setPrintSubmission(null);
                             }}
-                            className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition"
-                            title="Imprimer le sujet au format A4 (Marges 1 cm, PDF / HTML)"
+                            className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow transition"
+                            title="Ouvrir et imprimer une version vierge (A4, 1 cm) sans les réponses pour les élèves"
                           >
-                            <Printer size={15} />
+                            <Printer size={14} /> Sujet vierge (A4)
                           </button>
                         </div>
                       </div>
@@ -2243,6 +2261,18 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   >
                     <Eye size={15} />
                     <span>Version Élève & Mise en Page</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrintEvaluation(editingEvaluation);
+                      setPrintSubmission(null);
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-black shadow-md transition"
+                    title="Ouvrir et imprimer le sujet vierge officiel au format A4 avec lignes d'écriture"
+                  >
+                    <Printer size={15} />
+                    <span>Imprimer Sujet Vierge (A4)</span>
                   </button>
                   <button
                     onClick={() => setEditingEvaluation(null)}

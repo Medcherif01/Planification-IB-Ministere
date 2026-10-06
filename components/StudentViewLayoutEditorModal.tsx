@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   X, Eye, Sliders, ArrowUp, ArrowDown, Edit3, Plus, Trash2, Check, Sparkles,
-  Calculator, Clock, CheckCircle, Save
+  Calculator, Clock, CheckCircle, Save, Printer
 } from 'lucide-react';
 import {
   OnlineEvaluation,
@@ -12,6 +12,7 @@ import {
 import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './ScientificCalculatorAndMathBar';
 import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
+import EvaluationPrintView from './EvaluationPrintView';
 
 interface StudentViewLayoutEditorModalProps {
   evaluation: OnlineEvaluation;
@@ -47,6 +48,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
   const [activeCriterionIdx, setActiveCriterionIdx] = useState<number>(0);
   const [savingInternal, setSavingInternal] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+  const [showPrintModal, setShowPrintModal] = useState<boolean>(false);
 
   // État pour tester l'interface comme un élève (calculatrice, réponses, parenthèses/accolades)
   const [testAnswers, setTestAnswers] = useState<Record<string, string>>({});
@@ -419,6 +421,16 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
               <span>Éditeur Détaillé</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => setShowPrintModal(true)}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+            title="Ouvrir et imprimer le sujet vierge officiel au format A4 avec lignes d'écriture"
+          >
+            <Printer size={13} />
+            <span>Imprimer Sujet Vierge (A4)</span>
+          </button>
 
           <button
             type="button"
@@ -1544,6 +1556,14 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
           keyConcept={draftEval.keyConcept}
           relatedConcepts={draftEval.relatedConcepts}
           existingQuestionsCount={draftEval.assessments[aiModalTarget.critIdx].exercises?.length || 0}
+        />
+      )}
+
+      {showPrintModal && (
+        <EvaluationPrintView
+          evaluation={draftEval}
+          submission={null}
+          onClose={() => setShowPrintModal(false)}
         />
       )}
     </div>

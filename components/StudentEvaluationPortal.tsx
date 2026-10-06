@@ -5,7 +5,7 @@ import {
   Square, Circle, Triangle, Edit3, Calculator, Layers, List, Keyboard
 } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
-import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation, createOrUpdateEvaluation } from '../services/onlineEvaluationService';
+import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation, createOrUpdateEvaluation, getLocalSubmissions } from '../services/onlineEvaluationService';
 import { fetchAllStudents, normalizeMatricule, normalizeGradeLabel } from '../services/studentRosterService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GeometricDrawingModal from './GeometricDrawingModal';
@@ -24,6 +24,64 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   B: { bg: 'bg-emerald-50', border: 'border-emerald-300', text: 'text-emerald-800', badge: 'bg-emerald-600', light: 'bg-emerald-100' },
   C: { bg: 'bg-amber-50',   border: 'border-amber-300',  text: 'text-amber-800',   badge: 'bg-amber-600',   light: 'bg-amber-100' },
   D: { bg: 'bg-rose-50',    border: 'border-rose-300',   text: 'text-rose-800',    badge: 'bg-rose-600',    light: 'bg-rose-100' },
+};
+
+const SafeExerciseImage: React.FC<{
+  imageUrl?: string;
+  imageCaption?: string;
+}> = ({ imageUrl, imageCaption }) => {
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  if (!imageUrl) return null;
+
+  if (imageUrl.startsWith('<svg')) {
+    return (
+      <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+        <div
+          className="max-h-64 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-64 [&>svg]:max-w-full [&>svg]:mx-auto"
+          dangerouslySetInnerHTML={{ __html: imageUrl }}
+        />
+        {imageCaption && (
+          <p className="text-xs text-slate-700 italic mt-2 font-bold">
+            🖼️ {imageCaption}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const isImageSource = imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://') || imageUrl.startsWith('/');
+
+  if (!isImageSource || loadFailed) {
+    const captionText = imageCaption || (!isImageSource ? imageUrl : 'Document visuel support');
+    return (
+      <div className="my-2.5 p-3.5 bg-gradient-to-r from-purple-50/80 to-indigo-50/80 border border-purple-200 rounded-2xl text-center space-y-1 shadow-2xs">
+        <div className="inline-flex items-center gap-2 text-xs font-black text-purple-950">
+          <span className="text-base">🖼️</span>
+          <span>{captionText}</span>
+        </div>
+        <p className="text-[11px] text-purple-800 italic font-medium">
+          Document d'étude et d'analyse pour cette épreuve
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+      <img
+        src={imageUrl}
+        alt={imageCaption || 'Illustration'}
+        onError={() => setLoadFailed(true)}
+        className="max-h-64 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
+      />
+      {imageCaption && (
+        <p className="text-xs text-slate-700 italic mt-2 font-bold">
+          🖼️ {imageCaption}
+        </p>
+      )}
+    </div>
+  );
 };
 
 // Helper: déterminer précisément le sous-aspect individuel pour une question principale (i, ii, iii...)
@@ -491,12 +549,34 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                               localStorage.getItem(`ib_locked_${cleanCode}_${cleanNum}`) === 'true' ||
                               localStorage.getItem(`ib_locked_${evalData.id}_${cleanNum}`) === 'true';
 
-      // RÈGLE STRICTE DU BRIEF : Une fois qu'un élève a validé ou que sa copie a été envoyée (clôturée),
-      // il ne pourra plus JAMAIS avoir accès à cette épreuve, SAUF si l'enseignant supprime sa copie envoyée
-      // ou lui accorde un nouveau matricule.
+      // RÈGLE : Si l'élève a déjà composé ou que son matricule a été utilisé :
+      // Il ne peut plus refaire l'évaluation, mais il peut VOIR sa copie clôturée ou corrigée !
       if ((prevSub || isRecordUsed || isLocallyLocked) && !isRetakeAuthorized) {
+        let targetSub = prevSub;
+        if (!targetSub) {
+          const localSubs = getLocalSubmissions();
+          targetSub = localSubs.find(
+            s => (s.accessCode?.trim().toUpperCase() === cleanCode || (evalData.id && s.evaluationId === evalData.id)) &&
+                 s.studentNumber?.trim().toLowerCase() === enteredMat.toLowerCase()
+          ) || null;
+        }
+
+        if (targetSub) {
+          // Afficher directement la copie en mode consultation verrouillée (Vue 2)
+          setEvaluation(evalData);
+          setExistingSubmission(targetSub);
+          setIsLockedAlready(true);
+          setStudentName(targetSub.studentName || cleanName);
+          setStudentNumber(targetSub.studentNumber || cleanNum);
+          localStorage.setItem('ib_permanent_matricule', cleanNum);
+          localStorage.setItem('ib_permanent_student_name', targetSub.studentName || cleanName);
+          setIsValidating(false);
+          return;
+        }
+
+        // Si le matricule est marqué comme utilisé mais sans copie enregistrée :
         setLoginError(
-          `❌ Accès refusé : Votre copie pour l'évaluation "${evalData.title}" a déjà été transmise et clôturée.\n\nVous ne pouvez plus accéder à cette épreuve. Seul votre enseignant peut réinitialiser votre accès en supprimant votre copie envoyée ou en vous accordant un nouveau matricule.`
+          `🔒 Votre accès pour l'évaluation "${evalData.title}" a déjà été enregistré et clôturé.\n\nVeuillez contacter votre enseignant pour consulter votre note ou déverrouiller votre matricule.`
         );
         setIsValidating(false);
         return;
@@ -1946,25 +2026,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
                         {/* OEUVRE D'ART / PHOTO / SCHÉMA SI PRÉSENT */}
                         {ex.imageUrl && (
-                          <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center">
-                            {ex.imageUrl.startsWith('<svg') ? (
-                              <div
-                                className="max-h-64 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-64 [&>svg]:max-w-full [&>svg]:mx-auto"
-                                dangerouslySetInnerHTML={{ __html: ex.imageUrl }}
-                              />
-                            ) : (
-                              <img
-                                src={ex.imageUrl}
-                                alt={ex.imageCaption || 'Illustration'}
-                                className="max-h-64 max-w-full mx-auto object-contain rounded-xl shadow-xs"
-                              />
-                            )}
-                            {ex.imageCaption && (
-                              <p className="text-xs text-slate-700 italic mt-2 font-bold">
-                                🖼️ {ex.imageCaption}
-                              </p>
-                            )}
-                          </div>
+                          <SafeExerciseImage imageUrl={ex.imageUrl} imageCaption={ex.imageCaption} />
                         )}
 
                         {/* Énoncé global / Contexte de l'exercice */}

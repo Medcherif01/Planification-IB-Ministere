@@ -33,6 +33,7 @@ export function stripHtmlTags(str?: string): string {
       .replace(/<\/li>/gi, '\n')
       .replace(/<li[^>]*>/gi, '• ')
       .replace(/<\/tr>/gi, '\n')
+      .replace(/<\/t[dh]>/gi, '  ')
       .replace(/<[^>]+>/g, '') // Supprime toute balise HTML standard <...>
       .replace(/&nbsp;/gi, ' ')
       .replace(/&lt;/gi, '<')

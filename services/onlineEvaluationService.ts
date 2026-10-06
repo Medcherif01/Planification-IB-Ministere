@@ -21,7 +21,7 @@ function saveLocalEvaluations(evals: OnlineEvaluation[]): void {
   } catch {}
 }
 
-function getLocalSubmissions(): StudentSubmission[] {
+export function getLocalSubmissions(): StudentSubmission[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_SUBS_KEY);
     return raw ? JSON.parse(raw) : [];

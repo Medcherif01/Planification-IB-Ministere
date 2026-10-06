@@ -75,9 +75,131 @@ function convertMarkdownTablesToHtml(text: string): string {
 }
 
 /**
+ * Détecte et reconstruit automatiquement les tableaux dont les colonnes ou en-têtes ont été
+ * comprimés ou écrasés par d'anciens nettoyages (ex: Screenshot AnnéeTempérature... 197027.5450)
+ */
+function reconstructSquishedAndRawTables(text: string): string {
+  let str = text;
+
+  // 1. Détection du cas spécifique de tableau météo/climat/sciences comprimé (ex: AnnéeTempérature...)
+  const squishedClimateHeader = /Ann[eé]e\s*Temp[eé]rature(?:\s*moyenne(?:\s*annuelle)?)?\s*(?:\(°C\))?\s*Pr[eé]cipitations?(?:\s*annuelles?)?\s*(?:\(mm\))?/i;
+  if (squishedClimateHeader.test(str)) {
+    const lines = str.split('\n');
+    const newLines: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (squishedClimateHeader.test(line)) {
+        const rows: { year: string; temp: string; rain: string }[] = [];
+        let j = i + 1;
+        while (j < lines.length) {
+          const rowLine = lines[j].trim();
+          // Cas 1 : chiffres collés (ex: 197027.5450 -> 1970 | 27.5 | 450)
+          const squishedMatch = rowLine.match(/^((?:19|20)\d{2})\s*(\d{1,2}(?:\.\d+)?)\s*(\d{2,4})$/);
+          // Cas 2 : séparés par espace ou tabulation (ex: 1970 27.5 450)
+          const spacedMatch = rowLine.match(/^((?:19|20)\d{2})[\s\t]+(\d{1,2}(?:\.\d+)?(?:°C)?)[\s\t]+(\d{2,4}(?:mm)?)$/);
+          
+          if (squishedMatch) {
+            rows.push({ year: squishedMatch[1], temp: squishedMatch[2], rain: squishedMatch[3] });
+            j++;
+          } else if (spacedMatch) {
+            rows.push({ year: spacedMatch[1], temp: spacedMatch[2].replace('°C', ''), rain: spacedMatch[3].replace('mm', '') });
+            j++;
+          } else {
+            break;
+          }
+        }
+
+        if (rows.length >= 2) {
+          const tableHtml = `<div class="table-container my-3 overflow-x-auto"><table class="eval-table w-full border-collapse rounded-xl overflow-hidden shadow-2xs border border-slate-300 bg-white text-xs sm:text-sm">
+<thead class="bg-gradient-to-r from-slate-100 to-slate-50 font-bold text-slate-900 border-b border-slate-300">
+  <tr>
+    <th class="p-2.5 border border-slate-300 text-left font-bold text-slate-900 bg-slate-100">Année</th>
+    <th class="p-2.5 border border-slate-300 text-left font-bold text-purple-900 bg-purple-50/50">Température moyenne annuelle (°C)</th>
+    <th class="p-2.5 border border-slate-300 text-left font-bold text-blue-900 bg-blue-50/50">Précipitations annuelles (mm)</th>
+  </tr>
+</thead>
+<tbody class="divide-y divide-slate-200">
+  ${rows.map(r => `<tr class="hover:bg-purple-50/30">
+    <td class="p-2.5 border border-slate-300 font-mono font-bold text-slate-900">${r.year}</td>
+    <td class="p-2.5 border border-slate-300 font-mono text-purple-900 font-semibold">${r.temp} °C</td>
+    <td class="p-2.5 border border-slate-300 font-mono text-blue-900 font-semibold">${r.rain} mm</td>
+  </tr>`).join('\n  ')}
+</tbody>
+</table></div>`;
+          newLines.push(tableHtml);
+          i = j;
+          continue;
+        }
+      }
+      newLines.push(line);
+      i++;
+    }
+    str = newLines.join('\n');
+  }
+
+  // 2. Détection des lignes tabulées ou séparées par 2+ espaces consécutifs formant un tableau
+  if (!/<table[\s>]/i.test(str)) {
+    const rawLines = str.split('\n');
+    const processed: string[] = [];
+    let tableBuffer: string[][] = [];
+
+    const flushTableBuffer = () => {
+      if (tableBuffer.length >= 2) {
+        const header = tableBuffer[0];
+        const body = tableBuffer.slice(1);
+        let tableHtml = '<div class="table-container my-3 overflow-x-auto"><table class="eval-table w-full border-collapse rounded-xl overflow-hidden shadow-2xs border border-slate-300 bg-white text-xs sm:text-sm">';
+        tableHtml += '<thead class="bg-slate-100 font-bold text-slate-900 border-b border-slate-300"><tr>';
+        for (const col of header) {
+          tableHtml += `<th class="p-2.5 border border-slate-300 text-left font-bold text-slate-900">${col}</th>`;
+        }
+        tableHtml += '</tr></thead><tbody class="divide-y divide-slate-200">';
+        for (const row of body) {
+          tableHtml += '<tr class="hover:bg-purple-50/30">';
+          for (let c = 0; c < header.length; c++) {
+            tableHtml += `<td class="p-2.5 border border-slate-300 text-slate-800">${row[c] || ''}</td>`;
+          }
+          tableHtml += '</tr>';
+        }
+        tableHtml += '</tbody></table></div>';
+        processed.push(tableHtml);
+      } else {
+        for (const b of tableBuffer) {
+          processed.push(b.join('  '));
+        }
+      }
+      tableBuffer = [];
+    };
+
+    for (const l of rawLines) {
+      const trimmed = l.trim();
+      if (!trimmed || trimmed.startsWith('<') || trimmed.startsWith('|')) {
+        if (tableBuffer.length > 0) flushTableBuffer();
+        processed.push(l);
+        continue;
+      }
+      // Séparation par tabulation ou par au moins 2 espaces consécutifs
+      const cols = trimmed.split(/\t|\s{2,}/).map(s => s.trim()).filter(Boolean);
+      if (cols.length >= 2 && cols.length <= 7) {
+        if (tableBuffer.length === 0 || tableBuffer[0].length === cols.length) {
+          tableBuffer.push(cols);
+          continue;
+        }
+      }
+      if (tableBuffer.length > 0) flushTableBuffer();
+      processed.push(l);
+    }
+    if (tableBuffer.length > 0) flushTableBuffer();
+    str = processed.join('\n');
+  }
+
+  return str;
+}
+
+/**
  * Nettoie, structure et sécurise le format HTML professionnel généré par l'IA ou saisi par l'enseignant.
  * Conserve et valorise les balises sémantiques valides (<p>, <strong>, <b>, <em>, <i>, <ul>, <ol>, <li>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <br>, <code>, <blockquote>).
- * Convertit le texte brut ou markdown sans balises en balisage HTML propre.
+ * Convertit le texte brut, les tableaux compressés ou le markdown en balisage HTML propre.
  */
 export function formatProfessionalHtml(content?: string): string {
   if (!content) return '';
@@ -104,6 +226,9 @@ export function formatProfessionalHtml(content?: string): string {
   str = str
     .replace(/\sclass="[^"]*"/gi, '')
     .replace(/\sstyle="[^"]*"/gi, '');
+
+  // Reconstruire les tableaux compressés ou textuels bruts (Screenshot climat & sciences)
+  str = reconstructSquishedAndRawTables(str);
 
   // Conversion des tableaux markdown éventuels en balises HTML
   if (str.includes('|') && str.includes('\n')) {

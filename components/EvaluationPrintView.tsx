@@ -21,6 +21,68 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   D: { bg: '#f8fafc', border: '#cbd5e1', text: '#881337', badge: '#be123c' },
 };
 
+function PrintSafeImage({
+  imageUrl,
+  imageCaption,
+  isEn = false,
+}: {
+  imageUrl?: string;
+  imageCaption?: string;
+  isEn?: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (!imageUrl) return null;
+
+  if (imageUrl.startsWith('<svg')) {
+    return (
+      <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
+        <div
+          className="max-h-56 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-56 [&>svg]:max-w-full [&>svg]:mx-auto"
+          dangerouslySetInnerHTML={{ __html: imageUrl }}
+        />
+        {imageCaption && (
+          <p className="text-[10px] text-slate-700 italic mt-1 font-bold">
+            🖼️ {stripHtmlTags(imageCaption)}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const isImageSource = imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://') || imageUrl.startsWith('/');
+
+  if (!isImageSource || failed) {
+    const captionText = imageCaption || (!isImageSource ? imageUrl : (isEn ? 'Visual Document' : 'Document visuel'));
+    return (
+      <div className="my-2.5 p-2.5 bg-slate-50 border border-slate-300 rounded text-center avoid-break space-y-0.5">
+        <div className="font-bold text-slate-900 text-xs flex items-center justify-center gap-1.5">
+          <span>🖼️</span>
+          <span>{stripHtmlTags(captionText)}</span>
+        </div>
+        <p className="text-[9.5px] text-slate-500 italic">
+          {isEn ? 'Visual stimulus document for this task' : 'Document support pour cette tâche'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
+      <img
+        src={imageUrl}
+        alt={imageCaption || (isEn ? 'Task illustration' : 'Illustration exercice')}
+        onError={() => setFailed(true)}
+        className="max-h-56 max-w-full mx-auto object-contain rounded"
+      />
+      {imageCaption && (
+        <p className="text-[10px] text-slate-700 italic mt-1 font-bold">
+          🖼️ {stripHtmlTags(imageCaption)}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
  * Construit le nom de fichier PDF officiel et structuré :
  * Format exigé : Matiere- Classe-unité- critere- nom de l'eleve
@@ -870,25 +932,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
 
                       {/* Illustration / Schéma / Document visuel si présent */}
                       {ex.imageUrl && (
-                        <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
-                          {ex.imageUrl.startsWith('<svg') ? (
-                            <div
-                              className="max-h-56 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-56 [&>svg]:max-w-full [&>svg]:mx-auto"
-                              dangerouslySetInnerHTML={{ __html: ex.imageUrl }}
-                            />
-                          ) : (
-                            <img
-                              src={ex.imageUrl}
-                              alt={ex.imageCaption || (isEn ? 'Task illustration' : 'Illustration exercice')}
-                              className="max-h-56 max-w-full mx-auto object-contain rounded"
-                            />
-                          )}
-                          {ex.imageCaption && (
-                            <p className="text-[10px] text-slate-700 italic mt-1 font-bold">
-                              🖼️ {stripHtmlTags(ex.imageCaption)}
-                            </p>
-                          )}
-                        </div>
+                        <PrintSafeImage imageUrl={ex.imageUrl} imageCaption={ex.imageCaption} isEn={isEn} />
                       )}
 
                       {/* TEXTE SUPPORT / STIMULUS (SANS BALISES HTML RÉSIDUELLES) */}
