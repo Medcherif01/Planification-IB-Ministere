@@ -225,7 +225,24 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [terminatedReason, setTerminatedReason] = useState<string | null>(null);
   const hasTriggeredViolationRef = useRef(false);
+  const fullscreenEngagedRef = useRef(false);
+  const examStartTimeRef = useRef(0);
+  const answersRef = useRef(answers);
+  const drawingsRef = useRef(drawings);
+  const evaluationRef = useRef(evaluation);
+  const studentNumberRef = useRef(studentNumber);
+  const studentNameRef = useRef(studentName);
+  const isLockedAlreadyRef = useRef(isLockedAlready);
+  const isSubmittingRef = useRef(isSubmitting);
   const handleSubmitRef = useRef<((forceAutoSubmit?: boolean, reason?: string) => Promise<void>) | null>(null);
+
+  useEffect(() => { answersRef.current = answers; }, [answers]);
+  useEffect(() => { drawingsRef.current = drawings; }, [drawings]);
+  useEffect(() => { evaluationRef.current = evaluation; }, [evaluation]);
+  useEffect(() => { studentNumberRef.current = studentNumber; }, [studentNumber]);
+  useEffect(() => { studentNameRef.current = studentName; }, [studentName]);
+  useEffect(() => { isLockedAlreadyRef.current = isLockedAlready; }, [isLockedAlready]);
+  useEffect(() => { isSubmittingRef.current = isSubmitting; }, [isSubmitting]);
 
   // Synchroniser le code d'accès si fourni par l'URL (ex: ?code=EVAL-1234-01)
   useEffect(() => {
@@ -281,6 +298,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         await (el as any).msRequestFullscreen();
       }
       setIsFullscreen(true);
+      fullscreenEngagedRef.current = true;
     } catch (err) {
       console.warn('Mode plein écran :', err);
     }
@@ -644,6 +662,120 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   // ── SÉCURITÉ DE PASSATION & PROTECTION DU PROCESSUS D'EXAMEN ──
   const isTakingExam = Boolean(evaluation && !existingSubmission && !isLockedAlready);
 
+  // Construction du payload de soumission synchronisé avec l'état le plus récent
+  const buildSubmissionPayload = () => {
+    const curEval = evaluationRef.current || evaluation;
+    if (!curEval) return null;
+    const curAnswers = answersRef.current;
+    const curDrawings = drawingsRef.current;
+    const curNum = (studentNumberRef.current || studentNumber).trim();
+    const curName = (studentNameRef.current || studentName).trim();
+    const isEnSubject = isEnglishSubject(curEval.subject);
+
+    const formattedAnswers: StudentAnswer[] = [];
+
+    (curEval.assessments || []).forEach(crit => {
+      (crit.exercises || []).forEach((ex, exIdx) => {
+        const mainKey = `${crit.criterion}_${exIdx}`;
+        const strand = resolveStrandForQuestion(crit.criterion, crit.strands, ex, exIdx, isEnSubject);
+        const subQuestions = getExerciseSubQuestions(ex, crit.criterion, crit.strands);
+
+        let combinedResponse = '';
+        const subAnswersMap: Record<string, { response: string; drawingDataUrl?: string }> = {};
+
+        if (subQuestions.length > 0) {
+          const parts: string[] = [];
+          subQuestions.forEach((sub, sIdx) => {
+            const subKey = `${crit.criterion}_${exIdx}_sub_${sIdx}`;
+            const subResp = curAnswers[subKey] || '';
+            const subDraw = curDrawings[subKey];
+            const subId = sub.id || `sub_${sIdx + 1}`;
+            subAnswersMap[subId] = {
+              response: subResp,
+              drawingDataUrl: subDraw,
+            };
+            parts.push(`${sub.label} ${subResp || '(Sans réponse)'}`);
+          });
+          combinedResponse = parts.join('\n\n');
+        } else {
+          combinedResponse = curAnswers[mainKey] || '';
+        }
+
+        formattedAnswers.push({
+          criterion: crit.criterion,
+          exerciseIndex: exIdx,
+          exerciseTitle: ex.title,
+          criterionReference: ex.criterionReference,
+          strandIndex: strand.roman,
+          strandText: strand.description,
+          questionType: ex.type || 'open',
+          questionContent: ex.content,
+          studentResponse: combinedResponse,
+          drawingDataUrl: curDrawings[mainKey],
+          subAnswers: Object.keys(subAnswersMap).length > 0 ? subAnswersMap : undefined,
+        });
+      });
+    });
+
+    return {
+      evaluationId: curEval.id,
+      accessCode: curEval.accessCode,
+      studentNumber: curNum,
+      studentName: curName,
+      isLocked: true,
+      answers: formattedAnswers,
+    };
+  };
+
+  // Envoi réseau immédiat lors de la fermeture de fenêtre/onglet (Beacon ou Fetch keepalive)
+  const sendBeaconOrKeepaliveSubmission = () => {
+    if (isLockedAlreadyRef.current) return;
+    const payload = buildSubmissionPayload();
+    if (!payload || !payload.studentNumber) return;
+
+    const cleanNum = payload.studentNumber;
+    const accessCode = payload.accessCode;
+
+    // 1. Verrouillage local immédiat
+    try {
+      localStorage.setItem(`ib_locked_${accessCode}_${cleanNum}`, 'true');
+      localStorage.removeItem(`draft_eval_${accessCode}_${cleanNum}`);
+      localStorage.removeItem(`timer_${accessCode}_${cleanNum}`);
+    } catch {}
+
+    const fullPayload: StudentSubmission = {
+      ...payload,
+      id: `sub_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      submittedAt: new Date().toISOString(),
+      status: 'submitted',
+    };
+
+    // 2. Sauvegarde locale de la soumission
+    try {
+      const raw = localStorage.getItem('ib_student_submissions');
+      const existing = raw ? JSON.parse(raw) : [];
+      const filtered = existing.filter((s: any) => !(s.evaluationId === fullPayload.evaluationId && s.studentNumber === cleanNum));
+      filtered.unshift(fullPayload);
+      localStorage.setItem('ib_student_submissions', JSON.stringify(filtered));
+    } catch {}
+
+    // 3. Transmission réseau synchrone/résistante à la fermeture
+    try {
+      const bodyStr = JSON.stringify(fullPayload);
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        const blob = new Blob([bodyStr], { type: 'application/json' });
+        navigator.sendBeacon('/api/online-evaluations?action=submit', blob);
+      } else {
+        fetch('/api/online-evaluations?action=submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch {}
+  };
+
   useEffect(() => {
     handleSubmitRef.current = handleSubmitEvaluation;
   });
@@ -708,10 +840,15 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     handleResponseChange(activeTextareaKey, updated);
   };
 
+  // ── Surveillance stricte : Plein écran obligatoire & Fermeture du navigateur ──
   useEffect(() => {
     if (!isTakingExam) return;
 
-    // 1. Détection de statut plein écran (informatif, n'interrompt pas l'épreuve)
+    examStartTimeRef.current = Date.now();
+    hasTriggeredViolationRef.current = false;
+
+    // 1. Détection de statut plein écran :
+    // SI L'ÉLÈVE SORT DU PLEIN ÉCRAN -> CLÔTURE & ENVOI AUTOMATIQUES IMMÉDIATS
     const handleFullscreenChange = () => {
       const activeFs = Boolean(
         document.fullscreenElement ||
@@ -720,6 +857,26 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         (document as any).msFullscreenElement
       );
       setIsFullscreen(activeFs);
+
+      if (activeFs) {
+        fullscreenEngagedRef.current = true;
+      } else {
+        // SORTIE DU PLEIN ÉCRAN DÉTECTÉE
+        const elapsedSinceStart = Date.now() - examStartTimeRef.current;
+        if (
+          (fullscreenEngagedRef.current || elapsedSinceStart > 3000) &&
+          !isLockedAlreadyRef.current &&
+          !isSubmittingRef.current &&
+          !hasTriggeredViolationRef.current
+        ) {
+          hasTriggeredViolationRef.current = true;
+          console.warn('🚨 Sortie du mode plein écran détectée -> clôture et envoi automatiques de l\'évaluation.');
+          handleSubmitRef.current?.(
+            true,
+            "Sortie du mode plein écran détectée. Conformément aux consignes de sécurité, votre évaluation a été automatiquement clôturée et votre copie a été transmise à votre enseignant."
+          );
+        }
+      }
     };
 
     // 2. Bloquer le clic droit (menu contextuel)
@@ -741,25 +898,57 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       }
     };
 
-    // 4. Alerte en cas de fermeture volontaire de l'onglet
+    // 4. Fermeture du navigateur ou de l'onglet -> clôture et envoi automatiques immédiats
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isLockedAlreadyRef.current || isSubmittingRef.current || hasTriggeredViolationRef.current) return;
+      hasTriggeredViolationRef.current = true;
+      sendBeaconOrKeepaliveSubmission();
+      handleSubmitRef.current?.(
+        true,
+        "Fermeture du navigateur détectée. Votre évaluation a été automatiquement clôturée et votre copie a été soumise."
+      );
       e.preventDefault();
-      e.returnValue = "L'évaluation est en cours. Vos réponses ont été sauvegardées.";
+      e.returnValue = "L'évaluation est en cours. La fermeture du navigateur clôturera et soumettra automatiquement votre copie.";
       return e.returnValue;
     };
 
+    const handlePageHide = () => {
+      if (isLockedAlreadyRef.current || isSubmittingRef.current) return;
+      sendBeaconOrKeepaliveSubmission();
+    };
+
+    // Vérifier l'état plein écran initial après court délai d'amorce
+    const timer = setTimeout(() => {
+      const isCurrentlyFs = Boolean(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      if (isCurrentlyFs) {
+        fullscreenEngagedRef.current = true;
+      }
+    }, 2000);
+
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('msfullscreenchange', handleFullscreenChange);
     window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
 
     return () => {
+      clearTimeout(timer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('msfullscreenchange', handleFullscreenChange);
       window.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
     };
   }, [isTakingExam]);
 
@@ -771,14 +960,22 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setTerminatedReason(reason);
     }
 
+    hasTriggeredViolationRef.current = true;
     setIsSubmitting(true);
     try {
+      const curEval = evaluationRef.current || evaluation;
+      const curAnswers = answersRef.current;
+      const curDrawings = drawingsRef.current;
+      const curNum = (studentNumberRef.current || studentNumber).trim();
+      const curName = (studentNameRef.current || studentName).trim();
+      const isEnSubject = isEnglishSubject(curEval.subject);
+
       const formattedAnswers: StudentAnswer[] = [];
 
-      (evaluation.assessments || []).forEach(crit => {
+      (curEval.assessments || []).forEach(crit => {
         (crit.exercises || []).forEach((ex, exIdx) => {
           const mainKey = `${crit.criterion}_${exIdx}`;
-          const strand = resolveStrandForQuestion(crit.criterion, crit.strands, ex, exIdx, isEn);
+          const strand = resolveStrandForQuestion(crit.criterion, crit.strands, ex, exIdx, isEnSubject);
           const subQuestions = getExerciseSubQuestions(ex, crit.criterion, crit.strands);
 
           let combinedResponse = '';
@@ -788,8 +985,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             const parts: string[] = [];
             subQuestions.forEach((sub, sIdx) => {
               const subKey = `${crit.criterion}_${exIdx}_sub_${sIdx}`;
-              const subResp = answers[subKey] || '';
-              const subDraw = drawings[subKey];
+              const subResp = curAnswers[subKey] || '';
+              const subDraw = curDrawings[subKey];
               const subId = sub.id || `sub_${sIdx + 1}`;
               subAnswersMap[subId] = {
                 response: subResp,
@@ -799,7 +996,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             });
             combinedResponse = parts.join('\n\n');
           } else {
-            combinedResponse = answers[mainKey] || '';
+            combinedResponse = curAnswers[mainKey] || '';
           }
 
           formattedAnswers.push({
@@ -812,35 +1009,35 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
             questionType: ex.type || 'open',
             questionContent: ex.content,
             studentResponse: combinedResponse,
-            drawingDataUrl: drawings[mainKey],
+            drawingDataUrl: curDrawings[mainKey],
             subAnswers: Object.keys(subAnswersMap).length > 0 ? subAnswersMap : undefined,
           });
         });
       });
 
       const submission = await submitStudentEvaluation({
-        evaluationId: evaluation.id,
-        accessCode: evaluation.accessCode,
-        studentNumber: studentNumber.trim(),
-        studentName: studentName.trim(),
+        evaluationId: curEval.id,
+        accessCode: curEval.accessCode,
+        studentNumber: curNum,
+        studentName: curName,
         isLocked: true,
         answers: formattedAnswers,
       });
 
       // ── VERROUILLAGE DÉFINITIF DU MATRICULE DE L'ÉLÈVE ──
-      const cleanNum = studentNumber.trim();
+      const cleanNum = curNum;
       const enteredMat = normalizeMatricule(cleanNum);
-      const cleanCode = accessCode.trim().toUpperCase();
+      const cleanCode = curEval.accessCode.trim().toUpperCase();
 
-      if (evaluation.studentAccessCodes && evaluation.studentAccessCodes.length > 0) {
-        const updatedCodes = evaluation.studentAccessCodes.map(sc => {
+      if (curEval.studentAccessCodes && curEval.studentAccessCodes.length > 0) {
+        const updatedCodes = curEval.studentAccessCodes.map(sc => {
           if (sc.studentNumber && normalizeMatricule(sc.studentNumber) === enteredMat) {
             return {
               ...sc,
               isUsed: true,
               allowedRetake: false, // Usage unique consommé
               usedAt: new Date().toISOString(),
-              studentName: sc.studentName || studentName.trim(),
+              studentName: sc.studentName || curName,
               studentNumber: sc.studentNumber || cleanNum,
             };
           }
@@ -848,18 +1045,18 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         });
 
         createOrUpdateEvaluation({
-          ...evaluation,
+          ...curEval,
           studentAccessCodes: updatedCodes,
         }).catch(err => console.warn('Erreur verrouillage matricule:', err));
       }
 
       // VERROUILLAGE DÉFINITIF EN LOCAL
-      const lockKey = `ib_locked_${evaluation.accessCode}_${cleanNum}`;
+      const lockKey = `ib_locked_${curEval.accessCode}_${cleanNum}`;
       localStorage.setItem(lockKey, 'true');
       localStorage.setItem(`ib_locked_${cleanCode}_${cleanNum}`, 'true');
-      localStorage.removeItem(`draft_eval_${evaluation.accessCode}_${cleanNum}`);
+      localStorage.removeItem(`draft_eval_${curEval.accessCode}_${cleanNum}`);
       localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
-      localStorage.removeItem(`timer_${evaluation.accessCode}_${cleanNum}`);
+      localStorage.removeItem(`timer_${curEval.accessCode}_${cleanNum}`);
 
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
 
@@ -877,7 +1074,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       if (!forceAutoSubmit) {
         alert('🎉 Votre copie a été remise avec succès et est maintenant verrouillée.');
       } else if (reason) {
-        alert(`⚠️ ÉVALUATION CLÔTURÉE AUTOMATIQUEMENT :\n\n${reason}\n\nVos réponses saisies ont été enregistrées et verrouillées.`);
+        alert(`⚠️ ÉVALUATION CLÔTURÉE AUTOMATIQUEMENT :\n\n${reason}\n\nVos réponses saisies ont été enregistrées et transmises à votre enseignant.`);
       }
     } catch (err: any) {
       alert(`Erreur lors de la remise : ${err.message || 'Impossible de soumettre la copie'}`);
@@ -1340,17 +1537,19 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col select-none">
-      {/* ℹ️ BANNIÈRE DOUCE PLEIN ÉCRAN SI DÉSACTIVÉ (NON BLOQUANTE) */}
+      {/* 🚨 AVERTISSEMENT SÉCURITÉ PLEIN ÉCRAN */}
       {!isFullscreen && isTakingExam && (
-        <div className="bg-purple-900 text-white px-4 py-2 flex items-center justify-between gap-3 text-xs shadow-md">
+        <div className="bg-rose-900 text-white px-4 py-2.5 flex items-center justify-between gap-3 text-xs shadow-md border-b border-rose-700">
           <div className="flex items-center gap-2">
-            <ShieldCheck size={16} className="text-purple-300 flex-shrink-0" />
-            <span>Plein écran recommandé pour un meilleur confort d'examen sur tablette et ordinateur.</span>
+            <ShieldCheck size={16} className="text-amber-300 flex-shrink-0" />
+            <span>
+              <strong>Plein écran obligatoire :</strong> La sortie du plein écran ou la fermeture de la fenêtre entraînera la <strong>clôture et la soumission automatiques</strong> de votre copie.
+            </span>
           </div>
           <button
             type="button"
             onClick={enterFullscreen}
-            className="px-3 py-1 bg-white text-purple-900 rounded-lg font-bold hover:bg-purple-50 transition shadow-2xs"
+            className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-rose-950 font-black rounded-xl text-xs transition shadow-md flex-shrink-0"
           >
             Activer le plein écran
           </button>
