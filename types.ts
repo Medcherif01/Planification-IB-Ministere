@@ -580,6 +580,7 @@ export interface OnlineEvaluation {
   relatedConcepts?: string[];
   assessments: AssessmentData[];
   allowStudentFeedbackView?: boolean;
+  criterionLetter?: string; // e.g. "A", "B", "C", "D"
   studentAccessCodes?: IndividualAccessCode[]; // Codes individuels à usage unique par élève
   layoutConfig?: EvaluationLayoutConfig; // Organisation et mise en page personnalisée par l'enseignant
   allowCalculator?: boolean; // L'enseignant autorise ou interdit la calculatrice pour cette épreuve

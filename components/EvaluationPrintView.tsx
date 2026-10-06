@@ -1,13 +1,15 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Printer, Award, Clock, Download } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../types';
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
+import { stripHtmlTags } from '../services/educationalDiagramService';
 
 interface EvaluationPrintViewProps {
   evaluation: OnlineEvaluation;
   submission?: StudentSubmission | null;
   onClose: () => void;
+  defaultStudentName?: string;
 }
 
 const CRITERION_COLORS: Record<string, { bg: string; border: string; text: string; badge: string }> = {
@@ -17,13 +19,89 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   D: { bg: '#f8fafc', border: '#cbd5e1', text: '#881337', badge: '#be123c' },
 };
 
-// Helper: Nettoyer le texte des artefacts d'espace réponse (ex: "Réponse : .........")
+/**
+ * Construit le nom de fichier PDF officiel et structuré :
+ * Format exigé : Matiere- Classe-unité- critere- nom de l'eleve
+ */
+export function buildEvaluationPdfTitle(
+  evaluation: OnlineEvaluation,
+  submission?: StudentSubmission | null,
+  isEn: boolean = false,
+  studentNameOverride?: string
+): string {
+  const sanitize = (val?: string) =>
+    (val || '')
+      .trim()
+      .replace(/[\\/:*?"<>|#%&{}]/g, '')
+      .replace(/\s+/g, '_');
+
+  const subjectStr = sanitize(evaluation.subject) || 'Matiere';
+  const gradeStr = sanitize(evaluation.grade) || 'Classe';
+  const unitStr = sanitize(evaluation.unitTitle || evaluation.title || 'Unite');
+
+  // Détermination précise du/des critères évalués
+  const critLetters = evaluation.assessments?.map(a => a.criterion).filter(Boolean) || [];
+  const critStr = sanitize(
+    evaluation.criterionLetter
+      ? `Critere_${evaluation.criterionLetter}`
+      : critLetters.length > 0
+      ? `Critere_${critLetters.join('_')}`
+      : 'Critere'
+  );
+
+  const rawStudent = studentNameOverride || submission?.studentName;
+  const studentStr = sanitize(rawStudent || (isEn ? 'Copie_Eleve' : 'Copie_Eleve'));
+
+  // Format exigé : Matiere- Classe-unité- critere- nom de l'eleve
+  return `${subjectStr}-${gradeStr}-${unitStr}-${critStr}-${studentStr}`;
+}
+
+// Helper: Nettoyer scrupuleusement le texte de toute balise HTML (<p>, <strong>...) et des artefacts de formulaire
 function sanitizeText(text: string): string {
   if (!text) return '';
-  return text
+  const withoutArtifacts = text
     .replace(/(?:^|\n)\s*Réponse\s*:\s*[\.\_\-\s]{2,}.*$/gi, '')
-    .replace(/\s*Réponse\s*:\s*[\.\_\-\s]{2,}.*$/gi, '')
-    .trim();
+    .replace(/\s*Réponse\s*:\s*[\.\_\-\s]{2,}.*$/gi, '');
+  return stripHtmlTags(withoutArtifacts);
+}
+
+/**
+ * Rendu imprimé soigné sans aucune balise HTML brute (<p>, <strong>...)
+ * Formate le gras markdown proprement et sépare les paragraphes avec une belle typographie
+ */
+function CleanFormattedText({ text, className = '' }: { text?: string; className?: string }) {
+  if (!text) return null;
+  const clean = sanitizeText(text);
+  const paragraphs = clean.split(/\n\s*\n/).filter(Boolean);
+
+  const renderInline = (str: string) => {
+    const parts = str.split(/(\*\*[^*]+\*\*)/g);
+    if (parts.length === 1) return str;
+    return parts.map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+        return (
+          <strong key={i} className="font-bold text-slate-900">
+            {part.slice(2, -2)}
+          </strong>
+        );
+      }
+      return part;
+    });
+  };
+
+  if (paragraphs.length <= 1) {
+    return <span className={className}>{renderInline(clean)}</span>;
+  }
+
+  return (
+    <div className={`space-y-1.5 ${className}`}>
+      {paragraphs.map((p, idx) => (
+        <p key={idx} className="leading-relaxed">
+          {renderInline(p)}
+        </p>
+      ))}
+    </div>
+  );
 }
 
 // Helper: Extraire le texte support (stimulus) et les sous-questions proprement sans duplication
@@ -194,10 +272,20 @@ function getSubQuestionStrandLabel(
   };
 }
 
-const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, submission, onClose }) => {
+const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
+  evaluation,
+  submission,
+  onClose,
+  defaultStudentName,
+}) => {
   const isCorrectedCopy = Boolean(submission);
   const printContentRef = useRef<HTMLDivElement>(null);
   const isEn = isEnglishSubject(evaluation.subject);
+
+  // Nom de l'élève pour le fichier PDF (permet à l'enseignant de personnaliser le PDF même pour une copie vierge)
+  const [studentNameInput, setStudentNameInput] = useState<string>(
+    submission?.studentName || defaultStudentName || ''
+  );
 
   const dateLocale = isEn ? 'en-US' : 'fr-FR';
   const currentDateFormatted = new Date().toLocaleDateString(dateLocale, {
@@ -212,16 +300,36 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
     ? new Date(evaluation.createdAt).toLocaleDateString(dateLocale, { day: '2-digit', month: '2-digit', year: 'numeric' })
     : currentDateFormatted;
 
+  // Nom officiel de la fiche pour l'impression / PDF : Matiere- Classe-unité- critere- nom de l'eleve
+  const pdfFileName = buildEvaluationPdfTitle(evaluation, submission, isEn, studentNameInput);
+
+  // Synchronisation du titre du document navigateur pour que le PDF généré porte automatiquement ce nom
+  useEffect(() => {
+    const prevTitle = document.title;
+    document.title = pdfFileName;
+    const handleAfterPrint = () => {
+      document.title = prevTitle;
+    };
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => {
+      window.removeEventListener('afterprint', handleAfterPrint);
+      document.title = prevTitle;
+    };
+  }, [pdfFileName]);
+
   const handlePrint = () => {
+    const prevTitle = document.title;
+    document.title = pdfFileName;
     window.print();
+    setTimeout(() => {
+      document.title = prevTitle;
+    }, 2000);
   };
 
   const handleDownloadHtml = () => {
     if (!printContentRef.current) return;
     const content = printContentRef.current.innerHTML;
-    const title = isCorrectedCopy
-      ? `${isEn ? 'Graded_Copy' : 'Copie'}_${submission?.studentName?.replace(/\s+/g, '_') || (isEn ? 'Student' : 'Eleve')}_${evaluation.accessCode}`
-      : `${isEn ? 'Assessment' : 'Evaluation'}_${evaluation.title.replace(/\s+/g, '_')}_${evaluation.accessCode}`;
+    const title = pdfFileName;
 
     const fullHtml = `<!DOCTYPE html>
 <html lang="${isEn ? 'en' : 'fr'}">
@@ -368,7 +476,23 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {!isCorrectedCopy && (
+            <div className="flex items-center gap-1.5 bg-purple-50/90 border border-purple-200 rounded-xl px-2.5 py-1 text-xs">
+              <span className="font-bold text-purple-950 text-[11px] whitespace-nowrap">
+                Élève (nom du PDF) :
+              </span>
+              <input
+                type="text"
+                value={studentNameInput}
+                onChange={e => setStudentNameInput(e.target.value)}
+                placeholder="Nom_Prénom"
+                className="bg-white border border-purple-300 rounded-lg px-2 py-0.5 text-xs text-slate-800 w-32 sm:w-40 focus:outline-none focus:ring-1 focus:ring-purple-600 font-medium"
+                title="Nom de l'élève à inclure dans le fichier PDF (Matiere-Classe-unité-critere-nom de l'eleve)"
+              />
+            </div>
+          )}
+
           <button
             onClick={handleDownloadHtml}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition"
@@ -379,7 +503,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
           <button
             onClick={handlePrint}
             className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow transition"
-            title={isEn ? 'Print or save to PDF via browser' : 'Imprimer ou enregistrer en PDF via le navigateur'}
+            title={`Imprimer / Enregistrer en PDF (${pdfFileName}.pdf)`}
           >
             <Printer size={16} /> {isEn ? 'Print / PDF' : 'Imprimer / PDF'}
           </button>
@@ -588,7 +712,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                   {isEn ? 'Student Full Name' : "Nom & Prénom de l'élève"}
                 </span>
                 <span className="font-bold text-sm text-slate-900">
-                  {submission?.studentName || '________________________________________'}
+                  {submission?.studentName || studentNameInput || '________________________________________'}
                 </span>
               </div>
               <div className="p-1.5">
@@ -772,26 +896,39 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         )}
                       </div>
 
-                      {/* Illustration / Image si présente */}
+                      {/* Illustration / Schéma / Document visuel si présent */}
                       {ex.imageUrl && (
-                        <div className="my-2 p-2 bg-slate-50 border border-slate-200 rounded text-center avoid-break">
-                          <img
-                            src={ex.imageUrl}
-                            alt={ex.imageCaption || (isEn ? 'Task illustration' : 'Illustration exercice')}
-                            className="max-h-52 max-w-full mx-auto object-contain rounded"
-                          />
+                        <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
+                          {ex.imageUrl.startsWith('<svg') ? (
+                            <div
+                              className="max-h-56 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-56 [&>svg]:max-w-full [&>svg]:mx-auto"
+                              dangerouslySetInnerHTML={{ __html: ex.imageUrl }}
+                            />
+                          ) : (
+                            <img
+                              src={ex.imageUrl}
+                              alt={ex.imageCaption || (isEn ? 'Task illustration' : 'Illustration exercice')}
+                              className="max-h-56 max-w-full mx-auto object-contain rounded"
+                            />
+                          )}
                           {ex.imageCaption && (
-                            <p className="text-[10px] text-slate-600 italic mt-1 font-medium">
-                              🖼️ {ex.imageCaption}
+                            <p className="text-[10px] text-slate-700 italic mt-1 font-bold">
+                              🖼️ {stripHtmlTags(ex.imageCaption)}
                             </p>
                           )}
                         </div>
                       )}
 
-                      {/* TEXTE SUPPORT / STIMULUS (NON DUPLIQUÉ) */}
+                      {/* TEXTE SUPPORT / STIMULUS (SANS BALISES HTML RÉSIDUELLES) */}
                       {stimulusText && (
-                        <div className="my-1.5 p-3 bg-slate-50/80 border-l-3 border-purple-700 text-slate-800 text-[11px] leading-relaxed italic avoid-break">
-                          {stimulusText}
+                        <div className="my-2 p-2.5 bg-purple-50/50 border-l-4 border-purple-700 text-slate-800 text-[11px] leading-relaxed rounded-r avoid-break">
+                          <div className="font-black uppercase text-[9.5px] text-purple-900 tracking-wider flex items-center gap-1.5 mb-1 not-italic">
+                            <span>📄</span>
+                            <span>{isEn ? 'Document / Context Stimulus :' : 'Document / Contexte de la tâche :'}</span>
+                          </div>
+                          <div className="font-sans text-slate-800 leading-relaxed text-[11px]">
+                            <CleanFormattedText text={stimulusText} />
+                          </div>
                         </div>
                       )}
 
@@ -812,10 +949,12 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                 style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
                               >
                                 <div className="flex items-baseline gap-2">
-                                  <span className="font-bold text-xs text-purple-950 bg-purple-100 px-1.5 py-0.5 rounded">
+                                  <span className="font-bold text-xs text-purple-950 bg-purple-100 px-1.5 py-0.5 rounded flex-shrink-0">
                                     {sub.label}
                                   </span>
-                                  <span className="font-bold text-slate-900 text-xs">{sub.content}</span>
+                                  <div className="font-bold text-slate-900 text-xs sm:text-[13px] leading-snug">
+                                    <CleanFormattedText text={sub.content} />
+                                  </div>
                                 </div>
 
                                 {/* 🔴 SOUS-ASPECT EN ROUGE BIEN MIS EN VALEUR */}
@@ -827,7 +966,8 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                 {sub.type === 'multiple_choice' && (
                                   <div className="space-y-1 pt-1">
                                     {(sub.options || ex.options || (isEn ? ['Option A', 'Option B', 'Option C'] : ['Proposition A', 'Proposition B', 'Proposition C'])).map((opt, oIdx) => {
-                                      const isChosen = subResponseText === opt;
+                                      const cleanOpt = stripHtmlTags(opt);
+                                      const isChosen = subResponseText === cleanOpt || subResponseText === opt;
                                       return (
                                         <div key={oIdx} className="flex items-center gap-2 text-xs">
                                           <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center font-bold text-[9px] ${
@@ -835,7 +975,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                           }`}>
                                             {isChosen ? '✓' : ''}
                                           </span>
-                                          <span className={isChosen ? 'font-bold text-purple-950' : 'text-slate-700'}>{opt}</span>
+                                          <span className={isChosen ? 'font-bold text-purple-950' : 'text-slate-700'}>{cleanOpt}</span>
                                         </div>
                                       );
                                     })}
@@ -868,12 +1008,14 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                       </div>
                                     )
                                   ) : (
-                                    <div className="mt-1.5 p-2 border border-slate-300 rounded bg-slate-50/20">
-                                      <div className="text-[9px] font-semibold text-slate-400 uppercase mb-1">
-                                        {isEn ? `Answer space for ${sub.label}:` : `Espace réponse pour ${sub.label} :`}
+                                    <div className="mt-1.5 p-2.5 border border-slate-300 rounded bg-slate-50/20 avoid-break">
+                                      <div className="text-[9.5px] font-semibold text-slate-400 uppercase mb-1 flex items-center justify-between">
+                                        <span>{isEn ? `Answer space for ${sub.label}:` : `Espace réponse pour ${sub.label} :`}</span>
+                                        <span className="text-[9px] text-slate-400 font-normal">{isEn ? 'Detailed steps and reasoning' : 'Rédigez vos calculs ou votre réponse'}</span>
                                       </div>
-                                      <div className="border-b border-dotted border-slate-300 h-5"></div>
-                                      <div className="border-b border-dotted border-slate-300 h-5"></div>
+                                      <div className="border-b border-dashed border-slate-300 h-5"></div>
+                                      <div className="border-b border-dashed border-slate-300 h-5"></div>
+                                      <div className="border-b border-dashed border-slate-300 h-5"></div>
                                     </div>
                                   )
                                 )}
@@ -886,8 +1028,8 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                         <div className="space-y-2 avoid-break" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                           {/* Énoncé de la question si pas de sous-questions */}
                           {ex.content && (
-                            <div className="text-slate-900 font-medium text-xs leading-relaxed">
-                              {sanitizeText(ex.content)}
+                            <div className="text-slate-900 font-medium text-xs sm:text-[13px] leading-relaxed">
+                              <CleanFormattedText text={ex.content} />
                             </div>
                           )}
 
@@ -900,7 +1042,8 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                           {ex.type === 'multiple_choice' && (
                             <div className="space-y-1 pt-1">
                               {(ex.options || (isEn ? ['Option A', 'Option B', 'Option C', 'Option D'] : ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'])).map((opt, oIdx) => {
-                                const isChosen = studentAns?.studentResponse === opt;
+                                const cleanOpt = stripHtmlTags(opt);
+                                const isChosen = studentAns?.studentResponse === cleanOpt || studentAns?.studentResponse === opt;
                                 return (
                                   <div key={oIdx} className="flex items-center gap-2 text-xs">
                                     <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center font-bold text-[9px] ${
@@ -908,7 +1051,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                     }`}>
                                       {isChosen ? '✓' : ''}
                                     </span>
-                                    <span className={isChosen ? 'font-bold text-purple-950' : 'text-slate-700'}>{opt}</span>
+                                    <span className={isChosen ? 'font-bold text-purple-950' : 'text-slate-700'}>{cleanOpt}</span>
                                   </div>
                                 );
                               })}
@@ -958,13 +1101,15 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({ evaluation, s
                                 </div>
                               )
                             ) : (
-                              <div className="mt-1.5 p-2 border border-slate-300 rounded bg-slate-50/20">
-                                <div className="text-[9px] font-semibold text-slate-400 uppercase mb-1">
-                                  {isEn ? 'Reserved zone for student written response:' : 'Zone réservée pour la réponse rédigée de l\'élève :'}
+                              <div className="mt-2 p-2.5 border border-slate-300 rounded bg-slate-50/20 avoid-break">
+                                <div className="text-[9.5px] font-semibold text-slate-400 uppercase mb-1 flex items-center justify-between">
+                                  <span>{isEn ? 'Reserved zone for student written response:' : 'Zone réservée pour la réponse rédigée de l\'élève :'}</span>
+                                  <span className="text-[9px] text-slate-400 font-normal">{isEn ? 'Detailed steps and reasoning' : 'Rédigez vos calculs ou votre réponse'}</span>
                                 </div>
-                                <div className="border-b border-dotted border-slate-300 h-6"></div>
-                                <div className="border-b border-dotted border-slate-300 h-6"></div>
-                                <div className="border-b border-dotted border-slate-300 h-6"></div>
+                                <div className="border-b border-dashed border-slate-300 h-5"></div>
+                                <div className="border-b border-dashed border-slate-300 h-5"></div>
+                                <div className="border-b border-dashed border-slate-300 h-5"></div>
+                                <div className="border-b border-dashed border-slate-300 h-5"></div>
                               </div>
                             )
                           )}

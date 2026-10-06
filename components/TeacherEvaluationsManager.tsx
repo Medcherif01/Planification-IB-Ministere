@@ -9,6 +9,7 @@ import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
 import { optimizeEvaluationWithAI } from '../services/evaluationAiOptimizerService';
 import RichExerciseContent from './RichExerciseContent';
+import { EDUCATIONAL_DIAGRAMS, detectAndAttachEducationalDiagram, stripHtmlTags } from '../services/educationalDiagramService';
 
 interface TeacherEvaluationsManagerProps {
   currentSubject?: string;
@@ -92,6 +93,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [aiInitialType, setAiInitialType] = useState<GenerateQuestionOptions['questionType']>('multiple_choice');
   const [classRosterCountForCreate, setClassRosterCountForCreate] = useState<number>(0);
   const [optimizeWithAiOnCreate, setOptimizeWithAiOnCreate] = useState(true);
+  const [insertVisualDiagramsOnCreate, setInsertVisualDiagramsOnCreate] = useState(true);
   const [allowCalculatorOnCreate, setAllowCalculatorOnCreate] = useState(true);
   const [isOptimizingEvalWithAi, setIsOptimizingEvalWithAi] = useState(false);
   const [previewHtmlExerciseMap, setPreviewHtmlExerciseMap] = useState<Record<number, boolean>>({});
@@ -730,7 +732,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         count
       );
 
-      // Si l'option IA est cochée, restructurer et purifier les questions (zéro doublon, format HTML pro)
+      // Si l'option IA est cochée, restructurer et purifier les questions (zéro doublon, texte clair sans balise HTML)
       let finalAssessments = chosenAssessments;
       if (optimizeWithAiOnCreate) {
         finalAssessments = await optimizeEvaluationWithAI({
@@ -745,8 +747,48 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           existingAssessments: chosenAssessments,
           targetCriteria: selectedCriteriaForCreate,
           customInstructions: customInstructions,
+          insertVisualDiagrams: insertVisualDiagramsOnCreate,
         });
       }
+
+      // Nettoyage systématique de sécurité (zéro balise HTML résiduelle et intégration des diagrammes/schémas)
+      finalAssessments = finalAssessments.map(crit => ({
+        ...crit,
+        exercises: (crit.exercises || []).map(ex => {
+          const cleanTitle = stripHtmlTags(ex.title);
+          const cleanContent = stripHtmlTags(ex.content);
+          let imageUrl = ex.imageUrl || '';
+          let imageCaption = ex.imageCaption || '';
+
+          if (!imageUrl && insertVisualDiagramsOnCreate) {
+            const detected = detectAndAttachEducationalDiagram(
+              selectedPlanForCreate.subject || currentSubject || '',
+              selectedPlanForCreate.title || '',
+              cleanTitle,
+              cleanContent
+            );
+            if (detected) {
+              imageUrl = detected.imageUrl;
+              imageCaption = detected.imageCaption;
+            }
+          }
+
+          return {
+            ...ex,
+            title: cleanTitle,
+            content: cleanContent,
+            imageUrl: imageUrl || undefined,
+            imageCaption: imageCaption || undefined,
+            answer: ex.answer ? stripHtmlTags(ex.answer) : undefined,
+            options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
+            subQuestions: ex.subQuestions?.map(sq => ({
+              ...sq,
+              content: stripHtmlTags(sq.content),
+              options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
+            })),
+          };
+        }),
+      }));
 
       const newEval = await createOrUpdateEvaluation({
         accessCode: code,
@@ -1770,10 +1812,31 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     <div>
                       <span className="text-xs font-black text-indigo-950 flex items-center gap-1.5">
                         <Sparkles size={14} className="text-indigo-600" />
-                        Restructurer & Optimiser avec l'IA (Format Pro HTML, 0 doublon)
+                        Restructurer & Optimiser avec l'IA (Texte soigné, 0 doublon, sans balises HTML)
                       </span>
                       <p className="text-[11px] text-indigo-900/80 leading-relaxed mt-0.5">
-                        L'IA analyse l'évaluation existante, <strong>supprime automatiquement les questions répétées ou illogiques</strong>, ordonne les tâches de façon claire et les formate en <strong>HTML soigné</strong>. Chaque question reste 100% modifiable par vous ensuite.
+                        L'IA analyse l'évaluation, <strong>supprime les questions répétées ou illogiques</strong>, ordonne les tâches et rédige en <strong>texte pur, clair et directement lisible</strong> (aucune balise HTML polluante).
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* 🖼️ Option Schémas & Diagrammes à légender */}
+                <div className="bg-purple-50/90 border-2 border-purple-200 rounded-2xl p-3.5 space-y-1.5 shadow-2xs">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={insertVisualDiagramsOnCreate}
+                      onChange={e => setInsertVisualDiagramsOnCreate(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 accent-purple-600 rounded"
+                    />
+                    <div>
+                      <span className="text-xs font-black text-purple-950 flex items-center gap-1.5">
+                        <ImageIcon size={14} className="text-purple-600" />
+                        Insérer si nécessaire des images, graphiques & diagrammes à légender
+                      </span>
+                      <p className="text-[11px] text-purple-900/80 leading-relaxed mt-0.5">
+                        Associe automatiquement des <strong>figures géométriques cotées, schémas scientifiques (circuits, cellules, cycles...) ou graphiques de données</strong> pertinents selon la matière.
                       </p>
                     </div>
                   </label>
@@ -2874,6 +2937,27 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                       className="px-2 py-1 bg-white hover:bg-purple-100 border border-slate-200 rounded text-[10px] font-semibold text-slate-700 transition"
                                     >
                                       🎨 {art.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Boutons d'insertion rapide de schémas scientifiques, géométriques & diagrammes à légender */}
+                              <div className="pt-1.5">
+                                <span className="text-[10px] font-bold text-indigo-900 uppercase block mb-1">
+                                  Schémas & Diagrammes vectoriels à légender (1-clic pour insérer) :
+                                </span>
+                                <div className="flex gap-1.5 flex-wrap">
+                                  {EDUCATIONAL_DIAGRAMS.map(diag => (
+                                    <button
+                                      key={diag.id}
+                                      type="button"
+                                      onClick={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: diag.svgDataUri, imageCaption: diag.caption })}
+                                      className="px-2 py-1 bg-white hover:bg-indigo-50 border border-indigo-200 rounded text-[10px] font-semibold text-indigo-900 transition flex items-center gap-1 shadow-2xs"
+                                      title={diag.description}
+                                    >
+                                      <span>📐</span>
+                                      <span>{diag.title}</span>
                                     </button>
                                   ))}
                                 </div>
