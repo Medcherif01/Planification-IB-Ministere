@@ -1488,6 +1488,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           <EvaluationPrintView
             evaluation={evaluation}
             submission={existingSubmission}
+            defaultStudentName={existingSubmission?.studentName || studentName}
             onClose={() => setShowPrintModal(false)}
           />
         )}
@@ -1927,14 +1928,21 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
                         {/* OEUVRE D'ART / PHOTO / SCHÉMA SI PRÉSENT */}
                         {ex.imageUrl && (
-                          <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
-                            <img
-                              src={ex.imageUrl}
-                              alt={ex.imageCaption || 'Illustration'}
-                              className="max-h-64 max-w-full mx-auto object-contain rounded-xl shadow-xs"
-                            />
+                          <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+                            {ex.imageUrl.startsWith('<svg') ? (
+                              <div
+                                className="max-h-64 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-64 [&>svg]:max-w-full [&>svg]:mx-auto"
+                                dangerouslySetInnerHTML={{ __html: ex.imageUrl }}
+                              />
+                            ) : (
+                              <img
+                                src={ex.imageUrl}
+                                alt={ex.imageCaption || 'Illustration'}
+                                className="max-h-64 max-w-full mx-auto object-contain rounded-xl shadow-xs"
+                              />
+                            )}
                             {ex.imageCaption && (
-                              <p className="text-xs text-slate-600 italic mt-2 font-medium">
+                              <p className="text-xs text-slate-700 italic mt-2 font-bold">
                                 🖼️ {ex.imageCaption}
                               </p>
                             )}
