@@ -7,6 +7,8 @@ import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorS
 import EvaluationPrintView from './EvaluationPrintView';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
+import { optimizeEvaluationWithAI } from '../services/evaluationAiOptimizerService';
+import RichExerciseContent from './RichExerciseContent';
 
 interface TeacherEvaluationsManagerProps {
   currentSubject?: string;
@@ -89,6 +91,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [aiInitialStrand, setAiInitialStrand] = useState<string>('i');
   const [aiInitialType, setAiInitialType] = useState<GenerateQuestionOptions['questionType']>('multiple_choice');
   const [classRosterCountForCreate, setClassRosterCountForCreate] = useState<number>(0);
+  const [optimizeWithAiOnCreate, setOptimizeWithAiOnCreate] = useState(true);
+  const [isOptimizingEvalWithAi, setIsOptimizingEvalWithAi] = useState(false);
+  const [previewHtmlExerciseMap, setPreviewHtmlExerciseMap] = useState<Record<number, boolean>>({});
 
   // Submissions view & correction
   const [selectedEvaluation, setSelectedEvaluation] = useState<OnlineEvaluation | null>(null);
@@ -646,7 +651,49 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     }
   };
 
-  // Créer une nouvelle évaluation en ligne depuis une unité
+  // Optimiser et restructurer avec l'IA une évaluation ou un critère en cours d'édition
+  const handleOptimizeCurrentEvaluationWithAi = async () => {
+    if (!editingEvaluation) return;
+    const activeCrit = editingEvaluation.assessments[editingCriterionIdx];
+    const critLetter = activeCrit?.criterion || 'A';
+    if (!confirm(`Voulez-vous restructurer et optimiser le Critère ${critLetter} avec l'IA ?\n\n• Élimination des questions répétées ou redondantes\n• Correction des questions illogiques ou incomplètes\n• Organisation claire et progressive par sous-aspect\n• Mise en forme HTML professionnelle et aérée\n\nVous pourrez toujours modifier chaque question ensuite.`)) {
+      return;
+    }
+
+    setIsOptimizingEvalWithAi(true);
+    try {
+      const parentUnit = allUnitPlans.find(p => p.id === editingEvaluation.unitId);
+      const optimized = await optimizeEvaluationWithAI({
+        subject: editingEvaluation.subject,
+        gradeLevel: editingEvaluation.grade,
+        unitTitle: editingEvaluation.unitTitle || editingEvaluation.title,
+        statementOfInquiry: editingEvaluation.statementOfInquiry,
+        keyConcept: editingEvaluation.keyConcept,
+        relatedConcepts: editingEvaluation.relatedConcepts,
+        globalContext: editingEvaluation.globalContext,
+        chapters: parentUnit?.chapters,
+        existingAssessments: editingEvaluation.assessments,
+        targetCriteria: [critLetter],
+      });
+
+      const updatedEval: OnlineEvaluation = {
+        ...editingEvaluation,
+        assessments: editingEvaluation.assessments.map(a => {
+          const opt = optimized.find(o => o.criterion === a.criterion);
+          return opt || a;
+        }),
+      };
+
+      setEditingEvaluation(updatedEval);
+      alert(`✅ Critère ${critLetter} restructuré et optimisé avec succès par l'IA !\n\nToutes les questions sont bien ordonnées, sans répétitions, au format HTML pro et 100% modifiables ci-dessous.`);
+    } catch (err: any) {
+      alert(`Erreur d'optimisation IA : ${err.message || 'Impossible de restructurer avec l\'IA'}`);
+    } finally {
+      setIsOptimizingEvalWithAi(false);
+    }
+  };
+
+  // Créer une nouvelle évaluation en ligne depuis une unité (avec option de restructuration IA)
   const handleCreateEvaluation = async () => {
     if (!selectedPlanForCreate) {
       alert('Veuillez sélectionner une unité de référence.');
@@ -672,41 +719,64 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const code = `EVAL-${Math.floor(1000 + Math.random() * 9000)}`;
     const targetGrade = selectedPlanForCreate.gradeLevel || currentGrade || 'PEI 1';
 
-    // 🔑 Génération automatique des codes d'accès propres pour chaque élève de la classe (depuis la liste Admin)
-    const count = Math.max(1, parseInt(studentCodesCountToCreate) || 25);
-    const { codes: initialStudentCodes, fromClassRoster, rosterCount } = await generateCleanStudentCodesForEvaluation(
-      code,
-      targetGrade,
-      count
-    );
+    setIsOptimizingEvalWithAi(true);
+    try {
+      // 🔑 Génération automatique des codes d'accès propres pour chaque élève de la classe (depuis la liste Admin)
+      const count = Math.max(1, parseInt(studentCodesCountToCreate) || 25);
+      const { codes: initialStudentCodes, fromClassRoster, rosterCount } = await generateCleanStudentCodesForEvaluation(
+        code,
+        targetGrade,
+        count
+      );
 
-    const newEval = await createOrUpdateEvaluation({
-      accessCode: code,
-      title,
-      subject: selectedPlanForCreate.subject || currentSubject || 'Matière',
-      grade: targetGrade,
-      unitId: selectedPlanForCreate.id,
-      unitTitle: selectedPlanForCreate.title,
-      teacherName: currentUser?.displayName || selectedPlanForCreate.teacherName || 'Enseignant',
-      teacherUsername: currentUser?.username || '',
-      statementOfInquiry: selectedPlanForCreate.statementOfInquiry,
-      globalContext: selectedPlanForCreate.globalContext,
-      keyConcept: selectedPlanForCreate.keyConcept,
-      relatedConcepts: selectedPlanForCreate.relatedConcepts,
-      assessments: chosenAssessments,
-      durationMinutes: parseInt(customDuration) || 0,
-      instructions: customInstructions,
-      status: 'active',
-      studentAccessCodes: initialStudentCodes,
-    });
+      // Si l'option IA est cochée, restructurer et purifier les questions (zéro doublon, format HTML pro)
+      let finalAssessments = chosenAssessments;
+      if (optimizeWithAiOnCreate) {
+        finalAssessments = await optimizeEvaluationWithAI({
+          subject: selectedPlanForCreate.subject || currentSubject || 'Matière',
+          gradeLevel: targetGrade,
+          unitTitle: selectedPlanForCreate.title,
+          statementOfInquiry: selectedPlanForCreate.statementOfInquiry,
+          keyConcept: selectedPlanForCreate.keyConcept,
+          relatedConcepts: selectedPlanForCreate.relatedConcepts,
+          globalContext: selectedPlanForCreate.globalContext,
+          chapters: selectedPlanForCreate.chapters,
+          existingAssessments: chosenAssessments,
+          targetCriteria: selectedCriteriaForCreate,
+          customInstructions: customInstructions,
+        });
+      }
 
-    setEvaluations(prev => [newEval, ...prev]);
-    setShowCreateModal(false);
-    // Ouvrir directement l'éditeur de l'évaluation créée pour voir/modifier/ajouter les questions
-    setEditingEvaluation(JSON.parse(JSON.stringify(newEval)));
-    setEditingCriterionIdx(0);
-    if (fromClassRoster) {
-      alert(`✅ Évaluation créée avec succès !\n\n🔑 Code d'Accès Unique pour toute la classe : ${code}\n🎓 ${rosterCount} élèves de la classe ${targetGrade} ont leur Matricule personnel configuré pour l'accès.\n\nVous pouvez publier le lien unique sur Classroom ou le coller sur les tablettes/ordinateurs.`);
+      const newEval = await createOrUpdateEvaluation({
+        accessCode: code,
+        title,
+        subject: selectedPlanForCreate.subject || currentSubject || 'Matière',
+        grade: targetGrade,
+        unitId: selectedPlanForCreate.id,
+        unitTitle: selectedPlanForCreate.title,
+        teacherName: currentUser?.displayName || selectedPlanForCreate.teacherName || 'Enseignant',
+        teacherUsername: currentUser?.username || '',
+        statementOfInquiry: selectedPlanForCreate.statementOfInquiry,
+        globalContext: selectedPlanForCreate.globalContext,
+        keyConcept: selectedPlanForCreate.keyConcept,
+        relatedConcepts: selectedPlanForCreate.relatedConcepts,
+        assessments: finalAssessments,
+        durationMinutes: parseInt(customDuration) || 0,
+        instructions: customInstructions,
+        status: 'active',
+        studentAccessCodes: initialStudentCodes,
+      });
+
+      setEvaluations(prev => [newEval, ...prev]);
+      setShowCreateModal(false);
+      // Ouvrir directement l'éditeur de l'évaluation créée pour que l'enseignant puisse tout voir et modifier
+      setEditingEvaluation(JSON.parse(JSON.stringify(newEval)));
+      setEditingCriterionIdx(0);
+      alert(`✅ Évaluation créée avec succès !\n\n🔑 Code d'Accès Unique : ${code}\nElle est ouverte ci-dessous dans l'éditeur : chaque question est organisée, claire et 100% modifiable.`);
+    } catch (err: any) {
+      alert(`Erreur création : ${err.message || 'Impossible de créer l\'évaluation'}`);
+    } finally {
+      setIsOptimizingEvalWithAi(false);
     }
   };
 
@@ -1692,18 +1762,51 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </div>
                 </div>
 
+                {/* ✨ Option de Restructuration & Optimisation IA */}
+                <div className="bg-indigo-50/90 border-2 border-indigo-200 rounded-2xl p-3.5 space-y-1.5 shadow-2xs">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={optimizeWithAiOnCreate}
+                      onChange={e => setOptimizeWithAiOnCreate(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 accent-indigo-600 rounded"
+                    />
+                    <div>
+                      <span className="text-xs font-black text-indigo-950 flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-indigo-600" />
+                        Restructurer & Optimiser avec l'IA (Format Pro HTML, 0 doublon)
+                      </span>
+                      <p className="text-[11px] text-indigo-900/80 leading-relaxed mt-0.5">
+                        L'IA analyse l'évaluation existante, <strong>supprime automatiquement les questions répétées ou illogiques</strong>, ordonne les tâches de façon claire et les formate en <strong>HTML soigné</strong>. Chaque question reste 100% modifiable par vous ensuite.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
                 <div className="flex items-center gap-3 pt-2">
                   <button
                     onClick={() => setShowCreateModal(false)}
-                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition"
+                    disabled={isOptimizingEvalWithAi}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition disabled:opacity-50"
                   >
                     Annuler
                   </button>
                   <button
                     onClick={handleCreateEvaluation}
-                    className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-xs shadow transition"
+                    disabled={isOptimizingEvalWithAi}
+                    className="flex-1 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold rounded-xl text-xs shadow transition flex items-center justify-center gap-2 disabled:opacity-60"
                   >
-                    Activer & Générer le code
+                    {isOptimizingEvalWithAi ? (
+                      <>
+                        <Loader2 size={15} className="animate-spin" />
+                        <span>Optimisation IA en cours…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={14} />
+                        <span>Créer & Optimiser l'évaluation</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -2089,18 +2192,41 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           </p>
                         </div>
 
-                        {/* Bouton pour retirer ce critère si plus d'un critère présent */}
-                        {editingEvaluation.assessments.length > 1 && (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {/* Bouton IA pour restructurer et optimiser le critère */}
                           <button
                             type="button"
-                            onClick={() => handleRemoveCriterionFromEvaluation(editingCriterionIdx)}
-                            className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold transition shadow-2xs"
-                            title="Retirer ce critère de l'évaluation"
+                            onClick={handleOptimizeCurrentEvaluationWithAi}
+                            disabled={isOptimizingEvalWithAi}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md transition disabled:opacity-60"
+                            title="Restructurer ce critère avec l'IA : élimine les questions répétées ou illogiques et applique un format HTML pro"
                           >
-                            <Trash2 size={13} />
-                            <span>Retirer le Critère {activeCrit.criterion}</span>
+                            {isOptimizingEvalWithAi ? (
+                              <>
+                                <Loader2 size={13} className="animate-spin" />
+                                <span>Optimisation IA…</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles size={13} className="text-yellow-300" />
+                                <span>✨ Restructurer avec l'IA (Format HTML Pro, 0 doublon)</span>
+                              </>
+                            )}
                           </button>
-                        )}
+
+                          {/* Bouton pour retirer ce critère si plus d'un critère présent */}
+                          {editingEvaluation.assessments.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCriterionFromEvaluation(editingCriterionIdx)}
+                              className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold transition shadow-2xs"
+                              title="Retirer ce critère de l'évaluation"
+                            >
+                              <Trash2 size={13} />
+                              <span>Retirer le Critère {activeCrit.criterion}</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {/* Barres d'ajout rapide par type de question (Exigence du brief) */}

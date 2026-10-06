@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Award, CheckCircle, Clock, FileText, LogOut, Printer, Send, ShieldCheck, User, AlertCircle,
   ChevronRight, Save, Image as ImageIcon, Check, Lock, AlertTriangle, Palette, Compass, Ruler,
-  Square, Circle, Triangle, Edit3, Calculator, Layers, List
+  Square, Circle, Triangle, Edit3, Calculator, Layers, List, Keyboard
 } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation, createOrUpdateEvaluation } from '../services/onlineEvaluationService';
@@ -11,6 +11,8 @@ import EvaluationPrintView from './EvaluationPrintView';
 import GeometricDrawingModal from './GeometricDrawingModal';
 import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './ScientificCalculatorAndMathBar';
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
+import VirtualTabletKeyboard from './VirtualTabletKeyboard';
+import RichExerciseContent from './RichExerciseContent';
 
 interface StudentEvaluationPortalProps {
   initialAccessCode?: string;
@@ -205,7 +207,11 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   const [activeTextareaLabel, setActiveTextareaLabel] = useState<string>('');
   const [studentDisplayModeOverride, setStudentDisplayModeOverride] = useState<'full_page' | 'tabs' | null>(null);
 
-  // 45 min timer
+  // Clavier virtuel tablette (Empêche le clavier natif de masquer la zone de saisie)
+  const [isVirtualKeyboardOpen, setIsVirtualKeyboardOpen] = useState(false);
+  const [isTabletModeNoNative, setIsTabletModeNoNative] = useState(false);
+
+  // 45 min timer (calculé en temps réel pour rester actif durant la mise en veille)
   const [secondsRemaining, setSecondsRemaining] = useState<number>(45 * 60);
   const timerIntervalRef = useRef<any>(null);
 
@@ -280,34 +286,70 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     }
   };
 
-  // Gestion du chronomètre 45 minutes
+  // ⏱️ Gestion du chronomètre réel résistant à la mise en veille de l'ordinateur/tablette
+  // RÈGLE : Si l'ordinateur se met en veille, l'évaluation NE se clôture PAS, mais le temps réel écoulé reste décompté !
   useEffect(() => {
     if (!evaluation || isLockedAlready || existingSubmission) return;
 
-    // Restaurer le temps restant depuis localStorage si session en cours
-    const timerKey = `timer_${evaluation.accessCode}_${studentNumber}`;
-    const savedTime = localStorage.getItem(timerKey);
-    const initialDuration = evaluation.durationMinutes ? evaluation.durationMinutes * 60 : 45 * 60;
-    const startTime = savedTime ? parseInt(savedTime) : initialDuration;
-    setSecondsRemaining(startTime);
+    const timerEndKey = `timer_end_${evaluation.accessCode}_${studentNumber}`;
+    const initialDurationSec = evaluation.durationMinutes ? evaluation.durationMinutes * 60 : 45 * 60;
 
+    let targetEndTime: number;
+    const savedEndTime = localStorage.getItem(timerEndKey);
+    const now = Date.now();
+
+    if (savedEndTime && !isNaN(parseInt(savedEndTime, 10))) {
+      targetEndTime = parseInt(savedEndTime, 10);
+    } else {
+      targetEndTime = now + initialDurationSec * 1000;
+      try {
+        localStorage.setItem(timerEndKey, targetEndTime.toString());
+      } catch {}
+    }
+
+    const calcRemainingSeconds = (): number => {
+      const diffSec = Math.round((targetEndTime - Date.now()) / 1000);
+      return Math.max(0, diffSec);
+    };
+
+    const initialRem = calcRemainingSeconds();
+    setSecondsRemaining(initialRem);
+
+    if (initialRem <= 0) {
+      handleSubmitEvaluation(true, "Temps total imparti écoulé.");
+      return;
+    }
+
+    // Intervalle régulier d'actualisation de la pendule
     timerIntervalRef.current = setInterval(() => {
-      setSecondsRemaining(prev => {
-        if (prev <= 1) {
-          clearInterval(timerIntervalRef.current);
-          handleSubmitEvaluation(true); // Soumission automatique à la fin du temps
-          return 0;
-        }
-        const updated = prev - 1;
-        try {
-          localStorage.setItem(timerKey, updated.toString());
-        } catch {}
-        return updated;
-      });
+      const left = calcRemainingSeconds();
+      setSecondsRemaining(left);
+      if (left <= 0) {
+        clearInterval(timerIntervalRef.current);
+        handleSubmitEvaluation(true, "Temps imparti de l'évaluation écoulé.");
+      }
     }, 1000);
+
+    // ÉCOUTEUR VEILLE / SORTIE DE VEILLE :
+    // Lorsque l'ordinateur se réveille de veille (visibilitychange / focus),
+    // l'épreuve RESTE OUVERTE (ne se clôture pas), et le temps réel est recalculé avec exactitude.
+    const handleSleepWakeSync = () => {
+      const left = calcRemainingSeconds();
+      setSecondsRemaining(left);
+      autoSaveDraftAnswers(answers, drawings);
+      if (left <= 0) {
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+        handleSubmitEvaluation(true, "Temps imparti de l'évaluation écoulé.");
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleSleepWakeSync);
+    window.addEventListener('focus', handleSleepWakeSync);
 
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      document.removeEventListener('visibilitychange', handleSleepWakeSync);
+      window.removeEventListener('focus', handleSleepWakeSync);
     };
   }, [evaluation?.id, isLockedAlready, Boolean(existingSubmission)]);
 
@@ -599,36 +641,77 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     });
   }
 
-  // ── SÉCURITÉ ANTI-FRAUDE : PLEIN ÉCRAN OBLIGATOIRE & INTERDICTION DE QUITTER OU CHANGER D'ONGLET ──
+  // ── SÉCURITÉ DE PASSATION & PROTECTION DU PROCESSUS D'EXAMEN ──
   const isTakingExam = Boolean(evaluation && !existingSubmission && !isLockedAlready);
 
   useEffect(() => {
     handleSubmitRef.current = handleSubmitEvaluation;
   });
 
+  // Gestion de la saisie au clavier virtuel pour tablette
+  const handleVirtualInsertText = (text: string, cursorOffset = 0) => {
+    if (!activeTextareaKey || isLockedAlready) return;
+    const textarea = document.getElementById(`textarea_${activeTextareaKey}`) as HTMLTextAreaElement | null;
+    const current = answers[activeTextareaKey] || '';
+    let updated = current;
+    let newCursorPos = current.length + text.length + cursorOffset;
+
+    if (textarea && typeof textarea.selectionStart === 'number' && typeof textarea.selectionEnd === 'number') {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      updated = current.substring(0, start) + text + current.substring(end);
+      newCursorPos = start + text.length + cursorOffset;
+
+      setTimeout(() => {
+        try {
+          textarea.focus();
+          textarea.setSelectionRange(newCursorPos, newCursorPos);
+        } catch {}
+      }, 10);
+    } else {
+      updated = current + text;
+    }
+
+    handleResponseChange(activeTextareaKey, updated);
+  };
+
+  const handleVirtualBackspace = () => {
+    if (!activeTextareaKey || isLockedAlready) return;
+    const textarea = document.getElementById(`textarea_${activeTextareaKey}`) as HTMLTextAreaElement | null;
+    const current = answers[activeTextareaKey] || '';
+    if (!current) return;
+
+    let updated = current;
+    let newCursorPos = current.length - 1;
+
+    if (textarea && typeof textarea.selectionStart === 'number' && typeof textarea.selectionEnd === 'number') {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      if (start !== end) {
+        updated = current.substring(0, start) + current.substring(end);
+        newCursorPos = start;
+      } else if (start > 0) {
+        updated = current.substring(0, start - 1) + current.substring(end);
+        newCursorPos = start - 1;
+      }
+
+      setTimeout(() => {
+        try {
+          textarea.focus();
+          textarea.setSelectionRange(newCursorPos, newCursorPos);
+        } catch {}
+      }, 10);
+    } else {
+      updated = current.slice(0, -1);
+    }
+
+    handleResponseChange(activeTextareaKey, updated);
+  };
+
   useEffect(() => {
     if (!isTakingExam) return;
 
-    let blurTimer: any = null;
-
-    const triggerAutoTermination = (reason: string) => {
-      if (hasTriggeredViolationRef.current) return;
-      hasTriggeredViolationRef.current = true;
-      setTerminatedReason(reason);
-
-      // Quitter le plein écran si actif
-      try {
-        if (document.fullscreenElement) {
-          document.exitFullscreen?.().catch(() => {});
-        }
-      } catch {}
-
-      if (handleSubmitRef.current) {
-        handleSubmitRef.current(true, reason);
-      }
-    };
-
-    // 1. Détection de sortie du plein écran
+    // 1. Détection de statut plein écran (informatif, n'interrompt pas l'épreuve)
     const handleFullscreenChange = () => {
       const activeFs = Boolean(
         document.fullscreenElement ||
@@ -637,69 +720,43 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         (document as any).msFullscreenElement
       );
       setIsFullscreen(activeFs);
-
-      if (!activeFs && !hasTriggeredViolationRef.current) {
-        triggerAutoTermination("Sortie du mode plein écran détectée. Il est strictement interdit de quitter le plein écran durant l'évaluation.");
-      }
     };
 
-    // 2. Détection de changement d'onglet ou masquage de la page (visibilitychange)
-    const handleVisibilityChange = () => {
-      if (document.hidden && !hasTriggeredViolationRef.current) {
-        triggerAutoTermination("Changement d'onglet ou minimisation de la fenêtre détecté. L'évaluation a été automatiquement clôturée.");
-      }
-    };
-
-    // 3. Détection de perte de focus (ouverture d'une autre application ou onglet)
-    const handleWindowBlur = () => {
-      blurTimer = setTimeout(() => {
-        if ((document.hidden || !document.hasFocus()) && !hasTriggeredViolationRef.current) {
-          triggerAutoTermination("Perte de focus de la fenêtre d'examen détectée (tentative d'ouverture d'un autre programme ou onglet).");
-        }
-      }, 250);
-    };
-
-    // 4. Bloquer le clic droit (menu contextuel)
+    // 2. Bloquer le clic droit (menu contextuel)
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       return false;
     };
 
-    // 5. Bloquer les raccourcis clavier de navigation et d'inspection
+    // 3. Bloquer les raccourcis clavier de navigation accidentelle
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         e.key === 'F11' ||
         e.key === 'F12' ||
-        (e.altKey && (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) ||
-        (e.ctrlKey && (e.key === 't' || e.key === 'T' || e.key === 'n' || e.key === 'N' || e.key === 'w' || e.key === 'W' || e.key === 'r' || e.key === 'R')) ||
-        (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'C' || e.key === 'c' || e.key === 'J' || e.key === 'j'))
+        (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) ||
+        (e.ctrlKey && (e.key === 'r' || e.key === 'R'))
       ) {
         e.preventDefault();
         e.stopPropagation();
       }
     };
 
-    // 6. Alerte en cas de tentative de rechargement ou de fermeture de la page
+    // 4. Alerte en cas de fermeture volontaire de l'onglet
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
-      e.returnValue = "L'évaluation est en cours. Toute sortie clôturera automatiquement votre copie.";
+      e.returnValue = "L'évaluation est en cours. Vos réponses ont été sauvegardées.";
       return e.returnValue;
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
-      if (blurTimer) clearTimeout(blurTimer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -1283,32 +1340,24 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col select-none">
-      {/* ⚠️ MODALE DE FORÇAGE PLEIN ÉCRAN SI DÉSACTIVÉ */}
+      {/* ℹ️ BANNIÈRE DOUCE PLEIN ÉCRAN SI DÉSACTIVÉ (NON BLOQUANTE) */}
       {!isFullscreen && isTakingExam && (
-        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full text-center space-y-4 shadow-2xl border border-purple-200">
-            <div className="w-16 h-16 bg-purple-100 text-purple-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
-              <ShieldCheck size={36} />
-            </div>
-            <h3 className="text-lg font-black text-slate-900">Mode Plein Écran Obligatoire</h3>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Pour des raisons d'intégrité académique, cette épreuve doit impérativement être passée en <strong>plein écran</strong>.
-              <br /><br />
-              <strong className="text-rose-600">Attention :</strong> Si vous quittez le plein écran ou ouvrez un autre onglet, l'examen sera <strong>immédiatement clôturé</strong> pour vous.
-            </p>
-            <button
-              type="button"
-              onClick={enterFullscreen}
-              className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-lg flex items-center justify-center gap-2"
-            >
-              <span>Activer le plein écran pour composer</span>
-              <ChevronRight size={18} />
-            </button>
+        <div className="bg-purple-900 text-white px-4 py-2 flex items-center justify-between gap-3 text-xs shadow-md">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={16} className="text-purple-300 flex-shrink-0" />
+            <span>Plein écran recommandé pour un meilleur confort d'examen sur tablette et ordinateur.</span>
           </div>
+          <button
+            type="button"
+            onClick={enterFullscreen}
+            className="px-3 py-1 bg-white text-purple-900 rounded-lg font-bold hover:bg-purple-50 transition shadow-2xs"
+          >
+            Activer le plein écran
+          </button>
         </div>
       )}
 
-      {/* ── TOP BAR STICKY AVEC CHRONO, CALCULATRICE & PROGRESSION ── */}
+      {/* ── TOP BAR STICKY AVEC CHRONO, CALCULATRICE, CLAVIER & PROGRESSION ── */}
       <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
@@ -1324,6 +1373,21 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           </div>
 
           <div className="flex items-center gap-2 sm:gap-2.5 flex-shrink-0 flex-wrap">
+            {/* ⌨️ BOUTON CLAVIER TABLETTE VIRTUEL */}
+            <button
+              type="button"
+              onClick={() => setIsVirtualKeyboardOpen(!isVirtualKeyboardOpen)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black shadow-xs transition ${
+                isVirtualKeyboardOpen
+                  ? 'bg-purple-700 text-white ring-2 ring-purple-300'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+              }`}
+              title="Ouvrir le clavier tablette intégré (évite que le clavier de l'écran ne masque vos réponses)"
+            >
+              <Keyboard size={15} />
+              <span>{isVirtualKeyboardOpen ? 'Clavier Actif' : 'Clavier Tablette'}</span>
+            </button>
+
             {/* 🧮 BOUTON CALCULATRICE SCIENTIFIQUE TOUJOURS ACCESSIBLE */}
             {showCalculator && (
               <button
@@ -1396,7 +1460,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       {/* ── CORPS DE L'ÉVALUATION BIEN STRUCTURÉ ── */}
       <main className={`max-w-5xl mx-auto w-full p-4 sm:p-6 flex-1 flex flex-col ${
         spacingMode === 'compact' ? 'space-y-4' : spacingMode === 'spacious' ? 'space-y-8' : 'space-y-6'
-      }`}>
+      } ${isVirtualKeyboardOpen ? 'pb-80 sm:pb-96' : 'pb-16'}`}>
         {/* 1. EN-TÊTE OFFICIEL DE L'ÉPREUVE & CONSIGNES GÉNÉRALES */}
         {headerStyle === 'official_ib' ? (
           <div className="bg-white rounded-3xl border-2 border-slate-300 shadow-xs overflow-hidden">
@@ -1658,8 +1722,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
                         {/* Énoncé global / Contexte de l'exercice */}
                         {ex.content && (
-                          <div className="bg-slate-50/90 p-4 rounded-2xl text-sm text-slate-800 whitespace-pre-wrap leading-relaxed border border-slate-200/80 font-medium">
-                            {ex.content}
+                          <div className="bg-slate-50/90 p-4 rounded-2xl border border-slate-200/80">
+                            <RichExerciseContent content={ex.content} />
                           </div>
                         )}
 
@@ -1691,9 +1755,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                                       <span className="font-black text-sm text-white bg-purple-700 px-2.5 py-0.5 rounded-lg flex-shrink-0 shadow-2xs">
                                         {sub.label || `${sIdx + 1})`}
                                       </span>
-                                      <h5 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
-                                        {sub.content || `Sous-question ${sIdx + 1}`}
-                                      </h5>
+                                      <div className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
+                                        <RichExerciseContent content={sub.content || `Sous-question ${sIdx + 1}`} />
+                                      </div>
                                     </div>
                                     <span className="text-[11px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200 flex-shrink-0">
                                       {subQType === 'multiple_choice' ? '☑️ QCM' : subQType === 'true_false' ? '⚖️ Vrai/Faux' : '📝 Rédaction'}
@@ -1781,6 +1845,11 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                                             setActiveTextareaLabel(`Ex. ${exerciseNum} - ${sub.label || sIdx + 1}`);
                                             setIsCalculatorOpen(true);
                                           }}
+                                          onOpenVirtualKeyboard={() => {
+                                            setActiveTextareaKey(subKey);
+                                            setActiveTextareaLabel(`Ex. ${exerciseNum} - ${sub.label || sIdx + 1}`);
+                                            setIsVirtualKeyboardOpen(true);
+                                          }}
                                           onOpenDrawingStudio={() => {
                                             setDrawingModalTarget(subKey);
                                             setDrawingModalLabel(`Exercice ${exerciseNum} - ${sub.label}`);
@@ -1793,9 +1862,14 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                                       <textarea
                                         id={`textarea_${subKey}`}
                                         value={subAnswer}
+                                        inputMode={isTabletModeNoNative ? 'none' : undefined}
                                         onFocus={() => {
                                           setActiveTextareaKey(subKey);
                                           setActiveTextareaLabel(`Ex. ${exerciseNum} - ${sub.label || sIdx + 1}`);
+                                          setTimeout(() => {
+                                            const el = document.getElementById(`textarea_${subKey}`);
+                                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                          }, 80);
                                         }}
                                         onChange={e => handleResponseChange(subKey, e.target.value)}
                                         placeholder={`Rédigez votre réponse ou vos calculs pour la question ${sub.label || sIdx + 1}...`}
@@ -1933,6 +2007,11 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                                       setActiveTextareaLabel(`Exercice ${exerciseNum}`);
                                       setIsCalculatorOpen(true);
                                     }}
+                                    onOpenVirtualKeyboard={() => {
+                                      setActiveTextareaKey(`${activeAssessment.criterion}_${exIdx}`);
+                                      setActiveTextareaLabel(`Exercice ${exerciseNum}`);
+                                      setIsVirtualKeyboardOpen(true);
+                                    }}
                                     onOpenDrawingStudio={() => {
                                       setDrawingModalTarget(`${activeAssessment.criterion}_${exIdx}`);
                                       setDrawingModalLabel(`Exercice ${exerciseNum}`);
@@ -1944,9 +2023,14 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                                 <textarea
                                   id={`textarea_${activeAssessment.criterion}_${exIdx}`}
                                   value={answers[`${activeAssessment.criterion}_${exIdx}`] || ''}
+                                  inputMode={isTabletModeNoNative ? 'none' : undefined}
                                   onFocus={() => {
                                     setActiveTextareaKey(`${activeAssessment.criterion}_${exIdx}`);
                                     setActiveTextareaLabel(`Exercice ${exerciseNum}`);
+                                    setTimeout(() => {
+                                      const el = document.getElementById(`textarea_${activeAssessment.criterion}_${exIdx}`);
+                                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    }, 80);
                                   }}
                                   onChange={e => handleResponseChange(`${activeAssessment.criterion}_${exIdx}`, e.target.value)}
                                   placeholder="Écrivez directement ici votre réponse rédigée, vos formules et vos calculs..."
@@ -2131,6 +2215,17 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           </div>
         </div>
       )}
+      {/* ⌨️ CLAVIER VIRTUEL TABLETTE INTÉGRÉ */}
+      <VirtualTabletKeyboard
+        isOpen={isVirtualKeyboardOpen}
+        onClose={() => setIsVirtualKeyboardOpen(false)}
+        activeInputKey={activeTextareaKey}
+        activeInputLabel={activeTextareaLabel}
+        onInsertText={handleVirtualInsertText}
+        onBackspace={handleVirtualBackspace}
+        isTabletModeNoNativeKeyboard={isTabletModeNoNative}
+        onToggleTabletMode={setIsTabletModeNoNative}
+      />
     </div>
   );
 };

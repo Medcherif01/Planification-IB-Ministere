@@ -540,6 +540,7 @@ export interface IndividualAccessCode {
   code: string; // e.g. "EVAL-8492-01" ou token unique
   studentName?: string;
   studentNumber?: string;
+  submissionId?: string;
   isUsed: boolean;
   usedAt?: string;
   allowedRetake?: boolean; // L'enseignant a réouvert l'accès pour un nouvel essai

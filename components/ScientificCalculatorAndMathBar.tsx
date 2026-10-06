@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calculator, X, Delete, Check, Copy, CornerDownLeft, Sparkles } from 'lucide-react';
+import { Calculator, X, Delete, Check, Copy, CornerDownLeft, Sparkles, Keyboard } from 'lucide-react';
 
 // ─── Groupes de symboles mathématiques, parenthèses, accolades, crochets ─────
 export interface MathSymbolItem {
@@ -477,6 +477,7 @@ interface MathSymbolsAndBracketsToolbarProps {
   isArtSubject?: boolean;
   showCalculatorButton?: boolean;
   compact?: boolean;
+  onOpenVirtualKeyboard?: () => void;
 }
 
 export const MathSymbolsAndBracketsToolbar: React.FC<MathSymbolsAndBracketsToolbarProps> = ({
@@ -487,6 +488,7 @@ export const MathSymbolsAndBracketsToolbar: React.FC<MathSymbolsAndBracketsToolb
   isArtSubject = false,
   showCalculatorButton = true,
   compact = false,
+  onOpenVirtualKeyboard,
 }) => {
   const [activeGroup, setActiveGroup] = useState<'all' | 'brackets' | 'algebra' | 'relations' | 'geometry'>('all');
 
@@ -558,6 +560,18 @@ export const MathSymbolsAndBracketsToolbar: React.FC<MathSymbolsAndBracketsToolb
         </div>
 
         <div className="flex items-center gap-1.5 ml-auto">
+          {onOpenVirtualKeyboard && (
+            <button
+              type="button"
+              onClick={onOpenVirtualKeyboard}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs shadow-xs transition"
+              title="Ouvrir le clavier virtuel pour tablette (évite que le clavier système masque l'écran)"
+            >
+              <Keyboard size={14} />
+              <span>Clavier</span>
+            </button>
+          )}
+
           {showCalculatorButton && onOpenCalculator && (
             <button
               type="button"

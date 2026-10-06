@@ -11,6 +11,8 @@ import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
 import { createOrUpdateEvaluation } from '../services/onlineEvaluationService';
 import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import { generateCleanStudentCodesForEvaluation } from '../services/studentRosterService';
+import RichExerciseContent from './RichExerciseContent';
+import { optimizeEvaluationWithAI } from '../services/evaluationAiOptimizerService';
 
 interface AssessmentViewerModalProps {
   isOpen: boolean;
@@ -40,6 +42,8 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
   const [publishedRosterCount, setPublishedRosterCount] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isOptimizingAi, setIsOptimizingAi] = useState(false);
+  const [previewHtmlExerciseIdx, setPreviewHtmlExerciseIdx] = useState<number | null>(null);
   const [showRubric, setShowRubric] = useState(false);
 
   // Modal de génération de question avec l'IA (soit pour ajouter, soit pour remplacer une question précise)
@@ -76,10 +80,90 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
     }
   };
 
+  // Optimiser et restructurer l'évaluation avec l'IA (supprime les répétitions, ordonne et formate en HTML pro)
+  const handleOptimizeWithAi = async (criterionOnly = false) => {
+    if (!plan || assessments.length === 0) return;
+    const targetCriteria = criterionOnly && active ? [active.criterion] : undefined;
+    const confirmMsg = criterionOnly && active
+      ? (isEn
+          ? `Do you want AI to restructure and optimize Criterion ${active.criterion}?\n\n• Removes duplicate or redundant questions\n• Fixes or removes illogical questions\n• Orders questions progressively\n• Formats clearly in professional HTML\n\nYou can still edit each question afterwards.`
+          : `Voulez-vous que l'IA restructure et optimise le Critère ${active.criterion} ?\n\n• Élimination des questions répétées ou redondantes\n• Correction des questions illogiques ou confuses\n• Ordonnancement logique et progressif\n• Mise en forme HTML professionnelle et claire\n\nToutes les questions resteront 100% modifiables ensuite.`)
+      : (isEn
+          ? `Do you want AI to restructure and optimize all criteria of this evaluation?\n\n• Removes duplicate or redundant questions\n• Fixes or removes illogical questions\n• Orders questions progressively\n• Formats clearly in professional HTML\n\nYou can still edit each question afterwards.`
+          : `Voulez-vous que l'IA restructure et optimise toute l'évaluation de cette unité ?\n\n• Élimination de toutes les questions répétées ou redondantes\n• Correction des questions illogiques ou confuses\n• Ordonnancement logique et progressif\n• Mise en forme HTML professionnelle et claire\n\nToutes les questions resteront 100% modifiables ensuite.`);
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsOptimizingAi(true);
+    try {
+      const optimized = await optimizeEvaluationWithAI({
+        subject: plan.subject || '',
+        gradeLevel: plan.gradeLevel || '',
+        unitTitle: plan.title,
+        statementOfInquiry: plan.statementOfInquiry,
+        keyConcept: plan.keyConcept,
+        relatedConcepts: plan.relatedConcepts,
+        globalContext: plan.globalContext,
+        chapters: plan.chapters,
+        existingAssessments: assessments,
+        targetCriteria,
+      });
+
+      let updatedAssessments: AssessmentData[];
+      if (criterionOnly && active) {
+        updatedAssessments = assessments.map(a => {
+          const opt = optimized.find(o => o.criterion === a.criterion);
+          return opt || a;
+        });
+      } else {
+        updatedAssessments = optimized;
+      }
+
+      setAssessments(updatedAssessments);
+      persistChanges(updatedAssessments);
+      alert(isEn
+        ? '✅ Assessment successfully restructured and optimized by AI!\n\nAll questions are well organized, non-repeating, formatted in pro HTML and fully editable.'
+        : '✅ Évaluation restructurée et optimisée par l\'IA avec succès !\n\nToutes les questions sont bien organisées, sans répétitions, au format HTML pro et 100% modifiables.');
+    } catch (err: any) {
+      alert(`Erreur d'optimisation IA : ${err.message || 'Impossible de restructurer avec l\'IA'}`);
+    } finally {
+      setIsOptimizingAi(false);
+    }
+  };
+
   const handlePublishOnline = async () => {
     if (!plan || assessments.length === 0) return;
     setIsPublishing(true);
     try {
+      let finalAssessments = assessments;
+
+      // Proposer ou exécuter l'optimisation IA pour que l'évaluation en ligne soit transformée en version propre, sans doublons et modifiable
+      const shouldOptimize = window.confirm(
+        isEn
+          ? "Do you want AI to optimize and restructure the evaluation before launching online?\n\n(Removes duplicates, fixes illogical questions, orders questions progressively, and formats in professional editable HTML)"
+          : "Voulez-vous que l'IA restructure et optimise l'évaluation avant de l'activer en ligne ?\n\n(Élimine les répétitions, supprime les questions illogiques, ordonne les questions et formate en HTML professionnel modifiable)"
+      );
+
+      if (shouldOptimize) {
+        try {
+          finalAssessments = await optimizeEvaluationWithAI({
+            subject: plan.subject || '',
+            gradeLevel: plan.gradeLevel || '',
+            unitTitle: plan.title,
+            statementOfInquiry: plan.statementOfInquiry,
+            keyConcept: plan.keyConcept,
+            relatedConcepts: plan.relatedConcepts,
+            globalContext: plan.globalContext,
+            chapters: plan.chapters,
+            existingAssessments: assessments,
+          });
+          setAssessments(finalAssessments);
+          persistChanges(finalAssessments);
+        } catch (optErr) {
+          console.warn("Optimisation IA ignorée :", optErr);
+        }
+      }
+
       const accessCode = `EVAL-${Math.floor(1000 + Math.random() * 9000)}`;
       const { codes, rosterCount } = await generateCleanStudentCodesForEvaluation(
         accessCode,
@@ -98,7 +182,7 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
         globalContext: plan.globalContext,
         keyConcept: plan.keyConcept,
         relatedConcepts: plan.relatedConcepts,
-        assessments: assessments,
+        assessments: finalAssessments,
         durationMinutes: 45,
         status: 'active',
         studentAccessCodes: codes,
@@ -432,6 +516,16 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
                 </button>
 
                 <button
+                  onClick={() => handleOptimizeWithAi(false)}
+                  disabled={isOptimizingAi}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow transition disabled:opacity-50"
+                  title="Restructurer et optimiser l'évaluation avec l'IA : supprime les répétitions ou questions illogiques, organise logiquement et formate en HTML pro modifiable"
+                >
+                  <Sparkles size={14} className={isOptimizingAi ? 'animate-spin' : 'text-yellow-300'} />
+                  <span>{isOptimizingAi ? (isEn ? 'Optimizing...' : 'Optimisation...') : (isEn ? '✨ AI Restructure & Clean' : '✨ Restructurer & Optimiser IA')}</span>
+                </button>
+
+                <button
                   onClick={handlePublishOnline}
                   disabled={isPublishing}
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-amber-950 rounded-xl text-xs font-black shadow transition disabled:opacity-50"
@@ -655,6 +749,17 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
+                      onClick={() => handleOptimizeWithAi(true)}
+                      disabled={isOptimizingAi}
+                      className="flex items-center gap-1.5 px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-300 rounded-xl font-bold text-xs shadow-2xs transition disabled:opacity-50"
+                      title={`Restructurer et éliminer les doublons pour le Critère ${active.criterion} avec l'IA`}
+                    >
+                      <Sparkles size={14} className={isOptimizingAi ? 'animate-spin text-purple-600' : 'text-purple-600'} />
+                      <span>{isOptimizingAi ? 'Optimisation...' : `✨ Optimiser Critère ${active.criterion} (IA)`}</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => openAiGeneratorForQuestion(null)}
                       className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs shadow-sm transition"
                     >
@@ -849,9 +954,19 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
 
                             {/* Énoncé / Consigne */}
                             <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                                {isEn ? 'Question Prompt / Instructions' : 'Énoncé / Consigne de la question'}
-                              </label>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase">
+                                  {isEn ? 'Question Prompt / Instructions' : 'Énoncé / Consigne de la question (texte ou HTML)'}
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewHtmlExerciseIdx(previewHtmlExerciseIdx === ei ? null : ei)}
+                                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                                >
+                                  <Eye size={12} />
+                                  <span>{previewHtmlExerciseIdx === ei ? (isEn ? 'Hide preview' : 'Masquer aperçu') : (isEn ? '👁️ HTML Preview' : '👁️ Aperçu rendu élève')}</span>
+                                </button>
+                              </div>
                               <textarea
                                 value={ex.content}
                                 onChange={e => updateExerciseFields(ei, { content: e.target.value })}
@@ -859,6 +974,14 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
                                 className="w-full border border-slate-300 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 bg-slate-50/60 focus:bg-white outline-none leading-relaxed"
                                 placeholder={isEn ? 'Write or edit the question text here...' : 'Rédigez ou modifiez l\'énoncé de la question ici...'}
                               />
+                              {previewHtmlExerciseIdx === ei && ex.content && (
+                                <div className="mt-2 p-3 bg-purple-50/60 rounded-xl border border-purple-200">
+                                  <span className="text-[10px] font-bold text-purple-800 uppercase block mb-1">
+                                    {isEn ? 'Student Live Rendering Preview:' : 'Aperçu rendu élève :'}
+                                  </span>
+                                  <RichExerciseContent content={ex.content} />
+                                </div>
+                              )}
                             </div>
 
                             {/* CAS QCM : Édition directe des propositions + sélection de la bonne réponse */}
