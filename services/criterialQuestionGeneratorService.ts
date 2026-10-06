@@ -1,5 +1,4 @@
 import { AssessmentExercise, AssessmentSubQuestion } from '../types';
-import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
 
 export interface GenerateQuestionOptions {
   subject: string;
@@ -271,34 +270,18 @@ Schéma JSON attendu :
     const cleaned = cleanJson(rawText);
     const parsed = JSON.parse(cleaned);
 
-    const cleanTitle = stripHtmlTags(parsed.title) || defaultTitle;
-    const cleanContent = stripHtmlTags(parsed.content) || (isEn ? 'Complete the task described above.' : 'Répondez à la consigne ci-dessus.');
-
-    // Détection de schéma ou document éducatif si pertinent
-    let imageUrl = parsed.imageUrl || '';
-    let imageCaption = parsed.imageCaption || '';
-    if (!imageUrl) {
-      const detected = detectAndAttachEducationalDiagram(options.subject, options.unitTitle || '', cleanTitle, cleanContent);
-      if (detected) {
-        imageUrl = detected.imageUrl;
-        imageCaption = detected.imageCaption;
-      }
-    }
-
     const exercise: AssessmentExercise = {
-      title: cleanTitle,
-      content: cleanContent,
-      imageUrl: imageUrl || undefined,
-      imageCaption: imageCaption || undefined,
+      title: parsed.title || defaultTitle,
+      content: parsed.content || (isEn ? 'Complete the task described above.' : 'Répondez à la consigne ci-dessus.'),
       criterionReference: isEn
         ? `Criterion ${options.criterion} : strand ${options.strandIndex}`
         : `Critère ${options.criterion} : ${options.strandIndex}.`,
       strandIndex: options.strandIndex === 'all' ? 'i' : options.strandIndex,
       strandText: options.strandText || (isEn ? `Criterion ${options.criterion} skill` : `Compétence ${options.criterion}`),
       type: parsed.type === 'multiple_choice' || parsed.type === 'true_false' ? parsed.type : 'open',
-      options: Array.isArray(parsed.options) && parsed.options.length > 0 ? parsed.options.map((o: any) => stripHtmlTags(String(o))) : undefined,
-      correctAnswer: parsed.correctAnswer ? stripHtmlTags(String(parsed.correctAnswer)) : undefined,
-      answer: parsed.answer ? stripHtmlTags(String(parsed.answer)) : undefined,
+      options: Array.isArray(parsed.options) && parsed.options.length > 0 ? parsed.options : undefined,
+      correctAnswer: parsed.correctAnswer || undefined,
+      answer: parsed.answer || undefined,
       workspaceNeeded: options.questionType === 'geometry' || options.questionType === 'art',
     };
 
@@ -306,12 +289,12 @@ Schéma JSON attendu :
       exercise.subQuestions = parsed.subQuestions.map((sq: any, i: number) => ({
         id: sq.id || `sub_${i + 1}`,
         label: sq.label || `${i + 1})`,
-        content: stripHtmlTags(sq.content) || '',
+        content: sq.content || '',
         strandIndex: sq.strandIndex || ['i', 'ii', 'iii', 'iv'][i % 4],
         strandText: sq.strandText || options.strandText || '',
         type: sq.type || 'open',
-        options: Array.isArray(sq.options) ? sq.options.map((o: any) => stripHtmlTags(String(o))) : undefined,
-        correctAnswer: sq.correctAnswer ? stripHtmlTags(String(sq.correctAnswer)) : undefined,
+        options: sq.options,
+        correctAnswer: sq.correctAnswer,
       }));
     }
 
