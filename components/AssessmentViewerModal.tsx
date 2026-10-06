@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X, Eye, Edit3, Save, CheckCircle, ChevronLeft, ChevronRight,
   Printer, Send, Copy, Check, Sparkles, Plus, Trash2, HelpCircle,
-  ChevronDown, ChevronUp
+  ChevronDown, ChevronUp, Calculator
 } from 'lucide-react';
 import { UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, OnlineEvaluation } from '../types';
 import EvaluationPrintView from './EvaluationPrintView';
@@ -45,6 +45,7 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
   const [isOptimizingAi, setIsOptimizingAi] = useState(false);
   const [previewHtmlExerciseIdx, setPreviewHtmlExerciseIdx] = useState<number | null>(null);
   const [showRubric, setShowRubric] = useState(false);
+  const [allowCalculatorForOnline, setAllowCalculatorForOnline] = useState(true);
 
   // Modal de génération de question avec l'IA (soit pour ajouter, soit pour remplacer une question précise)
   const [showAiQuestionModal, setShowAiQuestionModal] = useState(false);
@@ -186,6 +187,10 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
         durationMinutes: 45,
         status: 'active',
         studentAccessCodes: codes,
+        allowCalculator: allowCalculatorForOnline,
+        layoutConfig: {
+          showCalculator: allowCalculatorForOnline,
+        },
       });
       setPublishedCode(newEval.accessCode);
       setPublishedRosterCount(rosterCount);
@@ -523,6 +528,20 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
                 >
                   <Sparkles size={14} className={isOptimizingAi ? 'animate-spin' : 'text-yellow-300'} />
                   <span>{isOptimizingAi ? (isEn ? 'Optimizing...' : 'Optimisation...') : (isEn ? '✨ AI Restructure & Clean' : '✨ Restructurer & Optimiser IA')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAllowCalculatorForOnline(!allowCalculatorForOnline)}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition border ${
+                    allowCalculatorForOnline
+                      ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/40 hover:bg-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-200 border-rose-400/40 hover:bg-rose-500/30'
+                  }`}
+                  title={isEn ? "Toggle scientific calculator authorization for students" : "Autoriser ou interdire la calculatrice scientifique pour les élèves"}
+                >
+                  <Calculator size={13} />
+                  <span>{allowCalculatorForOnline ? (isEn ? '🧮 Calc: Allowed' : '🧮 Calculatrice : Oui') : (isEn ? '🚫 Calc: Forbidden' : '🚫 Calculatrice : Non')}</span>
                 </button>
 
                 <button

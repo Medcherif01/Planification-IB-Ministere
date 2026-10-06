@@ -76,13 +76,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 1. GET Requests
       if (req.method === 'GET') {
-        // Obtenir une soumission par accessCode + studentNumber
+        // Obtenir une soumission par accessCode + studentNumber (ou evalId + studentNumber)
         if (action === 'student_submission') {
-          const { accessCode, studentNumber } = req.query;
-          const sub = inMemorySubmissions.find(
-            s => s.accessCode?.trim().toUpperCase() === String(accessCode).trim().toUpperCase() &&
-                 s.studentNumber?.trim().toLowerCase() === String(studentNumber).trim().toLowerCase()
-          );
+          const { accessCode, studentNumber, evalId } = req.query;
+          const targetCode = String(accessCode || '').trim().toUpperCase();
+          const targetNum = String(studentNumber || '').trim().toLowerCase();
+          const targetEvalId = String(evalId || '').trim();
+
+          const sub = inMemorySubmissions.find(s => {
+            const matchesNum = s.studentNumber?.trim().toLowerCase() === targetNum;
+            if (!matchesNum) return false;
+            if (targetCode && s.accessCode?.trim().toUpperCase() === targetCode) return true;
+            if (targetEvalId && s.evaluationId === targetEvalId) return true;
+            return false;
+          });
           return res.status(200).json({ submission: sub || null });
         }
 
@@ -284,13 +291,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 1. GET Requests
     if (req.method === 'GET') {
       if (action === 'student_submission') {
-        const { accessCode, studentNumber } = req.query;
+        const { accessCode, studentNumber, evalId } = req.query;
         const cleanNum = String(studentNumber || '').trim();
         const escapedNum = cleanNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const sub = await subCol.findOne({
-          accessCode: String(accessCode || '').trim().toUpperCase(),
+        const cleanCode = String(accessCode || '').trim().toUpperCase();
+        const targetEvalId = String(evalId || '').trim();
+
+        const filter: any = {
           studentNumber: { $regex: new RegExp(`^${escapedNum}$`, 'i') },
-        });
+        };
+        if (targetEvalId && cleanCode) {
+          filter.$or = [{ accessCode: cleanCode }, { evaluationId: targetEvalId }];
+        } else if (cleanCode) {
+          filter.accessCode = cleanCode;
+        } else if (targetEvalId) {
+          filter.evaluationId = targetEvalId;
+        }
+
+        const sub = await subCol.findOne(filter);
         return res.status(200).json({ submission: sub || null });
       }
 

@@ -582,6 +582,7 @@ export interface OnlineEvaluation {
   allowStudentFeedbackView?: boolean;
   studentAccessCodes?: IndividualAccessCode[]; // Codes individuels à usage unique par élève
   layoutConfig?: EvaluationLayoutConfig; // Organisation et mise en page personnalisée par l'enseignant
+  allowCalculator?: boolean; // L'enseignant autorise ou interdit la calculatrice pour cette épreuve
 }
 
 export interface StudentAnswer {

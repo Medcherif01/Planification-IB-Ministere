@@ -483,35 +483,47 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setTerminatedReason(null);
 
       // Vérifier sur le serveur si une copie existe actuellement pour cet élève
-      // (Si l'Admin a supprimé la copie de l'élève, prevSub sera null !)
-      const prevSub = await getStudentSubmission(evalData.accessCode, cleanNum);
+      // (Si l'enseignant a supprimé la copie de l'élève, prevSub sera null !)
+      const prevSub = await getStudentSubmission(evalData.accessCode, cleanNum, evalData.id);
       const isRetakeAuthorized = Boolean(matchedStudentRecord && matchedStudentRecord.allowedRetake);
+      const isRecordUsed = Boolean(matchedStudentRecord && matchedStudentRecord.isUsed && !matchedStudentRecord.allowedRetake);
+      const isLocallyLocked = localStorage.getItem(`ib_locked_${evalData.accessCode}_${cleanNum}`) === 'true' ||
+                              localStorage.getItem(`ib_locked_${cleanCode}_${cleanNum}`) === 'true' ||
+                              localStorage.getItem(`ib_locked_${evalData.id}_${cleanNum}`) === 'true';
 
-      // Si aucune copie n'existe sur le serveur (jamais remise ou supprimée par l'Admin) OU si un 2e essai est autorisé :
-      // on lève tout verrou local résiduel pour permettre à l'élève de refaire l'évaluation !
+      // RÈGLE STRICTE DU BRIEF : Une fois qu'un élève a validé ou que sa copie a été envoyée (clôturée),
+      // il ne pourra plus JAMAIS avoir accès à cette épreuve, SAUF si l'enseignant supprime sa copie envoyée
+      // ou lui accorde un nouveau matricule.
+      if ((prevSub || isRecordUsed || isLocallyLocked) && !isRetakeAuthorized) {
+        setLoginError(
+          `❌ Accès refusé : Votre copie pour l'évaluation "${evalData.title}" a déjà été transmise et clôturée.\n\nVous ne pouvez plus accéder à cette épreuve. Seul votre enseignant peut réinitialiser votre accès en supprimant votre copie envoyée ou en vous accordant un nouveau matricule.`
+        );
+        setIsValidating(false);
+        return;
+      }
+
+      // Si aucune copie n'existe sur le serveur (jamais remise ou supprimée par l'enseignant) OU si un nouveau tour est autorisé :
+      // on lève tout verrou local résiduel pour permettre à l'élève de composer une nouvelle copie !
       if (!prevSub || isRetakeAuthorized) {
         const lockKey1 = `ib_locked_${evalData.accessCode}_${cleanNum}`;
         const lockKey2 = `ib_locked_${cleanCode}_${cleanNum}`;
-        const wasLocallyLocked = localStorage.getItem(lockKey1) === 'true' || localStorage.getItem(lockKey2) === 'true';
+        const lockKey3 = `ib_locked_${evalData.id}_${cleanNum}`;
+        const wasLocallyLocked = localStorage.getItem(lockKey1) === 'true' || localStorage.getItem(lockKey2) === 'true' || localStorage.getItem(lockKey3) === 'true';
 
         localStorage.removeItem(lockKey1);
         localStorage.removeItem(lockKey2);
+        localStorage.removeItem(lockKey3);
 
-        // Si l'élève avait déjà remis une copie et que l'Admin l'a supprimée (ou réouverte), repartir sur une copie neuve
+        // Si l'élève avait déjà remis une copie et que l'enseignant l'a supprimée (ou réouverte), repartir sur une copie neuve
         if (wasLocallyLocked || isRetakeAuthorized) {
           localStorage.removeItem(`draft_eval_${evalData.accessCode}_${cleanNum}`);
           localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
+          localStorage.removeItem(`draft_eval_${evalData.id}_${cleanNum}`);
           localStorage.removeItem(`timer_${evalData.accessCode}_${cleanNum}`);
+          localStorage.removeItem(`timer_end_${evalData.accessCode}_${cleanNum}`);
           setAnswers({});
           setDrawings({});
         }
-      } else {
-        // Une copie valide existe sur le serveur et n'a pas été supprimée par l'Admin
-        setEvaluation(evalData);
-        setExistingSubmission(prevSub);
-        setIsLockedAlready(true);
-        setIsValidating(false);
-        return;
       }
 
       // 1. Sauvegarder l'identité permanente de l'élève
@@ -739,8 +751,15 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     // 1. Verrouillage local immédiat
     try {
       localStorage.setItem(`ib_locked_${accessCode}_${cleanNum}`, 'true');
+      if (payload.evaluationId) {
+        localStorage.setItem(`ib_locked_${payload.evaluationId}_${cleanNum}`, 'true');
+      }
       localStorage.removeItem(`draft_eval_${accessCode}_${cleanNum}`);
+      if (payload.evaluationId) {
+        localStorage.removeItem(`draft_eval_${payload.evaluationId}_${cleanNum}`);
+      }
       localStorage.removeItem(`timer_${accessCode}_${cleanNum}`);
+      localStorage.removeItem(`timer_end_${accessCode}_${cleanNum}`);
     } catch {}
 
     const fullPayload: StudentSubmission = {
@@ -861,10 +880,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       if (activeFs) {
         fullscreenEngagedRef.current = true;
       } else {
-        // SORTIE DU PLEIN ÉCRAN DÉTECTÉE
+        // SORTIE DU PLEIN ÉCRAN DÉTECTÉE -> Clôture et envoi automatiques immédiats
         const elapsedSinceStart = Date.now() - examStartTimeRef.current;
         if (
-          (fullscreenEngagedRef.current || elapsedSinceStart > 3000) &&
+          (fullscreenEngagedRef.current || elapsedSinceStart > 1000) &&
           !isLockedAlreadyRef.current &&
           !isSubmittingRef.current &&
           !hasTriggeredViolationRef.current
@@ -1054,9 +1073,16 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       const lockKey = `ib_locked_${curEval.accessCode}_${cleanNum}`;
       localStorage.setItem(lockKey, 'true');
       localStorage.setItem(`ib_locked_${cleanCode}_${cleanNum}`, 'true');
+      if (curEval.id) {
+        localStorage.setItem(`ib_locked_${curEval.id}_${cleanNum}`, 'true');
+      }
       localStorage.removeItem(`draft_eval_${curEval.accessCode}_${cleanNum}`);
       localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
+      if (curEval.id) {
+        localStorage.removeItem(`draft_eval_${curEval.id}_${cleanNum}`);
+      }
       localStorage.removeItem(`timer_${curEval.accessCode}_${cleanNum}`);
+      localStorage.removeItem(`timer_end_${curEval.accessCode}_${cleanNum}`);
 
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
 
@@ -1070,12 +1096,6 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setExistingSubmission(submission);
       setIsLockedAlready(true);
       setShowConfirmSubmit(false);
-
-      if (!forceAutoSubmit) {
-        alert('🎉 Votre copie a été remise avec succès et est maintenant verrouillée.');
-      } else if (reason) {
-        alert(`⚠️ ÉVALUATION CLÔTURÉE AUTOMATIQUEMENT :\n\n${reason}\n\nVos réponses saisies ont été enregistrées et transmises à votre enseignant.`);
-      }
     } catch (err: any) {
       alert(`Erreur lors de la remise : ${err.message || 'Impossible de soumettre la copie'}`);
     } finally {
@@ -1244,39 +1264,27 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={async () => {
-                const cleanNum = (existingSubmission?.studentNumber || studentNumber || '').trim();
-                const latestSub = await getStudentSubmission(evaluation.accessCode, cleanNum);
-                const latestEval = await getEvaluationByAccessCode(evaluation.accessCode);
-                const enteredMat = normalizeMatricule(cleanNum);
-                const matched = latestEval?.studentAccessCodes?.find(
-                  sc => sc.studentNumber && normalizeMatricule(sc.studentNumber) === enteredMat
-                );
-                if (!latestSub || matched?.allowedRetake) {
-                  localStorage.removeItem(`ib_locked_${evaluation.accessCode}_${cleanNum}`);
-                  localStorage.removeItem(`draft_eval_${evaluation.accessCode}_${cleanNum}`);
-                  localStorage.removeItem(`timer_${evaluation.accessCode}_${cleanNum}`);
-                  setAnswers({});
-                  setDrawings({});
-                  setExistingSubmission(null);
-                  setIsLockedAlready(false);
-                  setTerminatedReason(null);
-                  if (latestEval) setEvaluation(latestEval);
-                } else {
-                  alert('Votre copie est toujours enregistrée. Seul l\'Administrateur peut supprimer votre copie pour vous autoriser à refaire l\'évaluation.');
-                }
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-lg transition"
-              title="Si l'Administrateur a supprimé votre copie, cliquez ici pour recommencer l'évaluation"
-            >
-              🔄 Refaire l'évaluation (si copie supprimée)
-            </button>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold">
+              <Lock size={13} className="text-amber-700" />
+              <span>Copie transmise · Accès clôturé</span>
+            </span>
             <button
               onClick={() => setShowPrintModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition"
             >
               <Printer size={15} /> Imprimer ma copie (A4)
+            </button>
+            <button
+              onClick={() => {
+                setEvaluation(null);
+                setExistingSubmission(null);
+                setIsLockedAlready(false);
+                onExit();
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-xl text-xs font-bold transition shadow-xs"
+              title="Fermer la session de l'épreuve"
+            >
+              <LogOut size={14} /> Fermer la session
             </button>
             <button
               onClick={() => {
@@ -1497,7 +1505,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   const spacingMode = layout.spacing || 'normal';
   const headerStyle = layout.headerStyle || 'official_ib';
   const defaultRows = layout.answerBoxRows || 4;
-  const showCalculator = layout.showCalculator !== false;
+  const showCalculator = (evaluation.allowCalculator !== undefined
+    ? evaluation.allowCalculator
+    : layout.showCalculator) !== false;
   const showMathToolbar = layout.showMathToolbar !== false;
   const showStrandBadges = layout.showStrandBadges !== false;
   const showPointsPerCriterion = layout.showPointsPerCriterion !== false;
@@ -1587,17 +1597,25 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               <span>{isVirtualKeyboardOpen ? 'Clavier Actif' : 'Clavier Tablette'}</span>
             </button>
 
-            {/* 🧮 BOUTON CALCULATRICE SCIENTIFIQUE TOUJOURS ACCESSIBLE */}
-            {showCalculator && (
+            {/* 🧮 BOUTON CALCULATRICE SCIENTIFIQUE (si autorisée par l'enseignant) */}
+            {showCalculator ? (
               <button
                 type="button"
                 onClick={() => setIsCalculatorOpen(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs transition"
-                title="Ouvrir la calculatrice scientifique (avec parenthèses, accolades, racines...)"
+                title="Ouvrir la calculatrice scientifique"
               >
                 <Calculator size={15} />
                 <span>Calculatrice</span>
               </button>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 text-slate-400 rounded-xl text-xs font-bold border border-slate-200"
+                title="Calculatrice non autorisée pour cette épreuve par l'enseignant"
+              >
+                <Calculator size={14} className="text-slate-400" />
+                <span className="hidden sm:inline">Calculatrice non autorisée</span>
+              </span>
             )}
 
             {/* Bascule Feuille complète / Par onglets */}
@@ -1707,7 +1725,11 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               <div className="bg-white p-3 rounded-xl border border-slate-200">
                 <span className="text-[10px] font-bold text-slate-400 uppercase block">Outils autorisés :</span>
                 <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px] font-bold text-slate-700">
-                  {showCalculator && <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">🧮 Calculatrice</span>}
+                  {showCalculator ? (
+                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">🧮 Calculatrice autorisée</span>
+                  ) : (
+                    <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">🚫 Calculatrice non autorisée</span>
+                  )}
                   {showMathToolbar && <span className="text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">( ) &#123; &#125; [ ] Symboles</span>}
                   <span className="text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">📐 Géométrie / Croquis</span>
                 </div>
@@ -2329,17 +2351,19 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         </div>
       </main>
 
-      {/* ── MODALE CALCULATRICE SCIENTIFIQUE & STANDARD ── */}
-      <ScientificCalculatorModal
-        isOpen={isCalculatorOpen}
-        onClose={() => setIsCalculatorOpen(false)}
-        activeTargetLabel={activeTextareaLabel}
-        onInsertText={(txt) => {
-          if (activeTextareaKey) {
-            handleInsertMathSymbol(activeTextareaKey, txt);
-          }
-        }}
-      />
+      {/* ── MODALE CALCULATRICE SCIENTIFIQUE & STANDARD (si autorisée) ── */}
+      {showCalculator && (
+        <ScientificCalculatorModal
+          isOpen={isCalculatorOpen}
+          onClose={() => setIsCalculatorOpen(false)}
+          activeTargetLabel={activeTextareaLabel}
+          onInsertText={(txt) => {
+            if (activeTextareaKey) {
+              handleInsertMathSymbol(activeTextareaKey, txt);
+            }
+          }}
+        />
+      )}
 
       {/* ── MODALE GÉOMÉTRIQUE & ART (ÉQUERRE, RAPPORTEUR, COMPAS, COULEURS) ── */}
       {drawingModalTarget && (

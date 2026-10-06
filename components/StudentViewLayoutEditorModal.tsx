@@ -90,6 +90,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
   const updateLayout = (patch: Partial<EvaluationLayoutConfig>) => {
     setDraftEval(prev => ({
       ...prev,
+      allowCalculator: patch.showCalculator !== undefined ? patch.showCalculator : prev.allowCalculator,
       layoutConfig: {
         ...layout,
         ...patch,

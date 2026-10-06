@@ -287,25 +287,34 @@ export async function getSubmissionsForEvaluation(evaluationId: string): Promise
   return getLocalSubmissions().filter(s => s.evaluationId === evaluationId);
 }
 
-export async function getStudentSubmission(accessCode: string, studentNumber: string): Promise<StudentSubmission | null> {
+export async function getStudentSubmission(accessCode: string, studentNumber: string, evaluationId?: string): Promise<StudentSubmission | null> {
   const code = accessCode.trim().toUpperCase();
   const num = studentNumber.trim();
   const normNum = num.toLowerCase();
 
   try {
-    const res = await fetch(
-      `${API_BASE}?action=student_submission&accessCode=${encodeURIComponent(code)}&studentNumber=${encodeURIComponent(num)}`
-    );
+    const params = new URLSearchParams({
+      action: 'student_submission',
+      accessCode: code,
+      studentNumber: num,
+    });
+    if (evaluationId) params.set('evalId', evaluationId);
+
+    const res = await fetch(`${API_BASE}?${params.toString()}`);
     if (res.ok) {
       const data = await res.json();
       if (data && data.submission) return data.submission as StudentSubmission;
-      // Le serveur répond 200 OK avec submission: null -> aucune copie (ou copie supprimée par l'Admin)
+      // Le serveur répond 200 OK avec submission: null -> aucune copie (ou copie supprimée par l'enseignant)
       const locals = getLocalSubmissions().filter(
-        s => !(s.accessCode?.trim().toUpperCase() === code && s.studentNumber?.trim().toLowerCase() === normNum)
+        s => !(
+          (s.accessCode?.trim().toUpperCase() === code || (evaluationId && s.evaluationId === evaluationId)) &&
+          s.studentNumber?.trim().toLowerCase() === normNum
+        )
       );
       saveLocalSubmissions(locals);
       try {
         localStorage.removeItem(`ib_locked_${code}_${num}`);
+        if (evaluationId) localStorage.removeItem(`ib_locked_${evaluationId}_${num}`);
       } catch {}
       return null;
     }
@@ -315,7 +324,7 @@ export async function getStudentSubmission(accessCode: string, studentNumber: st
 
   const locals = getLocalSubmissions();
   const found = locals.find(
-    s => s.accessCode?.trim().toUpperCase() === code &&
+    s => (s.accessCode?.trim().toUpperCase() === code || (evaluationId && s.evaluationId === evaluationId)) &&
          s.studentNumber?.trim().toLowerCase() === normNum
   );
   return found || null;

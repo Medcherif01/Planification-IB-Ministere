@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders } from 'lucide-react';
+import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders, Calculator } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini, deleteStudentSubmission } from '../services/onlineEvaluationService';
 import { generateCleanStudentCodesForEvaluation, fetchAllStudents } from '../services/studentRosterService';
@@ -92,6 +92,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [aiInitialType, setAiInitialType] = useState<GenerateQuestionOptions['questionType']>('multiple_choice');
   const [classRosterCountForCreate, setClassRosterCountForCreate] = useState<number>(0);
   const [optimizeWithAiOnCreate, setOptimizeWithAiOnCreate] = useState(true);
+  const [allowCalculatorOnCreate, setAllowCalculatorOnCreate] = useState(true);
   const [isOptimizingEvalWithAi, setIsOptimizingEvalWithAi] = useState(false);
   const [previewHtmlExerciseMap, setPreviewHtmlExerciseMap] = useState<Record<number, boolean>>({});
 
@@ -598,10 +599,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     setStudentPreviewEvaluation(saved);
   };
 
-  // Suppression définitive d'une copie d'élève (réservée à l'Admin après validation explicite)
+  // Suppression définitive d'une copie d'élève (Enseignant ou Administrateur après validation explicite)
   // Une fois supprimée, l'élève peut immédiatement refaire l'évaluation
   const handleConfirmAdminDeleteSubmission = async () => {
-    if (!isAdmin || !submissionToDelete || !adminDeleteValidated) return;
+    if (!submissionToDelete || !adminDeleteValidated) return;
     setIsDeletingSubmission(true);
     try {
       const targetEvalId = selectedEvaluation?.id || submissionToDelete.evaluationId;
@@ -765,6 +766,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         instructions: customInstructions,
         status: 'active',
         studentAccessCodes: initialStudentCodes,
+        allowCalculator: allowCalculatorOnCreate,
+        layoutConfig: {
+          showCalculator: allowCalculatorOnCreate,
+        },
       });
 
       setEvaluations(prev => [newEval, ...prev]);
@@ -1499,27 +1504,18 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               >
                                 <Printer size={15} />
                               </button>
-                              {isAdmin ? (
-                                <button
-                                  onClick={() => {
-                                    setSubmissionToDelete(sub);
-                                    setAdminDeleteValidated(false);
-                                    setAdminResetMatriculeOnDelete(true);
-                                  }}
-                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1"
-                                  title="Supprimer cette copie d'élève après validation Administrateur"
-                                >
-                                  <Trash2 size={13} />
-                                  <span>Supprimer (Admin)</span>
-                                </button>
-                              ) : (
-                                <span
-                                  className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-400 rounded-lg text-[10px] font-semibold cursor-not-allowed"
-                                  title="Seul l'Administrateur peut supprimer des copies d'élèves après validation"
-                                >
-                                  <Lock size={11} /> Admin seul
-                                </span>
-                              )}
+                              <button
+                                onClick={() => {
+                                  setSubmissionToDelete(sub);
+                                  setAdminDeleteValidated(false);
+                                  setAdminResetMatriculeOnDelete(true);
+                                }}
+                                className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1"
+                                title="Supprimer cette copie d'élève (réouvrira l'accès de l'élève pour recomposer)"
+                              >
+                                <Trash2 size={13} />
+                                <span>Supprimer la copie</span>
+                              </button>
                             </td>
                           </tr>
                         );
@@ -1783,6 +1779,34 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </label>
                 </div>
 
+                {/* 🧮 Option Calculatrice Scientifique */}
+                <div className="bg-emerald-50/80 border-2 border-emerald-200 rounded-2xl p-3.5 space-y-2 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Calculator size={16} className="text-emerald-700" />
+                      <span className="text-xs font-black text-emerald-950">
+                        Calculatrice scientifique pour cette évaluation
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAllowCalculatorOnCreate(!allowCalculatorOnCreate)}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition flex items-center gap-1.5 ${
+                        allowCalculatorOnCreate
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                          : 'bg-slate-300 text-slate-700 hover:bg-slate-400'
+                      }`}
+                    >
+                      {allowCalculatorOnCreate ? '✓ Autorisée' : '✕ Interdite'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-emerald-900/80 leading-relaxed">
+                    {allowCalculatorOnCreate
+                      ? "L'élève aura accès à la calculatrice scientifique complète pendant l'épreuve."
+                      : "La calculatrice sera totalement masquée et interdite aux élèves pour cette épreuve."}
+                  </p>
+                </div>
+
                 <div className="flex items-center gap-3 pt-2">
                   <button
                     onClick={() => setShowCreateModal(false)}
@@ -1994,19 +2018,17 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {isAdmin && (
-                    <button
-                      onClick={() => {
-                        setSubmissionToDelete(activeSubmission);
-                        setAdminDeleteValidated(false);
-                        setAdminResetMatriculeOnDelete(true);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-xs font-bold rounded-xl transition"
-                      title="Supprimer cette copie après validation Administrateur"
-                    >
-                      <Trash2 size={14} /> Supprimer la copie (Admin)
-                    </button>
-                  )}
+                  <button
+                    onClick={() => {
+                      setSubmissionToDelete(activeSubmission);
+                      setAdminDeleteValidated(false);
+                      setAdminResetMatriculeOnDelete(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-xs font-bold rounded-xl transition"
+                    title="Supprimer cette copie (réouvrira l'accès de l'élève pour recomposer)"
+                  >
+                    <Trash2 size={14} /> Supprimer la copie
+                  </button>
                   <button
                     onClick={() => {
                       setPrintEvaluation(selectedEvaluation);
@@ -2088,7 +2110,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               </div>
 
               {/* Paramètres généraux rapides */}
-              <div className="bg-slate-50 border-b border-slate-200 p-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="bg-slate-50 border-b border-slate-200 p-4 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
                     Titre de l'évaluation :
@@ -2110,6 +2132,34 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     onChange={e => setEditingEvaluation({ ...editingEvaluation, durationMinutes: parseInt(e.target.value) || 45 })}
                     className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-purple-400"
                   />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Calculatrice scientifique :
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextVal = editingEvaluation.allowCalculator === false ? true : false;
+                      setEditingEvaluation({
+                        ...editingEvaluation,
+                        allowCalculator: nextVal,
+                        layoutConfig: {
+                          ...(editingEvaluation.layoutConfig || {}),
+                          showCalculator: nextVal,
+                        },
+                      });
+                    }}
+                    className={`w-full py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
+                      editingEvaluation.allowCalculator !== false
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                        : 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
+                    }`}
+                    title="Cliquer pour autoriser ou interdire la calculatrice pour cette épreuve"
+                  >
+                    <Calculator size={14} />
+                    <span>{editingEvaluation.allowCalculator !== false ? '✓ Autorisée' : '✕ Interdite'}</span>
+                  </button>
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
@@ -3480,9 +3530,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         )}
 
         {/* ═════════════════════════════════════════════════════════════════
-            MODALE : VALIDATION ADMINISTRATEUR POUR SUPPRESSION D'UNE COPIE
+            MODALE : CONFIRMATION SUPPRESSION D'UNE COPIE PAR L'ENSEIGNANT / ADMIN
             ═════════════════════════════════════════════════════════════════ */}
-        {isAdmin && submissionToDelete && (
+        {submissionToDelete && (
           <div className="fixed inset-0 z-[120] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border-2 border-rose-200 animate-fadeIn">
               <div className="bg-gradient-to-r from-rose-700 to-red-800 p-5 text-white flex items-center justify-between">
@@ -3492,10 +3542,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </div>
                   <div>
                     <span className="text-[10px] font-black uppercase tracking-wider bg-black/25 px-2 py-0.5 rounded">
-                      Action Réservée à l'Administrateur
+                      Enseignant & Administration
                     </span>
                     <h3 className="text-base font-black mt-0.5">
-                      Validation de Suppression de Copie
+                      Suppression de Copie & Réouverture d'Accès
                     </h3>
                   </div>
                 </div>
@@ -3536,7 +3586,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </div>
                 </div>
 
-                {/* Case de validation obligatoire de l'Admin */}
+                {/* Case de validation obligatoire */}
                 <label className="flex items-start gap-3 p-3.5 rounded-2xl border-2 border-rose-300 bg-rose-50/50 cursor-pointer hover:bg-rose-50 transition">
                   <input
                     type="checkbox"
@@ -3545,7 +3595,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     className="mt-0.5 w-4 h-4 accent-rose-600 rounded"
                   />
                   <span className="text-xs font-bold text-rose-950 leading-snug">
-                    Je valide en tant qu'Administrateur la suppression définitive de cette copie d'élève.
+                    Je confirme la suppression définitive de cette copie transmise pour autoriser l'élève à recommencer l'épreuve.
                   </span>
                 </label>
 
@@ -3558,7 +3608,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     className="mt-0.5 w-4 h-4 accent-indigo-600 rounded"
                   />
                   <span className="text-xs text-slate-700 leading-snug">
-                    <strong>Réouvrir le matricule ({submissionToDelete.studentNumber})</strong> pour autoriser l'élève à recomposer proprement.
+                    <strong>Réouvrir immédiatement le matricule ({submissionToDelete.studentNumber})</strong> pour que l'élève puisse recomposer une nouvelle copie.
                   </span>
                 </label>
 
