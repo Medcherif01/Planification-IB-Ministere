@@ -2007,25 +2007,17 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </div>
                 </div>
 
-                {/* Appréciation globale */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">
-                    💬 Appréciation générale de l'enseignant :
-                  </label>
-                  <textarea
-                    value={editedOverallFeedback}
-                    onChange={e => setEditedOverallFeedback(e.target.value)}
-                    rows={3}
-                    placeholder="Commentaire général valorisant les réussites et indiquant les pistes d'amélioration..."
-                    className="w-full p-3 bg-slate-50 border border-slate-300 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-xs outline-none transition font-sans"
-                  />
-                </div>
-
                 {/* Réponses de l'élève par question et commentaires spécifiques */}
                 <div className="space-y-4">
-                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide">
-                    📝 Réponses de l'élève et commentaires par question
-                  </h4>
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <h4 className="text-xs font-black text-slate-700 uppercase tracking-wide flex items-center gap-2">
+                      <span>📝</span>
+                      <span>Correction détaillée — Commentaire question par question :</span>
+                    </h4>
+                    <span className="text-[11px] text-purple-700 font-semibold bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200">
+                      Chaque question dispose de son commentaire individuel ci-dessous
+                    </span>
+                  </div>
 
                   {activeSubmission.answers.map((ans, idx) => {
                     const colors = CRITERION_COLORS[ans.criterion] || CRITERION_COLORS.A;
@@ -2033,22 +2025,28 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     const commentValue = editedComments[commentKey] || '';
 
                     return (
-                      <div key={idx} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <div key={idx} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3.5 shadow-2xs">
+                        <div className="flex items-center justify-between border-b border-slate-200 pb-2 flex-wrap gap-2">
                           <div className="flex items-center gap-2">
                             <span className={`w-6 h-6 rounded-md ${colors.badge} text-white text-xs font-black flex items-center justify-center`}>
                               {ans.criterion}
                             </span>
-                            <span className="font-bold text-sm text-slate-900">{ans.exerciseTitle}</span>
+                            <span className="font-bold text-sm text-slate-900">{ans.exerciseTitle || `Question ${idx + 1}`}</span>
                             {ans.criterionReference && (
-                              <span className="text-xs text-slate-400 italic">({ans.criterionReference})</span>
+                              <span className="text-xs text-slate-500 italic">({ans.criterionReference})</span>
                             )}
                           </div>
+                          {ans.strandIndex && (
+                            <span className="text-[11px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                              ● Sous-aspect ({ans.strandIndex}) {ans.strandText ? `: ${ans.strandText}` : ''}
+                            </span>
+                          )}
                         </div>
 
-                        {/* Énoncé de la question */}
-                        <div className="text-xs text-slate-600 bg-white p-3 rounded-xl border border-slate-200">
-                          {ans.questionContent}
+                        {/* Énoncé de la question au format HTML soigné (tableaux, listes, repères) */}
+                        <div className="bg-white p-3.5 rounded-xl border border-slate-200">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block mb-1">Énoncé / Tâche :</span>
+                          <RichExerciseContent content={ans.questionContent} />
                         </div>
 
                         {/* Réponse de l'élève */}
@@ -2056,27 +2054,77 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
                             Réponse soumise par l'élève :
                           </span>
-                          <div className="bg-white p-3 rounded-xl border border-slate-200 text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed">
-                            {ans.studentResponse || <em className="text-slate-400">Aucune réponse fournie</em>}
-                          </div>
+                          {ans.subAnswers && Object.keys(ans.subAnswers).length > 0 ? (
+                            <div className="space-y-2">
+                              {Object.entries(ans.subAnswers).map(([sKey, sVal], sIdx) => (
+                                <div key={sKey} className="bg-white p-3 rounded-xl border border-slate-200 text-xs font-mono text-slate-800">
+                                  <span className="font-bold text-purple-900 block font-sans text-[11px] mb-1">Sous-question {sIdx + 1}) :</span>
+                                  <div className="whitespace-pre-wrap leading-relaxed">
+                                    {sVal.response || <em className="text-slate-400 font-sans">Aucune réponse</em>}
+                                  </div>
+                                  {sVal.drawingDataUrl && (
+                                    <div className="mt-2 text-center pt-2 border-t border-slate-100">
+                                      <span className="text-[10px] font-sans font-bold text-slate-500 block mb-1">Tracé / Figure géométrique :</span>
+                                      <img src={sVal.drawingDataUrl} alt="Tracé élève" className="max-h-36 max-w-full mx-auto border rounded bg-white" />
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="bg-white p-3 rounded-xl border border-slate-200 text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed">
+                              {ans.studentResponse || <em className="text-slate-400 font-sans">Aucune réponse fournie</em>}
+                            </div>
+                          )}
+
+                          {ans.drawingDataUrl && !ans.subAnswers && (
+                            <div className="mt-2 text-center p-2 bg-white rounded-xl border border-slate-200">
+                              <span className="text-[10px] font-bold text-slate-500 block mb-1">Figure géométrique / Tracé de l'élève :</span>
+                              <img src={ans.drawingDataUrl} alt="Figure élève" className="max-h-40 max-w-full mx-auto border rounded bg-white" />
+                            </div>
+                          )}
                         </div>
 
-                        {/* Commentaire enseignant */}
-                        <div>
-                          <label className="text-[10px] font-bold text-purple-900 uppercase block mb-1">
-                            Remarque / Justification pour cette réponse :
+                        {/* Commentaire individuel pour cette question */}
+                        <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3 space-y-1.5">
+                          <label className="text-[11px] font-black text-purple-950 uppercase flex items-center justify-between">
+                            <span>💬 Commentaire personnalisé pour cette question :</span>
+                            <span className="text-[10px] font-normal text-purple-700">Expliquez les réussites et les points à corriger</span>
                           </label>
                           <textarea
                             value={commentValue}
                             onChange={e => setEditedComments(prev => ({ ...prev, [commentKey]: e.target.value }))}
                             rows={2}
-                            placeholder="Commentaire de correction pour cette question..."
-                            className="w-full p-2.5 bg-white border border-slate-300 focus:border-purple-600 rounded-xl text-xs outline-none"
+                            placeholder="Écrivez le commentaire spécifique pour cette question (ce qui est réussi, les erreurs, la justification du niveau)..."
+                            className="w-full p-2.5 bg-white border border-purple-300 focus:border-purple-600 rounded-xl text-xs outline-none font-sans"
                           />
                         </div>
                       </div>
                     );
                   })}
+                </div>
+
+                {/* 💬 APPRÉCIATION GÉNÉRALE EN FIN DE CORRECTION (Bilan global de la copie) */}
+                <div className="bg-gradient-to-r from-purple-50 via-indigo-50 to-violet-50 border-2 border-purple-300 rounded-2xl p-5 space-y-3 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-black text-purple-950 uppercase tracking-wide flex items-center gap-2">
+                      <span className="text-base">🎓</span>
+                      <span>Appréciation Générale & Bilan de l'Évaluation (à la fin de la copie) :</span>
+                    </label>
+                    <span className="text-[10px] font-bold text-purple-800 bg-white px-2.5 py-1 rounded-lg border border-purple-200">
+                      Bilan global élève
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Ce commentaire d'ensemble apparaîtra à la fin de la copie de l'élève et sur le bulletin officiel. Il synthétise l'acquisition globale des compétences, valorise les réussites et fixe les objectifs de progression.
+                  </p>
+                  <textarea
+                    value={editedOverallFeedback}
+                    onChange={e => setEditedOverallFeedback(e.target.value)}
+                    rows={4}
+                    placeholder="Rédigez l'appréciation générale globale de l'évaluation : valorisation du travail, points forts constatés, axes d'amélioration méthodologiques et bilan du niveau atteint..."
+                    className="w-full p-3.5 bg-white border-2 border-purple-200 focus:border-purple-600 focus:ring-2 focus:ring-purple-200 rounded-xl text-xs outline-none transition font-sans leading-relaxed text-slate-800"
+                  />
                 </div>
 
               </div>

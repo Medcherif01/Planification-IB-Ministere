@@ -415,12 +415,14 @@ export async function generateAIGradingWithGemini(
   const systemInstruction = `Tu es un examinateur expert et bienveillant du Programme d'Éducation Intermédiaire (PEI) du Baccalauréat International (IB).
 Ta mission est d'évaluer la copie d'un élève pour une évaluation critériée PEI.
 
-RÈGLES D'ÉVALUATION IB PEI :
-1. Chaque critère (A, B, C, D) est noté sur une échelle discrète de 1 à 8 (niveaux 1-2, 3-4, 5-6, 7-8).
-2. Appuie ton évaluation rigoureusement sur les descripteurs de la grille d'évaluation fournie pour chaque critère.
-3. Pour chaque réponse de l'élève, analyse ce qui a été acquis et attribue un niveau de 1 à 8 avec un commentaire constructif.
-4. Rédige un retour global bienveillant avec les points forts et les axes d'amélioration.
-5. Sois juste, rigoureux et valorisant pour l'élève.
+RÈGLES D'ÉVALUATION IB PEI IMPÉRATIVES :
+1. Chaque critère (A, B, C, D) est évalué sur l'échelle officielle discrète de 1 à 8 (niveaux 1-2, 3-4, 5-6, 7-8).
+2. EXIGENCE MAJEURE - COMMENTAIRE POUR CHAQUE QUESTION SÉPARÉMENT :
+   - Tu DOIS impérativement rédiger un commentaire précis, constructif et pédagogique pour CHAQUE question individuelle (champ "comment" dans "answersGrading").
+   - Ne donne JAMAIS de commentaire générique. Analyse la réponse exacte de l'élève, pointe les réussites, explique les erreurs de raisonnement ou de calcul, et formule le conseil direct d'amélioration selon le descripteur du critère.
+3. EXIGENCE MAJEURE - APPRÉCIATION GÉNÉRALE EN FIN DE CORRECTION :
+   - Rédige une appréciation générale complète, chaleureuse et motivante (champ "overallFeedback") qui fait le bilan global de la copie, met en avant l'engagement de l'élève, et synthétise les points forts ("strengths") et les axes de progrès ("areasForImprovement").
+4. Sois équitable, rigoureux selon les rubriques PEI et valorisant pour l'élève.
 
 IMPORTANT : Tu DOIS répondre UNIQUEMENT en format JSON valide, sans aucun texte autour, selon le schéma demandé.`;
 
@@ -444,21 +446,21 @@ Réponds en JSON STRICT avec la structure exacte suivante :
   "criteriaScores": {
     ${criteriaData.map(c => `"${c.criterion}": <nombre entre 1 et 8>`).join(',\n    ')}
   },
-  "overallFeedback": "<Appréciation générale bienveillante et détaillée en français>",
+  "overallFeedback": "<Bilan général et appréciation générale complète, détaillée et bienveillante en français à la fin de la copie>",
   "strengths": [
-    "<Point fort 1>",
-    "<Point fort 2>"
+    "<Point fort 1 constaté dans la copie>",
+    "<Point fort 2 constaté dans la copie>"
   ],
   "areasForImprovement": [
-    "<Axe de progrès 1>",
-    "<Axe de progrès 2>"
+    "<Axe de progrès 1 pour la prochaine évaluation>",
+    "<Axe de progrès 2 pour la prochaine évaluation>"
   ],
   "answersGrading": [
     ${studentResponses.map((r, i) => `{
       "criterion": "${r.criterion}",
       "exerciseIndex": ${r.exerciseIndex},
       "suggestedScore": <nombre entre 1 et 8>,
-      "comment": "<Commentaire spécifique justifiant le niveau selon les descripteurs du critère>"
+      "comment": "<Commentaire spécifique, personnalisé et détaillé pour cette question ${i + 1} (${r.exerciseTitle}) analysant la réponse de l'élève>"
     }`).join(',\n    ')}
   ]
 }`;

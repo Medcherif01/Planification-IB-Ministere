@@ -382,6 +382,234 @@ const SVG_GRAPHIQUE_BARRES = toSvgDataUri(`
 </svg>
 `);
 
+// ── 4. SCIENCES DU VIVANT & PHYSIQUE-CHIMIE COMPLÉMENTAIRES ─────────────────
+
+const SVG_SYSTEME_RESPIRATOIRE = toSvgDataUri(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="10" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="240" y="24" font-size="14" font-weight="bold" fill="#1e293b" text-anchor="middle">Document 5 : Appareil respiratoire humain à légender</text>
+  <text x="240" y="42" font-size="11" fill="#64748b" text-anchor="middle">Consigne : Associez chaque numéro [1, 2, 3, 4] à l'organe correspondant</text>
+  
+  <!-- Silhouette trachée & larynx -->
+  <path d="M 230,55 L 250,55 L 250,120 L 230,120 Z" fill="#fed7aa" stroke="#c2410c" stroke-width="2.5"/>
+  <!-- Anneaux trachéaux -->
+  <line x1="230" y1="70" x2="250" y2="70" stroke="#c2410c" stroke-width="1.5"/>
+  <line x1="230" y1="85" x2="250" y2="85" stroke="#c2410c" stroke-width="1.5"/>
+  <line x1="230" y1="100" x2="250" y2="100" stroke="#c2410c" stroke-width="1.5"/>
+  
+  <!-- Repère [1] Trachée -->
+  <line x1="250" y1="85" x2="340" y2="70" stroke="#dc2626" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="355" cy="70" r="14" fill="#ef4444"/>
+  <text x="355" y="75" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">1</text>
+  
+  <!-- Bifurcation bronchique -->
+  <path d="M 230,120 L 195,155 L 205,165 L 240,130" fill="#fed7aa" stroke="#c2410c" stroke-width="2"/>
+  <path d="M 250,120 L 285,155 L 275,165 L 240,130" fill="#fed7aa" stroke="#c2410c" stroke-width="2"/>
+  
+  <!-- Repère [3] Bronches -->
+  <line x1="205" y1="160" x2="110" y2="135" stroke="#2563eb" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="95" cy="135" r="14" fill="#3b82f6"/>
+  <text x="95" y="140" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">3</text>
+  
+  <!-- Poumon Droit -->
+  <path d="M 190,130 C 130,140 120,200 135,240 C 150,260 210,255 220,230 C 225,200 215,145 190,130 Z" fill="#fecdd3" stroke="#e11d48" stroke-width="2.5"/>
+  
+  <!-- Poumon Gauche (légèrement plus petit pour le cœur) -->
+  <path d="M 290,130 C 350,140 360,200 345,240 C 330,260 270,255 260,230 C 255,200 265,145 290,130 Z" fill="#fecdd3" stroke="#e11d48" stroke-width="2.5"/>
+  
+  <!-- Repère [2] Poumon gauche -->
+  <line x1="330" y1="190" x2="410" y2="180" stroke="#059669" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="425" cy="180" r="14" fill="#10b981"/>
+  <text x="425" y="185" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">2</text>
+  
+  <!-- Diaphragme en bas -->
+  <path d="M 110,270 Q 240,240 370,270" fill="none" stroke="#7c3aed" stroke-width="4"/>
+  <!-- Repère [4] Diaphragme -->
+  <line x1="240" y1="255" x2="240" y2="295" stroke="#7c3aed" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="240" cy="298" r="14" fill="#8b5cf6"/>
+  <text x="240" y="303" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">4</text>
+</svg>
+`);
+
+const SVG_PHOTOSYNTHESE = toSvgDataUri(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="10" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="240" y="24" font-size="14" font-weight="bold" fill="#1e293b" text-anchor="middle">Document 6 : Le processus de la photosynthèse végétale</text>
+  <text x="240" y="42" font-size="11" fill="#64748b" text-anchor="middle">Consigne : Légendez les flux [A], [B], [C] et [D] intervenant dans la réaction</text>
+  
+  <!-- Feuille centrale stylisée -->
+  <path d="M 120,200 C 120,110 240,70 340,90 C 350,180 280,240 120,200 Z" fill="#bbf7d0" stroke="#16a34a" stroke-width="3"/>
+  <path d="M 120,200 Q 220,150 340,90" fill="none" stroke="#15803d" stroke-width="2"/>
+  <path d="M 180,170 Q 200,130 220,120" fill="none" stroke="#15803d" stroke-width="1.5"/>
+  <path d="M 230,150 Q 260,130 280,110" fill="none" stroke="#15803d" stroke-width="1.5"/>
+  
+  <!-- Soleil & Rayonnement lumineux [A] -->
+  <circle cx="60" cy="65" r="22" fill="#fde047" stroke="#eab308" stroke-width="2"/>
+  <line x1="85" y1="75" x2="160" y2="105" stroke="#eab308" stroke-width="3" stroke-dasharray="4,3"/>
+  <polygon points="160,105 150,100 154,109" fill="#eab308"/>
+  <circle cx="100" cy="115" r="14" fill="#eab308"/>
+  <text x="100" y="120" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">A</text>
+  
+  <!-- Entrée CO2 [B] -->
+  <path d="M 40,160 Q 90,165 140,170" fill="none" stroke="#64748b" stroke-width="3"/>
+  <polygon points="140,170 130,165 132,175" fill="#64748b"/>
+  <circle cx="50" cy="180" r="14" fill="#475569"/>
+  <text x="50" y="185" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">B</text>
+  
+  <!-- Eau et sels minéraux absorbés par les racines [C] -->
+  <path d="M 130,290 L 130,215" fill="none" stroke="#0284c7" stroke-width="3"/>
+  <polygon points="130,215 125,225 135,225" fill="#0284c7"/>
+  <circle cx="95" cy="265" r="14" fill="#0284c7"/>
+  <text x="95" y="270" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">C</text>
+  
+  <!-- Sortie O2 et production de matière organique (Glucose) [D] -->
+  <path d="M 330,150 Q 380,160 420,180" fill="none" stroke="#16a34a" stroke-width="3"/>
+  <polygon points="420,180 410,173 412,183" fill="#16a34a"/>
+  <circle cx="435" cy="150" r="14" fill="#16a34a"/>
+  <text x="435" y="155" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">D</text>
+  
+  <text x="240" y="300" font-size="11" font-weight="bold" fill="#047857" text-anchor="middle">Équation-bilan : 6 CO₂ + 6 H₂O + Lumière ➔ C₆H₁₂O₆ + 6 O₂</text>
+</svg>
+`);
+
+const SVG_MICROSCOPE_OPTIQUE = toSvgDataUri(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="10" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="240" y="24" font-size="14" font-weight="bold" fill="#1e293b" text-anchor="middle">Document 7 : Microscope optique de laboratoire</text>
+  <text x="240" y="42" font-size="11" fill="#64748b" text-anchor="middle">Consigne : Identifiez les 4 éléments fondamentaux repérés [1, 2, 3, 4]</text>
+  
+  <!-- Base du microscope -->
+  <rect x="160" y="270" width="160" height="25" rx="6" fill="#334155" stroke="#1e293b" stroke-width="2"/>
+  
+  <!-- Potence / Bras -->
+  <path d="M 280,270 C 310,250 310,130 260,110" fill="none" stroke="#475569" stroke-width="14" stroke-linecap="round"/>
+  
+  <!-- Tube optique -->
+  <rect x="200" y="80" width="30" height="70" fill="#cbd5e1" stroke="#334155" stroke-width="2" transform="rotate(-15 215 115)"/>
+  
+  <!-- [1] Oculaire en haut -->
+  <rect x="180" y="60" width="34" height="24" rx="4" fill="#1e293b"/>
+  <line x1="210" y1="65" x2="120" y2="65" stroke="#dc2626" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="105" cy="65" r="14" fill="#ef4444"/>
+  <text x="105" y="70" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">1</text>
+  
+  <!-- Tourelle & [2] Objectif -->
+  <circle cx="230" cy="155" r="16" fill="#334155"/>
+  <rect x="220" y="165" width="14" height="26" fill="#ca8a04" stroke="#854d0e" stroke-width="1.5"/>
+  <line x1="230" y1="180" x2="120" y2="180" stroke="#2563eb" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="105" cy="180" r="14" fill="#3b82f6"/>
+  <text x="105" y="185" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">2</text>
+  
+  <!-- [3] Platine avec valet -->
+  <rect x="180" y="200" width="100" height="10" rx="3" fill="#0f172a"/>
+  <line x1="280" y1="205" x2="390" y2="205" stroke="#059669" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="405" cy="205" r="14" fill="#10b981"/>
+  <text x="405" y="210" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">3</text>
+  
+  <!-- [4] Vis macrométrique / micrométrique -->
+  <circle cx="300" cy="220" r="16" fill="#64748b" stroke="#334155" stroke-width="3"/>
+  <circle cx="300" cy="220" r="9" fill="#94a3b8"/>
+  <line x1="316" y1="220" x2="390" y2="250" stroke="#7c3aed" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="405" cy="255" r="14" fill="#8b5cf6"/>
+  <text x="405" y="260" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">4</text>
+  
+  <!-- Miroir / Source lumineuse -->
+  <circle cx="230" cy="245" r="12" fill="#fde047" stroke="#ca8a04" stroke-width="2"/>
+</svg>
+`);
+
+const SVG_MODELE_ATOME = toSvgDataUri(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="10" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="240" y="24" font-size="14" font-weight="bold" fill="#1e293b" text-anchor="middle">Document 8 : Modèle atomique et constituants de la matière</text>
+  <text x="240" y="42" font-size="11" fill="#64748b" text-anchor="middle">Consigne : Identifiez les particules [A], [B], [C] et la région [D]</text>
+  
+  <!-- Orbites électroniques -->
+  <ellipse cx="240" cy="165" rx="160" ry="60" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5,3" transform="rotate(-30 240 165)"/>
+  <ellipse cx="240" cy="165" rx="160" ry="60" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5,3" transform="rotate(30 240 165)"/>
+  <ellipse cx="240" cy="165" rx="160" ry="60" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5,3" transform="rotate(90 240 165)"/>
+  
+  <!-- Électrons [A] (négatifs) -->
+  <circle cx="110" cy="130" r="7" fill="#3b82f6"/>
+  <text x="110" y="133" font-size="9" font-weight="bold" fill="#ffffff" text-anchor="middle">-</text>
+  <circle cx="370" cy="200" r="7" fill="#3b82f6"/>
+  <text x="370" y="203" font-size="9" font-weight="bold" fill="#ffffff" text-anchor="middle">-</text>
+  
+  <!-- Repère [A] Électron -->
+  <line x1="110" y1="125" x2="60" y2="90" stroke="#3b82f6" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="50" cy="80" r="14" fill="#3b82f6"/>
+  <text x="50" y="85" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">A</text>
+  
+  <!-- Noyau central [B] -->
+  <circle cx="240" cy="165" r="32" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+  
+  <!-- Protons [C] (positifs, rouge) -->
+  <circle cx="230" cy="155" r="9" fill="#ef4444"/>
+  <text x="230" y="159" font-size="11" font-weight="bold" fill="#ffffff" text-anchor="middle">+</text>
+  <circle cx="248" cy="172" r="9" fill="#ef4444"/>
+  <text x="248" y="176" font-size="11" font-weight="bold" fill="#ffffff" text-anchor="middle">+</text>
+  <circle cx="252" cy="155" r="9" fill="#ef4444"/>
+  
+  <!-- Neutrons (gris neutre) -->
+  <circle cx="232" cy="172" r="9" fill="#64748b"/>
+  <circle cx="242" cy="162" r="9" fill="#64748b"/>
+  
+  <!-- Repère [B] Noyau -->
+  <line x1="270" y1="165" x2="380" y2="120" stroke="#7c3aed" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="395" cy="115" r="14" fill="#8b5cf6"/>
+  <text x="395" y="120" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">B</text>
+  
+  <!-- Repère [C] Proton -->
+  <line x1="248" y1="181" x2="340" y2="260" stroke="#ef4444" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="350" cy="270" r="14" fill="#ef4444"/>
+  <text x="350" y="275" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">C</text>
+  
+  <!-- Repère [D] Nuage / Cortège électronique -->
+  <line x1="300" y1="90" x2="380" y2="60" stroke="#059669" stroke-width="2" stroke-dasharray="3,3"/>
+  <circle cx="395" cy="55" r="14" fill="#10b981"/>
+  <text x="395" y="60" font-size="13" font-weight="900" fill="#ffffff" text-anchor="middle">D</text>
+</svg>
+`);
+
+const SVG_THEOREME_THALES = toSvgDataUri(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 280" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="10" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="230" y="24" font-size="14" font-weight="bold" fill="#1e293b" text-anchor="middle">Figure 4 : Configuration de Thalès - Droites sécantes et parallèles (MN) // (BC)</text>
+  
+  <!-- Grand triangle ABC -->
+  <polygon points="200,50 60,230 380,230" fill="#f8fafc" stroke="#1e293b" stroke-width="3"/>
+  
+  <!-- Ligne parallèle (MN) -->
+  <line x1="110" y1="165" x2="315" y2="165" stroke="#7c3aed" stroke-width="3"/>
+  
+  <!-- Sommets et points -->
+  <circle cx="200" cy="50" r="5" fill="#4f46e5"/>
+  <text x="200" y="42" font-size="15" font-weight="900" fill="#4f46e5" text-anchor="middle">A</text>
+  
+  <circle cx="60" cy="230" r="5" fill="#1e293b"/>
+  <text x="45" y="240" font-size="15" font-weight="900" fill="#1e293b">B</text>
+  
+  <circle cx="380" cy="230" r="5" fill="#1e293b"/>
+  <text x="395" y="240" font-size="15" font-weight="900" fill="#1e293b">C</text>
+  
+  <circle cx="110" cy="165" r="5" fill="#7c3aed"/>
+  <text x="88" y="165" font-size="15" font-weight="900" fill="#7c3aed">M</text>
+  
+  <circle cx="315" cy="165" r="5" fill="#7c3aed"/>
+  <text x="328" y="165" font-size="15" font-weight="900" fill="#7c3aed">N</text>
+  
+  <!-- Flèches de parallélisme (MN) // (BC) -->
+  <polygon points="210,162 218,165 210,168" fill="#7c3aed"/>
+  <polygon points="210,227 218,230 210,233" fill="#1e293b"/>
+  
+  <!-- Mesures indicatives -->
+  <text x="140" y="105" font-size="12" font-weight="bold" fill="#dc2626">AM = 4 cm</text>
+  <text x="215" y="155" font-size="12" font-weight="bold" fill="#7c3aed" text-anchor="middle">MN = 5 cm</text>
+  <text x="220" y="250" font-size="12" font-weight="bold" fill="#0f172a" text-anchor="middle">BC = 10 cm</text>
+  <text x="365" y="130" font-size="12" font-weight="bold" fill="#dc2626">AC = 12 cm</text>
+</svg>
+`);
+
 // ── 4. CATALOGUE DES SCHÉMAS ─────────────────────────────────────────────────
 
 export const EDUCATIONAL_DIAGRAMS: EducationalDiagram[] = [
@@ -441,6 +669,46 @@ export const EDUCATIONAL_DIAGRAMS: EducationalDiagram[] = [
     svgDataUri: SVG_GRAPHIQUE_BARRES,
     description: "Graphique statistique avec axes étiquetés et barres de valeurs à analyser.",
   },
+  {
+    id: 'sciences_systeme_respiratoire',
+    title: 'Appareil respiratoire humain à légender [1, 2, 3, 4]',
+    subjectCategory: 'sciences',
+    caption: "Document 5 : Appareil respiratoire humain avec organes repérés [1, 2, 3, 4]",
+    svgDataUri: SVG_SYSTEME_RESPIRATOIRE,
+    description: "Trachée, poumon, bronches et diaphragme pour étude d'anatomie et de physiologie.",
+  },
+  {
+    id: 'sciences_photosynthese',
+    title: 'Photosynthèse et échanges gazeux foliaires [A, B, C, D]',
+    subjectCategory: 'sciences',
+    caption: "Document 6 : Schéma des flux de la photosynthèse à légender [A, B, C, D]",
+    svgDataUri: SVG_PHOTOSYNTHESE,
+    description: "Flux d'énergie lumineuse, CO2, H2O, O2 et matière organique pour la photosynthèse.",
+  },
+  {
+    id: 'sciences_optique_microscope',
+    title: 'Microscope optique de laboratoire à légender [1, 2, 3, 4]',
+    subjectCategory: 'sciences',
+    caption: "Document 7 : Schéma du microscope optique avec composants repérés [1, 2, 3, 4]",
+    svgDataUri: SVG_MICROSCOPE_OPTIQUE,
+    description: "Oculaire, objectif, platine et vis de mise au point d'un microscope.",
+  },
+  {
+    id: 'sciences_modele_atome',
+    title: 'Modèle atomique et particules subatomiques [A, B, C, D]',
+    subjectCategory: 'sciences',
+    caption: "Document 8 : Modèle atomique avec particules repérées [A, B, C, D]",
+    svgDataUri: SVG_MODELE_ATOME,
+    description: "Électrons, noyau, protons et cortège électronique pour la physique-chimie.",
+  },
+  {
+    id: 'math_theoreme_thales',
+    title: 'Théorème de Thalès et triangles semblables',
+    subjectCategory: 'math',
+    caption: "Figure 4 : Configuration de Thalès avec droites parallèles (MN) // (BC)",
+    svgDataUri: SVG_THEOREME_THALES,
+    description: "Droites sécantes et parallèles avec mesures pour calculs de proportionnalité.",
+  },
 ];
 
 /**
@@ -469,10 +737,59 @@ export function detectAndAttachEducationalDiagram(
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 2. SVT / Biologie / Cellule
+  // 2. Respiration / Poumons / Échanges gazeux
+  if (
+    fullText.includes('respirat') ||
+    fullText.includes('poumon') ||
+    fullText.includes('trachée') ||
+    fullText.includes('bronche') ||
+    fullText.includes('diaphragme') ||
+    fullText.includes('alvéole')
+  ) {
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_systeme_respiratoire');
+    if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+  }
+
+  // 3. Photosynthèse / Végétaux / Énergie lumineuse
+  if (
+    fullText.includes('photosynth') ||
+    fullText.includes('feuille') ||
+    fullText.includes('chlorophyl') ||
+    fullText.includes('sève') ||
+    fullText.includes('plante') ||
+    (fullText.includes('co2') && fullText.includes('lumière'))
+  ) {
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_photosynthese');
+    if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+  }
+
+  // 4. Microscope / Observation optique
+  if (
+    fullText.includes('microscope') ||
+    fullText.includes('oculaire') ||
+    fullText.includes('objectif') ||
+    fullText.includes('grossissement')
+  ) {
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_optique_microscope');
+    if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+  }
+
+  // 5. Atome / Électrons / Modèle de Bohr / Molécules
+  if (
+    fullText.includes('atome') ||
+    fullText.includes('électron') ||
+    fullText.includes('proton') ||
+    fullText.includes('neutron') ||
+    fullText.includes('noyau atomique') ||
+    fullText.includes('cortège')
+  ) {
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_modele_atome');
+    if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+  }
+
+  // 6. SVT / Biologie / Cellule
   if (
     fullText.includes('cellule') ||
-    fullText.includes('microscope') ||
     fullText.includes('membrane') ||
     fullText.includes('noyau') ||
     fullText.includes('cytoplasme') ||
@@ -482,7 +799,7 @@ export function detectAndAttachEducationalDiagram(
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 3. Cycle de l'eau / Écologie / Géographie
+  // 7. Cycle de l'eau / Écologie / Géographie
   if (
     fullText.includes('cycle de l\'eau') ||
     fullText.includes('évaporation') ||
@@ -494,34 +811,17 @@ export function detectAndAttachEducationalDiagram(
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 4. Géométrie dans l'espace / Volumes
+  // 8. Théorème de Thalès / Proportions / Triangles semblables
   if (
-    fullText.includes('pavé droit') ||
-    fullText.includes('parallélépipède') ||
-    fullText.includes('cube') ||
-    fullText.includes('volume') ||
-    fullText.includes('perspective')
+    fullText.includes('thalès') ||
+    fullText.includes('thales') ||
+    fullText.includes('parallèle') && fullText.includes('triangle')
   ) {
-    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_pave_droit')!;
-    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_theoreme_thales');
+    if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 5. Repère / Graphique de fonction / Droite
-  if (
-    fullText.includes('repère') ||
-    fullText.includes('ordonnée') ||
-    fullText.includes('abscisse') ||
-    fullText.includes('fonction') ||
-    fullText.includes('droite') ||
-    fullText.includes('affine') ||
-    fullText.includes('linéaire') ||
-    fullText.includes('coefficient directeur')
-  ) {
-    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_repere_fonction')!;
-    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
-  }
-
-  // 6. Trigonométrie / Triangle rectangle / Pythagore
+  // 9. Trigonométrie / Triangle rectangle / Pythagore
   if (
     fullText.includes('triangle') ||
     fullText.includes('pythagore') ||
@@ -536,7 +836,34 @@ export function detectAndAttachEducationalDiagram(
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 7. Graphique de données / Statistiques
+  // 10. Géométrie dans l'espace / Volumes
+  if (
+    fullText.includes('pavé droit') ||
+    fullText.includes('parallélépipède') ||
+    fullText.includes('cube') ||
+    fullText.includes('volume') ||
+    fullText.includes('perspective')
+  ) {
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_pave_droit')!;
+    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+  }
+
+  // 11. Repère / Graphique de fonction / Droite
+  if (
+    fullText.includes('repère') ||
+    fullText.includes('ordonnée') ||
+    fullText.includes('abscisse') ||
+    fullText.includes('fonction') ||
+    fullText.includes('droite') ||
+    fullText.includes('affine') ||
+    fullText.includes('linéaire') ||
+    fullText.includes('coefficient directeur')
+  ) {
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_repere_fonction')!;
+    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+  }
+
+  // 12. Graphique de données / Statistiques / Expériences
   if (
     fullText.includes('histogramme') ||
     fullText.includes('diagramme') ||
@@ -544,7 +871,8 @@ export function detectAndAttachEducationalDiagram(
     fullText.includes('effectif') ||
     fullText.includes('statistique') ||
     fullText.includes('comparatif') ||
-    fullText.includes('résultats expérimentaux')
+    fullText.includes('résultats expérimentaux') ||
+    fullText.includes('données expérimentales')
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'data_comparatif_barres')!;
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
@@ -552,3 +880,4 @@ export function detectAndAttachEducationalDiagram(
 
   return null;
 }
+

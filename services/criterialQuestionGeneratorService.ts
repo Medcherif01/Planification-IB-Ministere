@@ -1,5 +1,6 @@
 import { AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
+import { formatProfessionalHtml } from './evaluationAiOptimizerService';
 
 export interface GenerateQuestionOptions {
   subject: string;
@@ -192,7 +193,8 @@ RÈGLES IMPÉRATIVES :
 1. Rédige en français soigné, clair et pédagogiquement rigoureux.
 2. La question doit cibler précisément le Critère ${options.criterion} (${options.criterionName || ''}) et spécifiquement le sous-aspect ${strandLabel} (${options.strandText || ''}).
 3. La question doit être concrète, stimulante et adaptée au niveau scolaire (${options.gradeLevel}).
-4. Retourne UNIQUEMENT un objet JSON valide conforme au schéma demandé.
+4. Si pertinent (expériences, mesures, comparaisons), formate l'énoncé en HTML propre avec des tableaux <table>, listes <ul> ou références à des schémas à légender avec repères [A, B, C, D] ou [1, 2, 3, 4].
+5. Retourne UNIQUEMENT un objet JSON valide conforme au schéma demandé.
     `.trim();
 
     userPrompt = `
@@ -213,17 +215,17 @@ ${options.customGuidance ? `- Consigne spécifique de l'enseignant : "${options.
 Schéma JSON attendu :
 {
   "title": "Tâche ${taskNum} : [Titre concis et explicite]",
-  "content": "[Énoncé détaillé, texte support ou consigne claire pour l'élève]",
+  "content": "<p><strong>Mise en situation :</strong> [Énoncé détaillé, tableau de données ou schéma à légender en HTML propre]</p><p><strong>Consigne :</strong> [Consigne claire avec verbes directifs de l'IB]</p>",
   "type": "${options.questionType === 'multiple_choice' ? 'multiple_choice' : options.questionType === 'true_false' ? 'true_false' : 'open'}",
   "options": [${options.questionType === 'multiple_choice' ? '"Proposition A", "Proposition B", "Proposition C", "Proposition D"' : ''}],
   "correctAnswer": "${options.questionType === 'true_false' ? 'Vrai (ou Faux)' : options.questionType === 'multiple_choice' ? 'Proposition A' : ''}",
-  "answer": "[Corrigé type détaillé avec éléments de réponse et justification pour l'enseignant]",
+  "answer": "<p>[Corrigé type détaillé avec éléments de réponse et barème de notation]</p>",
   "subQuestions": [
     ${options.questionType === 'subquestions' ? `
     {
       "id": "sub_1",
       "label": "1)",
-      "content": "[Première sous-question]",
+      "content": "<p><strong>Identifier</strong> et nommer...</p>",
       "strandIndex": "i",
       "strandText": "${options.strandText || 'Identifier et appliquer'}",
       "type": "open"
@@ -231,7 +233,7 @@ Schéma JSON attendu :
     {
       "id": "sub_2",
       "label": "2)",
-      "content": "[Deuxième sous-question]",
+      "content": "<p><strong>Calculer</strong> ou expliquer...</p>",
       "strandIndex": "ii",
       "strandText": "Calculer ou approfondir",
       "type": "open"
@@ -272,13 +274,13 @@ Schéma JSON attendu :
     const parsed = JSON.parse(cleaned);
 
     const cleanTitle = stripHtmlTags(parsed.title) || defaultTitle;
-    const cleanContent = stripHtmlTags(parsed.content) || (isEn ? 'Complete the task described above.' : 'Répondez à la consigne ci-dessus.');
+    const cleanContent = formatProfessionalHtml(parsed.content) || (isEn ? '<p>Complete the task described above.</p>' : '<p>Répondez à la consigne ci-dessus.</p>');
 
     // Détection de schéma ou document éducatif si pertinent
     let imageUrl = parsed.imageUrl || '';
     let imageCaption = parsed.imageCaption || '';
     if (!imageUrl) {
-      const detected = detectAndAttachEducationalDiagram(options.subject, options.unitTitle || '', cleanTitle, cleanContent);
+      const detected = detectAndAttachEducationalDiagram(options.subject, options.unitTitle || '', cleanTitle, stripHtmlTags(cleanContent));
       if (detected) {
         imageUrl = detected.imageUrl;
         imageCaption = detected.imageCaption;
@@ -298,7 +300,7 @@ Schéma JSON attendu :
       type: parsed.type === 'multiple_choice' || parsed.type === 'true_false' ? parsed.type : 'open',
       options: Array.isArray(parsed.options) && parsed.options.length > 0 ? parsed.options.map((o: any) => stripHtmlTags(String(o))) : undefined,
       correctAnswer: parsed.correctAnswer ? stripHtmlTags(String(parsed.correctAnswer)) : undefined,
-      answer: parsed.answer ? stripHtmlTags(String(parsed.answer)) : undefined,
+      answer: parsed.answer ? formatProfessionalHtml(String(parsed.answer)) : undefined,
       workspaceNeeded: options.questionType === 'geometry' || options.questionType === 'art',
     };
 
@@ -306,7 +308,7 @@ Schéma JSON attendu :
       exercise.subQuestions = parsed.subQuestions.map((sq: any, i: number) => ({
         id: sq.id || `sub_${i + 1}`,
         label: sq.label || `${i + 1})`,
-        content: stripHtmlTags(sq.content) || '',
+        content: formatProfessionalHtml(sq.content) || '',
         strandIndex: sq.strandIndex || ['i', 'ii', 'iii', 'iv'][i % 4],
         strandText: sq.strandText || options.strandText || '',
         type: sq.type || 'open',

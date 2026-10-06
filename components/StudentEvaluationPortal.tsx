@@ -1482,6 +1482,24 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               })}
             </div>
           )}
+
+          {/* 🎓 APPRÉCIATION GÉNÉRALE EN FIN DE COPIE (BILAN GLOBAL DE L'ÉVALUATION) */}
+          {isGraded && existingSubmission?.overallFeedback && (
+            <div className="bg-gradient-to-r from-purple-50 via-indigo-50 to-violet-50 rounded-2xl p-6 border-2 border-purple-300 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-black text-purple-950 uppercase tracking-wide flex items-center gap-2">
+                  <span className="text-lg">🎓</span>
+                  <span>Appréciation Générale & Bilan de l'Évaluation</span>
+                </h4>
+                <span className="text-[11px] font-bold text-purple-800 bg-white px-3 py-1 rounded-full border border-purple-200">
+                  Bilan final officiel
+                </span>
+              </div>
+              <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap font-sans bg-white/90 p-4 rounded-xl border border-purple-200 shadow-2xs">
+                {existingSubmission.overallFeedback}
+              </p>
+            </div>
+          )}
         </main>
 
         {showPrintModal && (

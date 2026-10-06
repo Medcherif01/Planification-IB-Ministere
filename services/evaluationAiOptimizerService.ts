@@ -2,9 +2,82 @@ import { AssessmentData, AssessmentExercise, AssessmentSubQuestion, UnitPlan } f
 import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
 
 /**
+ * Convertit les tableaux au format Markdown (| entête 1 | entête 2 |) en balises HTML <table> propres.
+ */
+function convertMarkdownTablesToHtml(text: string): string {
+  const lines = text.split('\n');
+  const result: string[] = [];
+  let tableLines: string[] = [];
+
+  const flushTable = () => {
+    if (tableLines.length >= 2) {
+      const sepIndex = tableLines.findIndex(l => /^\s*\|?\s*[-:]+[-|\s:]*\|\s*$/.test(l));
+      let headerLines: string[] = [];
+      let bodyLines: string[] = [];
+
+      if (sepIndex > 0) {
+        headerLines = tableLines.slice(0, sepIndex);
+        bodyLines = tableLines.slice(sepIndex + 1);
+      } else {
+        headerLines = [tableLines[0]];
+        bodyLines = tableLines.slice(1);
+      }
+
+      const parseCells = (row: string) => {
+        return row
+          .trim()
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map(c => c.trim());
+      };
+
+      let tableHtml = '<div class="table-container my-3 overflow-x-auto"><table class="eval-table w-full border-collapse rounded-xl overflow-hidden shadow-2xs">';
+      if (headerLines.length > 0) {
+        tableHtml += '<thead class="bg-slate-100 font-bold text-slate-900 border-b border-slate-300">';
+        for (const hr of headerLines) {
+          const cells = parseCells(hr);
+          tableHtml += '<tr>' + cells.map(c => `<th class="p-2.5 border border-slate-300 text-left">${c}</th>`).join('') + '</tr>';
+        }
+        tableHtml += '</thead>';
+      }
+
+      tableHtml += '<tbody class="divide-y divide-slate-200">';
+      for (const br of bodyLines) {
+        const cells = parseCells(br);
+        if (cells.length > 0 && cells.some(c => c.length > 0)) {
+          tableHtml += '<tr>' + cells.map(c => `<td class="p-2.5 border border-slate-300 text-slate-800">${c}</td>`).join('') + '</tr>';
+        }
+      }
+      tableHtml += '</tbody></table></div>';
+      result.push(tableHtml);
+    } else {
+      result.push(...tableLines);
+    }
+    tableLines = [];
+  };
+
+  for (const line of lines) {
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      tableLines.push(line);
+    } else {
+      if (tableLines.length > 0) {
+        flushTable();
+      }
+      result.push(line);
+    }
+  }
+  if (tableLines.length > 0) {
+    flushTable();
+  }
+
+  return result.join('\n');
+}
+
+/**
  * Nettoie, structure et sécurise le format HTML professionnel généré par l'IA ou saisi par l'enseignant.
  * Conserve et valorise les balises sémantiques valides (<p>, <strong>, <b>, <em>, <i>, <ul>, <ol>, <li>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <br>, <code>, <blockquote>).
- * Convertit le texte brut sans balises en paragraphes <p> propres.
+ * Convertit le texte brut ou markdown sans balises en balisage HTML propre.
  */
 export function formatProfessionalHtml(content?: string): string {
   if (!content) return '';
@@ -32,6 +105,11 @@ export function formatProfessionalHtml(content?: string): string {
     .replace(/\sclass="[^"]*"/gi, '')
     .replace(/\sstyle="[^"]*"/gi, '');
 
+  // Conversion des tableaux markdown éventuels en balises HTML
+  if (str.includes('|') && str.includes('\n')) {
+    str = convertMarkdownTablesToHtml(str);
+  }
+
   // Vérifier si le contenu contient déjà des balises sémantiques HTML
   const hasSemanticTags = /<(?:p|ul|ol|li|table|div|blockquote|h[1-6])[\s>]/i.test(str);
 
@@ -56,6 +134,7 @@ export function formatProfessionalHtml(content?: string): string {
 
   return str.trim();
 }
+
 
 interface OptimizeEvaluationParams {
   subject: string;
@@ -170,27 +249,31 @@ DIRECTIVES CRITIQUES :
    - Chaque question ou sous-question doit être expressément alignée avec un sous-aspect officiel du critère (aspect i, ii, iii...).
    - Pour un critère donné, prévois 2 à 4 tâches/exercices majeurs bien construits (ou 1 tâche progressive à 3-4 sous-questions).
 
-4. FORMAT HTML SOIGNÉ ET PROFESSIONNEL (<p>, <strong>, <ul>, <table>...) :
+4. FORMAT HTML SOIGNÉ ET PROFESSIONNEL AVEC TABLEAUX (<p>, <strong>, <ul>, <table>...) :
    - Rédige chaque énoncé, mise en situation et consigne dans un format HTML propre, moderne et structuré.
    - Utilise judicieusement les balises sémantiques :
      * <p> pour séparer chaque paragraphe de manière aérée.
      * <strong> pour mettre en relief les termes directifs IB (Identifier, Déterminer, Calculer, Justifier...) et données clés.
      * <ul> et <li> pour les listes de données chiffrées, hypothèses ou consignes par étapes.
-     * <table> avec <thead>, <tbody>, <tr>, <th>, <td> pour les tableaux de données, relevés d'expériences ou tableaux comparatifs.
+     * <table> avec <thead>, <tbody>, <tr>, <th>, <td> pour les tableaux de données scientifiques, protocoles, relevés d'expériences ou tableaux comparatifs.
    - Le balisage doit être du HTML pur et propre (sans classes polluantes comme class="mb-2", sans styles inline).
 
-5. DOCUMENTS VISUELS, SCHÉMAS & DIAGRAMMES À LÉGENDER :
-   - Si l'évaluation nécessite un document visuel (Mathématiques, Sciences, Physique, SVT, Géographie, Statistiques), insère si approprié dans le champ "imageCaption" un titre descriptif (ex: "Document 1 : Schéma du circuit électrique à légender [A, B, C, D]", "Figure 1 : Triangle ABC rectangle en B", "Document 2 : Graphique comparatif des données").
-   - Dans le texte de la consigne, fais expressément référence aux repères du schéma (ex: "Identifiez les éléments repérés [A, B, C, D]" ou "À l'aide du graphique ci-dessus...").
+5. SCHÉMAS SCIENTIFIQUES & DIAGRAMMES À LÉGENDER [A, B, C, D] OU [1, 2, 3, 4] :
+   - En Sciences (SVT, Physique-Chimie, Biologie, Écologie), Mathématiques et Géographie : sois créatif et intègre des mises en situation concrètes accompagnées de schémas à légender.
+   - Indique dans le champ "imageCaption" le titre explicite du document (ex: "Document 1 : Schéma du circuit électrique à légender [A, B, C, D]", "Document 2 : Structure cellulaire au microscope [1, 2, 3, 4]", "Document 5 : Appareil respiratoire à légender [1, 2, 3, 4]", "Document 6 : Photosynthèse foliaire [A, B, C, D]").
+   - Rédige des questions demandant à l'élève d'identifier et nommer chaque élément repéré [1, 2, 3, 4] ou [A, B, C, D], d'expliquer son rôle biologique/physique, ou de compléter un tableau d'analyse.
 
 6. VARIÉTÉ ET PRATICITÉ DES QUESTIONS :
    - Utilise une alternance équilibrée de :
-     * Sous-questions progressives 1), 2), 3) ciblant chacune un sous-aspect.
+     * Sous-questions progressives 1), 2), 3) ciblant chacune un sous-aspect (avec tableau de données ou schéma support).
      * Questions à choix multiples (QCM) stimulantes avec 4 propositions bien distinctes (A, B, C, D) et une seule bonne réponse argumentée.
      * Questions vrai/faux avec justification obligatoire.
      * Questions de rédaction ou résolution méthodique avec espace de réponse structuré.
 
-7. CONSERVATION DE LA MATIÈRE ET DE L'UNITÉ :
+7. CORRIGÉS DÉTAILLÉS POUR CHAQUE QUESTION :
+   - Rédige pour chaque tâche le corrigé type complet ("answer") avec les éléments de réponse attendus et les critères de notation.
+
+8. CONSERVATION DE LA MATIÈRE ET DE L'UNITÉ :
    - Conserve scrupuleusement la matière ("${subject}"), le niveau scolaire ("${gradeLevel}") et le thème de l'unité ("${unitTitle}").
    - Langue de rédaction : ${isEn ? 'English' : 'Français soigné et irréprochable'}.
 `.trim();

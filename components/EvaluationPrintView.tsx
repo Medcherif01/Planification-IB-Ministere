@@ -4,6 +4,7 @@ import { X, Printer, Award, Clock, Download } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../types';
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import { stripHtmlTags } from '../services/educationalDiagramService';
+import { formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
 import RichExerciseContent from './RichExerciseContent';
 
 interface EvaluationPrintViewProps {
@@ -57,13 +58,13 @@ export function buildEvaluationPdfTitle(
   return `${subjectStr}-${gradeStr}-${unitStr}-${critStr}-${studentStr}`;
 }
 
-// Helper: Nettoyer scrupuleusement le texte de toute balise HTML (<p>, <strong>...) et des artefacts de formulaire
+// Helper: Nettoyer le texte des artefacts de formulaire et formater en HTML soigné
 function sanitizeText(text: string): string {
   if (!text) return '';
   const withoutArtifacts = text
     .replace(/(?:^|\n)\s*Réponse\s*:\s*[\.\_\-\s]{2,}.*$/gi, '')
     .replace(/\s*Réponse\s*:\s*[\.\_\-\s]{2,}.*$/gi, '');
-  return stripHtmlTags(withoutArtifacts);
+  return formatProfessionalHtml(withoutArtifacts);
 }
 
 /**
@@ -993,6 +994,18 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                               </div>
                             );
                           })}
+
+                          {/* Commentaire enseignant pour la tâche complète */}
+                          {isCorrectedCopy && (studentAns?.teacherComment || studentAns?.aiFeedback) && (
+                            <div className="mt-2.5 p-2 bg-purple-50 border border-purple-200 rounded text-[10.5px]">
+                              <span className="text-[9px] font-bold text-purple-900 block uppercase">
+                                {isEn ? "Teacher's comment on this task:" : "Commentaire de l'enseignant pour cette question :"}
+                              </span>
+                              <p className="text-purple-950 italic">
+                                {studentAns.teacherComment || studentAns.aiFeedback}
+                              </p>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         /* CAS 2 : QUESTION UNIQUE (SANS SOUS-QUESTIONS) */
