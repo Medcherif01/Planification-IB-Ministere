@@ -712,9 +712,338 @@ export const EDUCATIONAL_DIAGRAMS: EducationalDiagram[] = [
   },
 ];
 
+// ── 5. GÉNÉRATEURS DYNAMIQUES SUR-MESURE & LOGIQUE DE COMPATIBILITÉ AVANCÉE ────
+
 /**
- * Détecte intelligemment si une tâche doit être accompagnée d'un schéma visuel
- * et renvoie le schéma éducatif le plus pertinent si aucun n'est présent.
+ * Génère dynamiquement une courbe mathématique (droite affine ou quadratique)
+ * dans un repère cartésien avec axes gradués et points remarquables.
+ */
+export function generateDynamicFunctionCurve(options: {
+  a?: number;
+  b?: number;
+  equationStr?: string;
+  points?: Array<{ name: string; x: number; y: number }>;
+  caption?: string;
+}): { imageUrl: string; imageCaption: string } {
+  const a = options.a !== undefined ? options.a : 1;
+  const b = options.b !== undefined ? options.b : 0;
+  const eqStr = options.equationStr || (b >= 0 ? `y = ${a}x + ${b}` : `y = ${a}x - ${Math.abs(b)}`);
+  const caption = options.caption || `Repère orthonormé (O, I, J) et courbe représentative (${eqStr})`;
+
+  // Coordonnées du repère : centre O à (230, 150)
+  // Échelle : 1 unité = 30px
+  const ox = 230;
+  const oy = 150;
+  const scale = 30;
+
+  // Calculer 2 points pour tracer la droite dans la zone x in [-5, 5]
+  const x1 = -4.5;
+  const y1 = a * x1 + b;
+  const x2 = 4.5;
+  const y2 = a * x2 + b;
+
+  const svgX1 = ox + x1 * scale;
+  const svgY1 = oy - y1 * scale;
+  const svgX2 = ox + x2 * scale;
+  const svgY2 = oy - y2 * scale;
+
+  // Points remarquables
+  const pts = options.points || [
+    { name: 'A', x: 0, y: b },
+    { name: 'B', x: 2, y: a * 2 + b }
+  ];
+
+  const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 300" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="230" y="24" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  
+  <!-- Grille orthonormée -->
+  <defs>
+    <pattern id="dyn_grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect x="35" y="38" width="390" height="230" fill="url(#dyn_grid)"/>
+  
+  <!-- Axe des abscisses (Ox) -->
+  <line x1="35" y1="${oy}" x2="425" y2="${oy}" stroke="#334155" stroke-width="2"/>
+  <polygon points="425,${oy} 415,${oy - 4} 415,${oy + 4}" fill="#334155"/>
+  <text x="420" y="${oy + 18}" font-size="12" font-weight="bold" fill="#334155">x</text>
+  
+  <!-- Axe des ordonnées (Oy) -->
+  <line x1="${ox}" y1="268" x2="${ox}" y2="38" stroke="#334155" stroke-width="2"/>
+  <polygon points="${ox},38 ${ox - 4},48 ${ox + 4},48" fill="#334155"/>
+  <text x="${ox - 14}" y="50" font-size="12" font-weight="bold" fill="#334155">y</text>
+  
+  <!-- Origine O -->
+  <text x="${ox - 12}" y="${oy + 15}" font-size="12" font-weight="bold" fill="#334155">O</text>
+  
+  <!-- Graduations -3, -2, -1, 1, 2, 3 -->
+  ${[-4, -3, -2, -1, 1, 2, 3, 4].map(v => {
+    const gx = ox + v * scale;
+    return `<line x1="${gx}" y1="${oy - 3}" x2="${gx}" y2="${oy + 3}" stroke="#64748b" stroke-width="1.5"/>
+    <text x="${gx}" y="${oy + 14}" font-size="10" fill="#64748b" text-anchor="middle">${v}</text>`;
+  }).join('')}
+  
+  ${[-3, -2, -1, 1, 2, 3].map(v => {
+    const gy = oy - v * scale;
+    return `<line x1="${ox - 3}" y1="${gy}" x2="${ox + 3}" y2="${gy}" stroke="#64748b" stroke-width="1.5"/>
+    <text x="${ox - 10}" y="${gy + 4}" font-size="10" fill="#64748b" text-anchor="end">${v}</text>`;
+  }).join('')}
+  
+  <!-- Droite représentative -->
+  <line x1="${svgX1}" y1="${svgY1}" x2="${svgX2}" y2="${svgY2}" stroke="#7c3aed" stroke-width="3"/>
+  <rect x="260" y="44" width="160" height="22" rx="6" fill="#f5f3ff" stroke="#c4b5fd"/>
+  <text x="340" y="59" font-size="11" font-weight="bold" fill="#6d28d9" text-anchor="middle">Courbe (${eqStr})</text>
+  
+  <!-- Points marqués -->
+  ${pts.map(pt => {
+    const px = ox + pt.x * scale;
+    const py = oy - pt.y * scale;
+    if (px < 40 || px > 420 || py < 40 || py > 260) return '';
+    return `
+    <line x1="${px}" y1="${oy}" x2="${px}" y2="${py}" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,3"/>
+    <line x1="${ox}" y1="${py}" x2="${px}" y2="${py}" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,3"/>
+    <circle cx="${px}" cy="${py}" r="4.5" fill="#ef4444"/>
+    <text x="${px + 8}" y="${py - 6}" font-size="11" font-weight="bold" fill="#dc2626">${pt.name}(${pt.x}, ${pt.y})</text>
+    `;
+  }).join('')}
+</svg>
+`.trim();
+
+  return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+}
+
+/**
+ * Génère dynamiquement un triangle rectangle conforme aux sommets et aux cotes de l'exercice.
+ */
+export function generateDynamicRightTriangle(options: {
+  points: [string, string, string]; // ex: ['A', 'B', 'C']
+  rightAngleAt: string;             // ex: 'B'
+  hypotenuseName?: string;          // ex: 'AC'
+  side1Label?: string;              // ex: 'AB = 6 cm'
+  side2Label?: string;              // ex: 'BC = 8 cm'
+  hypotenuseLabel?: string;         // ex: 'AC = ?'
+  caption?: string;
+}): { imageUrl: string; imageCaption: string } {
+  const [p1, p2, p3] = options.points;
+  const right = options.rightAngleAt;
+  
+  // Placer le sommet à l'angle droit en bas à gauche (70, 220)
+  const rightCorner = right;
+  const otherPoints = [p1, p2, p3].filter(p => p !== rightCorner);
+  const topPoint = otherPoints[0] || 'A';
+  const rightPoint = otherPoints[1] || 'C';
+
+  const s1 = options.side1Label || `${topPoint}${rightCorner}`;
+  const s2 = options.side2Label || `${rightCorner}${rightPoint}`;
+  const sHyp = options.hypotenuseLabel || `${topPoint}${rightPoint}`;
+  const caption = options.caption || `Figure : Triangle ${p1}${p2}${p3} rectangle en ${rightCorner}`;
+
+  const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 280" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="230" y="26" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  
+  <!-- Triangle -->
+  <polygon points="80,220 370,220 80,75" fill="#f8fafc" stroke="#334155" stroke-width="3"/>
+  
+  <!-- Angle droit en (80, 220) -->
+  <path d="M 80,195 L 105,195 L 105,220" fill="none" stroke="#dc2626" stroke-width="2.5"/>
+  <circle cx="92" cy="207" r="2.5" fill="#dc2626"/>
+  
+  <!-- Sommet Haut -->
+  <circle cx="80" cy="75" r="5" fill="#4f46e5"/>
+  <text x="60" y="70" font-size="16" font-weight="900" fill="#4f46e5">${topPoint}</text>
+  
+  <!-- Sommet Angle Droit -->
+  <circle cx="80" cy="220" r="5" fill="#dc2626"/>
+  <text x="58" y="240" font-size="16" font-weight="900" fill="#dc2626">${rightCorner}</text>
+  
+  <!-- Sommet Droit -->
+  <circle cx="370" cy="220" r="5" fill="#4f46e5"/>
+  <text x="385" y="235" font-size="16" font-weight="900" fill="#4f46e5">${rightPoint}</text>
+  
+  <!-- Cotes -->
+  <text x="55" y="150" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="end">${s1}</text>
+  <text x="225" y="245" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${s2}</text>
+  <text x="245" y="135" font-size="13" font-weight="bold" fill="#6d28d9" text-anchor="start">Hypoténuse ${sHyp}</text>
+</svg>
+`.trim();
+
+  return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+}
+
+/**
+ * Génère dynamiquement un solide géométrique de révolution ou polyédrique adapté (Cylindre, Cône, Cube, Pavé).
+ */
+export function generateDynamicSolid(type: 'cylindre' | 'cone' | 'cube' | 'pave', options?: {
+  labels?: Record<string, string>;
+  caption?: string;
+}): { imageUrl: string; imageCaption: string } {
+  if (type === 'cylindre') {
+    const caption = options?.caption || 'Figure : Cylindre de révolution (Rayon R, Hauteur h)';
+    const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 280" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="230" y="26" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  
+  <!-- Axe de révolution -->
+  <line x1="230" y1="50" x2="230" y2="240" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,4"/>
+  
+  <!-- Corps du cylindre -->
+  <line x1="150" y1="80" x2="150" y2="210" stroke="#1e293b" stroke-width="2.5"/>
+  <line x1="310" y1="80" x2="310" y2="210" stroke="#1e293b" stroke-width="2.5"/>
+  
+  <!-- Base inférieure : demi-ellipse avant pleine, demi-ellipse arrière en pointillés -->
+  <path d="M 150 210 A 80 25 0 0 0 310 210" fill="#f1f5f9" stroke="#1e293b" stroke-width="2.5"/>
+  <path d="M 150 210 A 80 25 0 0 1 310 210" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4,4"/>
+  
+  <!-- Base supérieure -->
+  <ellipse cx="230" cy="80" rx="80" ry="25" fill="#e2e8f0" stroke="#1e293b" stroke-width="2.5"/>
+  
+  <!-- Rayon R -->
+  <line x1="230" y1="80" x2="310" y2="80" stroke="#ef4444" stroke-width="2"/>
+  <circle cx="230" cy="80" r="3" fill="#ef4444"/>
+  <text x="270" y="74" font-size="12" font-weight="bold" fill="#ef4444">Rayon R</text>
+  
+  <!-- Hauteur h -->
+  <line x1="120" y1="80" x2="120" y2="210" stroke="#7c3aed" stroke-width="2"/>
+  <polyline points="115,85 120,80 125,85" stroke="#7c3aed" fill="none" stroke-width="2"/>
+  <polyline points="115,205 120,210 125,205" stroke="#7c3aed" fill="none" stroke-width="2"/>
+  <text x="105" y="150" font-size="12" font-weight="bold" fill="#7c3aed" text-anchor="end">Hauteur h</text>
+</svg>
+`.trim();
+    return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+  }
+
+  if (type === 'cone') {
+    const caption = options?.caption || 'Figure : Cône de révolution (Sommet S, Rayon R, Hauteur h)';
+    const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 280" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="230" y="26" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  
+  <!-- Génératrices -->
+  <line x1="230" y1="60" x2="140" y2="215" stroke="#1e293b" stroke-width="2.5"/>
+  <line x1="230" y1="60" x2="320" y2="215" stroke="#1e293b" stroke-width="2.5"/>
+  
+  <!-- Hauteur SO -->
+  <line x1="230" y1="60" x2="230" y2="215" stroke="#7c3aed" stroke-width="2" stroke-dasharray="4,4"/>
+  <circle cx="230" cy="60" r="4" fill="#4f46e5"/>
+  <text x="230" y="50" font-size="14" font-weight="900" fill="#4f46e5" text-anchor="middle">S</text>
+  
+  <!-- Base circulaire -->
+  <path d="M 140 215 A 90 26 0 0 0 320 215" fill="#f8fafc" stroke="#1e293b" stroke-width="2.5"/>
+  <path d="M 140 215 A 90 26 0 0 1 320 215" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4,4"/>
+  
+  <!-- Centre O et Rayon R -->
+  <circle cx="230" cy="215" r="3.5" fill="#ef4444"/>
+  <text x="220" y="235" font-size="13" font-weight="bold" fill="#ef4444">O</text>
+  <line x1="230" y1="215" x2="320" y2="215" stroke="#ef4444" stroke-width="2"/>
+  <text x="275" y="210" font-size="12" font-weight="bold" fill="#ef4444">R</text>
+  <text x="215" y="145" font-size="12" font-weight="bold" fill="#7c3aed" text-anchor="end">h</text>
+</svg>
+`.trim();
+    return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+  }
+
+  if (type === 'cube') {
+    const caption = options?.caption || 'Figure : Cube en perspective cavalière (Arête a)';
+    const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 280" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="230" y="26" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  
+  <!-- Arêtes cachées -->
+  <line x1="130" y1="200" x2="200" y2="135" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4,4"/>
+  <line x1="200" y1="135" x2="330" y2="135" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4,4"/>
+  <line x1="200" y1="135" x2="200" y2="65" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4,4"/>
+  
+  <!-- Face avant carrée -->
+  <polygon points="130,200 260,200 260,130 130,130" fill="#f8fafc" stroke="#1e293b" stroke-width="2.5"/>
+  <!-- Face du dessus -->
+  <polygon points="130,130 260,130 330,65 200,65" fill="#f1f5f9" stroke="#1e293b" stroke-width="2.5"/>
+  <!-- Face latérale droite -->
+  <polygon points="260,200 330,135 330,65 260,130" fill="#e2e8f0" stroke="#1e293b" stroke-width="2.5"/>
+  
+  <!-- Cotes -->
+  <text x="195" y="222" font-size="13" font-weight="bold" fill="#dc2626" text-anchor="middle">Arête c</text>
+  <text x="310" y="175" font-size="12" font-weight="bold" fill="#dc2626">c</text>
+  <text x="110" y="170" font-size="12" font-weight="bold" fill="#dc2626">c</text>
+</svg>
+`.trim();
+    return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+  }
+
+  // Pavé droit standard
+  const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_pave_droit')!;
+  return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+}
+
+/**
+ * Génère dynamiquement une cellule végétale spécifique avec sa paroi pectocellulosique rectangulaire
+ * et ses chloroplastes, pour éviter la confusion avec la cellule animale.
+ */
+export function generateDynamicPlantCell(): { imageUrl: string; imageCaption: string } {
+  const caption = "Document : Schéma d'une cellule végétale observée au microscope (Paroi, Vacuole, Chloroplastes)";
+  const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="240" y="24" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  <text x="240" y="42" font-size="11" fill="#64748b" text-anchor="middle">Consigne : Associez chaque repère [1, 2, 3, 4] au bon constituant végétal</text>
+  
+  <!-- Paroi squelettique / pectocellulosique rigide (rectangulaire aux coins arrondis) -->
+  <rect x="70" y="65" width="340" height="195" rx="20" fill="#ecfdf5" stroke="#059669" stroke-width="5"/>
+  <!-- Membrane plasmique interne -->
+  <rect x="78" y="73" width="324" height="179" rx="16" fill="#f0fdf4" stroke="#10b981" stroke-width="2"/>
+  
+  <!-- Grande vacuole centrale -->
+  <rect x="130" y="100" width="180" height="130" rx="30" fill="#e0f2fe" stroke="#0284c7" stroke-width="2"/>
+  <text x="220" y="165" font-size="11" font-weight="bold" fill="#0369a1" text-anchor="middle">Vacuole</text>
+  
+  <!-- Noyau avec nucléole rejeté en périphérie -->
+  <circle cx="340" cy="130" r="28" fill="#f3e8ff" stroke="#7e22ce" stroke-width="2.5"/>
+  <circle cx="340" cy="130" r="10" fill="#6b21a8"/>
+  
+  <!-- Chloroplastes (organites verts) -->
+  <ellipse cx="105" cy="115" rx="14" ry="9" fill="#15803d" stroke="#166534" stroke-width="1.5"/>
+  <ellipse cx="110" cy="190" rx="14" ry="9" fill="#15803d" stroke="#166534" stroke-width="1.5"/>
+  <ellipse cx="345" cy="210" rx="14" ry="9" fill="#15803d" stroke="#166534" stroke-width="1.5"/>
+  
+  <!-- Repères [1, 2, 3, 4] -->
+  <!-- [1] Paroi -->
+  <line x1="50" y1="90" x2="70" y2="90" stroke="#047857" stroke-width="2"/>
+  <circle cx="40" cy="90" r="12" fill="#059669"/>
+  <text x="40" y="94" font-size="12" font-weight="bold" fill="#ffffff" text-anchor="middle">1</text>
+  
+  <!-- [2] Vacuole -->
+  <line x1="220" y1="230" x2="220" y2="250" stroke="#0284c7" stroke-width="2"/>
+  <circle cx="220" cy="262" r="12" fill="#0284c7"/>
+  <text x="220" y="266" font-size="12" font-weight="bold" fill="#ffffff" text-anchor="middle">2</text>
+  
+  <!-- [3] Chloroplaste -->
+  <line x1="105" y1="106" x2="105" y2="80" stroke="#15803d" stroke-width="2"/>
+  <circle cx="105" cy="68" r="12" fill="#15803d"/>
+  <text x="105" y="72" font-size="12" font-weight="bold" fill="#ffffff" text-anchor="middle">3</text>
+  
+  <!-- [4] Noyau -->
+  <line x1="368" y1="130" x2="430" y2="130" stroke="#7e22ce" stroke-width="2"/>
+  <circle cx="442" cy="130" r="12" fill="#7e22ce"/>
+  <text x="442" y="134" font-size="12" font-weight="bold" fill="#ffffff" text-anchor="middle">4</text>
+</svg>
+`.trim();
+
+  return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+}
+
+/**
+ * Détecte intelligemment et rigoureusement si une tâche doit être accompagnée
+ * d'un schéma visuel et s'assure d'une compatibilité ABSOLUE avec l'énoncé.
+ * 
+ * RÈGLE D'OR : Ne jamais attacher un schéma qui contredit les lettres, valeurs ou
+ * notions de l'exercice. Si l'exercice ne nécessite pas de figure, renvoie null.
  */
 export function detectAndAttachEducationalDiagram(
   subject: string,
@@ -722,163 +1051,237 @@ export function detectAndAttachEducationalDiagram(
   exerciseTitle: string,
   exerciseContent: string
 ): { imageUrl: string; imageCaption: string } | null {
-  const fullText = `${subject} ${unitTitle} ${exerciseTitle} ${exerciseContent}`.toLowerCase();
+  const content = exerciseContent || '';
+  const title = exerciseTitle || '';
+  const text = `${title} ${content}`.trim();
+  const lower = text.toLowerCase();
+  const subjLower = (subject || '').toLowerCase();
 
-  // 1. Physique - Chimie / Électricité
+  // 1. FILTRE DE NÉCESSITÉ VISUELLE STRICTE :
+  // L'exercice doit faire explicitement appel à une figure ou un schéma
+  const hasExplicitVisualReference =
+    lower.includes('figure') ||
+    lower.includes('graphique') ||
+    lower.includes('courbe') ||
+    lower.includes('schéma') ||
+    lower.includes('schema') ||
+    lower.includes('document') ||
+    lower.includes('diagramme') ||
+    lower.includes('repère') ||
+    lower.includes('repere') ||
+    lower.includes('légender') ||
+    lower.includes('legender') ||
+    lower.includes('ci-contre') ||
+    lower.includes('ci-dessous') ||
+    lower.includes('illustration') ||
+    lower.includes('observer') ||
+    lower.includes('perspective cavalière');
+
+  // Si l'exercice ne fait AUCUNE référence visuelle ni géométrique, ne PAS injecter de schéma
+  if (!hasExplicitVisualReference) {
+    // Vérifier si c'est un problème géométrique explicite avec calcul d'un solide ou d'un triangle
+    const isStrictGeometryProblem =
+      (lower.includes('triangle') && lower.includes('rectangle en')) ||
+      lower.includes('cylindre de révolution') ||
+      lower.includes('cône de révolution') ||
+      lower.includes('théorème de thalès') ||
+      lower.includes('theoreme de thales');
+
+    if (!isStrictGeometryProblem) {
+      return null;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CAS 1 : MATHÉMATIQUES — GÉOMÉTRIE (TRIANGLES, THALÈS, SOLIDES, CERCLE)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // A. Triangle rectangle (Pythagore / Trigonométrie)
+  if (lower.includes('triangle') && (lower.includes('rectangle') || lower.includes('hypoténuse') || lower.includes('pythagore'))) {
+    // Tenter d'extraire les 3 lettres du triangle et le sommet de l'angle droit
+    // ex: "triangle ABC rectangle en B" ou "triangle DEF rectangle en D" ou "MNP rectangle en M"
+    const match = text.match(/triangle\s+([A-Z]{3})\s+rectangle\s+en\s+([A-Z])/i) ||
+                  text.match(/([A-Z]{3})\s+est\s+un\s+triangle\s+rectangle\s+en\s+([A-Z])/i) ||
+                  text.match(/([A-Z]{3})\s+rectangle\s+en\s+([A-Z])/i);
+
+    if (match) {
+      const triName = match[1].toUpperCase();
+      const rightAt = match[2].toUpperCase();
+      const letters = triName.split('') as [string, string, string];
+
+      // Vérifier si des mesures sont mentionnées dans le texte
+      let s1Label: string | undefined;
+      let s2Label: string | undefined;
+      let sHypLabel: string | undefined;
+
+      // Chercher des égalités comme AB = 6 cm ou EF = 10
+      const lenMatches = Array.from(text.matchAll(/([A-Z]{2})\s*=\s*(\d+(?:[\.,]\d+)?)\s*(?:cm|m|mm)?/g));
+      for (const lm of lenMatches) {
+        const seg = lm[1].toUpperCase();
+        const val = `${lm[2]} cm`;
+        if (seg.includes(rightAt)) {
+          if (!s1Label) s1Label = `${seg} = ${val}`;
+          else if (!s2Label) s2Label = `${seg} = ${val}`;
+        } else {
+          sHypLabel = `${seg} = ${val}`;
+        }
+      }
+
+      return generateDynamicRightTriangle({
+        points: letters.length === 3 ? letters : ['A', 'B', 'C'],
+        rightAngleAt: rightAt,
+        side1Label: s1Label,
+        side2Label: s2Label,
+        hypotenuseLabel: sHypLabel,
+        caption: `Figure : Triangle ${triName} rectangle en ${rightAt}`,
+      });
+    }
+
+    // Si c'est un triangle ABC mentionné explicitement
+    if (text.includes('ABC')) {
+      const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_triangle_rectangle')!;
+      return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+    }
+
+    // Si aucune lettre n'est identifiable mais que c'est un triangle rectangle générique
+    return generateDynamicRightTriangle({
+      points: ['A', 'B', 'C'],
+      rightAngleAt: 'B',
+      caption: 'Figure : Triangle rectangle avec côtés de l\'angle droit et hypoténuse',
+    });
+  }
+
+  // B. Théorème de Thalès
+  if (lower.includes('thalès') || lower.includes('thales') || (lower.includes('parallèle') && lower.includes('triangle'))) {
+    // Si la figure cite expressément (MN) // (BC) ou ABC
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_theoreme_thales')!;
+    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+  }
+
+  // C. Solides géométriques dans l'espace
+  if (lower.includes('cylindre')) {
+    return generateDynamicSolid('cylindre');
+  }
+  if (lower.includes('cône') || lower.includes('cone')) {
+    return generateDynamicSolid('cone');
+  }
+  if (lower.includes('cube')) {
+    return generateDynamicSolid('cube');
+  }
+  if (lower.includes('pavé droit') || lower.includes('parallélépipède') || (lower.includes('solide') && lower.includes('volume'))) {
+    return generateDynamicSolid('pave');
+  }
+
+  // D. Repère orthonormé & Fonctions affines / linéaires
   if (
-    fullText.includes('circuit') ||
-    fullText.includes('électrique') ||
-    fullText.includes('pile') ||
-    fullText.includes('lampe') ||
-    fullText.includes('tension') ||
-    fullText.includes('intensité') ||
-    fullText.includes('courant')
+    lower.includes('repère') ||
+    lower.includes('repere') ||
+    lower.includes('abscisse') ||
+    lower.includes('ordonnée') ||
+    lower.includes('coefficient directeur') ||
+    (lower.includes('fonction') && (lower.includes('courbe') || lower.includes('graphique') || lower.includes('droite')))
+  ) {
+    // Tenter de parser une équation affine : ex: f(x) = 2x + 1 ou y = -x + 3
+    const eqMatch = text.match(/(?:f\(x\)|y)\s*=\s*([+-]?\s*\d*(?:\.\d+)?)\s*x\s*([+-]\s*\d+(?:\.\d+)?)?/i);
+    if (eqMatch) {
+      let aStr = (eqMatch[1] || '1').replace(/\s+/g, '');
+      if (aStr === '' || aStr === '+') aStr = '1';
+      if (aStr === '-') aStr = '-1';
+      const a = parseFloat(aStr) || 1;
+
+      let bStr = (eqMatch[2] || '+0').replace(/\s+/g, '');
+      const b = parseFloat(bStr) || 0;
+
+      return generateDynamicFunctionCurve({
+        a,
+        b,
+        equationStr: `y = ${a !== 1 ? (a === -1 ? '-' : a) : ''}x ${b > 0 ? '+ ' + b : b < 0 ? '- ' + Math.abs(b) : ''}`.trim(),
+      });
+    }
+
+    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_repere_fonction')!;
+    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CAS 2 : SCIENCES — PHYSIQUE - CHIMIE & SVT
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // A. Électricité / Circuits
+  if (
+    lower.includes('circuit') ||
+    (lower.includes('électrique') && (lower.includes('pile') || lower.includes('lampe') || lower.includes('schéma')))
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_circuit_electrique')!;
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 2. Respiration / Poumons / Échanges gazeux
+  // B. SVT / Biologie cellulaire
+  if (lower.includes('cellule') || lower.includes('organite') || lower.includes('microscope')) {
+    // Si végétale
+    if (lower.includes('végétal') || lower.includes('vegetal') || lower.includes('chloroplaste') || lower.includes('paroi')) {
+      return generateDynamicPlantCell();
+    }
+    // Si animale
+    if (lower.includes('animal') || lower.includes('membrane') || lower.includes('cytoplasme')) {
+      const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_cellule_animale')!;
+      return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+    }
+    if (lower.includes('microscope') && (lower.includes('oculaire') || lower.includes('objectif'))) {
+      const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_optique_microscope');
+      if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
+    }
+  }
+
+  // C. Respiration & Anatomie
   if (
-    fullText.includes('respirat') ||
-    fullText.includes('poumon') ||
-    fullText.includes('trachée') ||
-    fullText.includes('bronche') ||
-    fullText.includes('diaphragme') ||
-    fullText.includes('alvéole')
+    lower.includes('appareil respiratoire') ||
+    lower.includes('poumon') ||
+    lower.includes('trachée') ||
+    lower.includes('bronche')
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_systeme_respiratoire');
     if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 3. Photosynthèse / Végétaux / Énergie lumineuse
+  // D. Photosynthèse & Échanges foliaires
   if (
-    fullText.includes('photosynth') ||
-    fullText.includes('feuille') ||
-    fullText.includes('chlorophyl') ||
-    fullText.includes('sève') ||
-    fullText.includes('plante') ||
-    (fullText.includes('co2') && fullText.includes('lumière'))
+    lower.includes('photosynthèse') ||
+    lower.includes('photosynthese') ||
+    (lower.includes('feuille') && lower.includes('chlorophylle'))
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_photosynthese');
     if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 4. Microscope / Observation optique
+  // E. Atome & Modèle atomique
   if (
-    fullText.includes('microscope') ||
-    fullText.includes('oculaire') ||
-    fullText.includes('objectif') ||
-    fullText.includes('grossissement')
-  ) {
-    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_optique_microscope');
-    if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
-  }
-
-  // 5. Atome / Électrons / Modèle de Bohr / Molécules
-  if (
-    fullText.includes('atome') ||
-    fullText.includes('électron') ||
-    fullText.includes('proton') ||
-    fullText.includes('neutron') ||
-    fullText.includes('noyau atomique') ||
-    fullText.includes('cortège')
+    lower.includes('modèle atomique') ||
+    (lower.includes('atome') && (lower.includes('proton') || lower.includes('électron') || lower.includes('neutron')))
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_modele_atome');
     if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 6. SVT / Biologie / Cellule
-  if (
-    fullText.includes('cellule') ||
-    fullText.includes('membrane') ||
-    fullText.includes('noyau') ||
-    fullText.includes('cytoplasme') ||
-    fullText.includes('organite')
-  ) {
-    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_cellule_animale')!;
-    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
-  }
-
-  // 7. Cycle de l'eau / Écologie / Géographie
-  if (
-    fullText.includes('cycle de l\'eau') ||
-    fullText.includes('évaporation') ||
-    fullText.includes('précipitation') ||
-    fullText.includes('ruissellement') ||
-    fullText.includes('bassin versant')
-  ) {
+  // F. Cycle de l'eau
+  if (lower.includes('cycle de l\'eau') || lower.includes('cycle de l eau')) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_cycle_eau')!;
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // 8. Théorème de Thalès / Proportions / Triangles semblables
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CAS 3 : STATISTIQUES & GRAPHIQUES DE DONNÉES
+  // ═══════════════════════════════════════════════════════════════════════════
   if (
-    fullText.includes('thalès') ||
-    fullText.includes('thales') ||
-    fullText.includes('parallèle') && fullText.includes('triangle')
-  ) {
-    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_theoreme_thales');
-    if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
-  }
-
-  // 9. Trigonométrie / Triangle rectangle / Pythagore
-  if (
-    fullText.includes('triangle') ||
-    fullText.includes('pythagore') ||
-    fullText.includes('hypoténuse') ||
-    fullText.includes('rectangle en') ||
-    fullText.includes('cosinus') ||
-    fullText.includes('sinus') ||
-    fullText.includes('tangente') ||
-    fullText.includes('angle droit')
-  ) {
-    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_triangle_rectangle')!;
-    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
-  }
-
-  // 10. Géométrie dans l'espace / Volumes
-  if (
-    fullText.includes('pavé droit') ||
-    fullText.includes('parallélépipède') ||
-    fullText.includes('cube') ||
-    fullText.includes('volume') ||
-    fullText.includes('perspective')
-  ) {
-    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_pave_droit')!;
-    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
-  }
-
-  // 11. Repère / Graphique de fonction / Droite
-  if (
-    fullText.includes('repère') ||
-    fullText.includes('ordonnée') ||
-    fullText.includes('abscisse') ||
-    fullText.includes('fonction') ||
-    fullText.includes('droite') ||
-    fullText.includes('affine') ||
-    fullText.includes('linéaire') ||
-    fullText.includes('coefficient directeur')
-  ) {
-    const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_repere_fonction')!;
-    return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
-  }
-
-  // 12. Graphique de données / Statistiques / Expériences
-  if (
-    fullText.includes('histogramme') ||
-    fullText.includes('diagramme') ||
-    fullText.includes('pourcentage') ||
-    fullText.includes('effectif') ||
-    fullText.includes('statistique') ||
-    fullText.includes('comparatif') ||
-    fullText.includes('résultats expérimentaux') ||
-    fullText.includes('données expérimentales')
+    (lower.includes('histogramme') || lower.includes('diagramme en barres') || lower.includes('diagramme circulaire')) &&
+    (lower.includes('graphique') || lower.includes('données') || lower.includes('valeurs'))
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'data_comparatif_barres')!;
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
+  // Aucun schéma n'est strictement et fidèlement compatible : ne rien forcer !
   return null;
 }
+
 

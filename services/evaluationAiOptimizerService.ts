@@ -314,7 +314,8 @@ export async function optimizeEvaluationWithAI(params: OptimizeEvaluationParams)
     chapters,
     existingAssessments,
     targetCriteria,
-    customInstructions
+    customInstructions,
+    insertVisualDiagrams = true
   } = params;
 
   // Filtrer les évaluations ciblées
@@ -383,10 +384,10 @@ DIRECTIVES CRITIQUES :
      * <table> avec <thead>, <tbody>, <tr>, <th>, <td> pour les tableaux de données scientifiques, protocoles, relevés d'expériences ou tableaux comparatifs.
    - Le balisage doit être du HTML pur et propre (sans classes polluantes comme class="mb-2", sans styles inline).
 
-5. SCHÉMAS SCIENTIFIQUES & DIAGRAMMES À LÉGENDER [A, B, C, D] OU [1, 2, 3, 4] :
-   - En Sciences (SVT, Physique-Chimie, Biologie, Écologie), Mathématiques et Géographie : sois créatif et intègre des mises en situation concrètes accompagnées de schémas à légender.
-   - Indique dans le champ "imageCaption" le titre explicite du document (ex: "Document 1 : Schéma du circuit électrique à légender [A, B, C, D]", "Document 2 : Structure cellulaire au microscope [1, 2, 3, 4]", "Document 5 : Appareil respiratoire à légender [1, 2, 3, 4]", "Document 6 : Photosynthèse foliaire [A, B, C, D]").
-   - Rédige des questions demandant à l'élève d'identifier et nommer chaque élément repéré [1, 2, 3, 4] ou [A, B, C, D], d'expliquer son rôle biologique/physique, ou de compléter un tableau d'analyse.
+5. COURBES, FIGURES, SCHÉMAS & DIAGRAMMES SUR-MESURE (EXIGENCE STRICTE DE COMPATIBILITÉ) :
+   - RÈGLE ESSENTIELLE : Si et seulement si un exercice exploite ou fait référence à un schéma, une figure géométrique ou une courbe (ex: "D'après la figure...", "Soit la fonction représentée ci-contre...", "Observer le schéma du circuit..."), LA FIGURE DOIT ÊTRE ENTIÈREMENT ET STRICTEMENT COMPATIBLE avec le texte de l'exercice (mêmes lettres de sommets, mêmes cotes, même formule mathématique, même contexte).
+   - N'invente JAMAIS de figure déconnectée ou contradictoire avec l'énoncé.
+   - Si la question se résout par le calcul, la démonstration ou l'argumentation textuelle sans nécessiter de dessin, laisse "imageUrl" et "imageCaption" VIDES ("").
 
 6. VARIÉTÉ ET PRATICITÉ DES QUESTIONS :
    - Utilise une alternance équilibrée de :
@@ -516,10 +517,10 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
             const cleanContent = formatProfessionalHtml(ex.content) || `<p>${cleanTitle}</p>`;
             const cleanAnswer = ex.answer ? formatProfessionalHtml(ex.answer) : undefined;
 
-            // Détection automatique de schéma/diagramme si l'IA n'en a pas fourni
+            // Détection automatique de schéma/diagramme si l'IA n'en a pas fourni et si l'option est active
             let imageUrl = ex.imageUrl || '';
             let imageCaption = ex.imageCaption || '';
-            if (!imageUrl) {
+            if (!imageUrl && insertVisualDiagrams) {
               const detected = detectAndAttachEducationalDiagram(subject, unitTitle, cleanTitle, cleanContent);
               if (detected) {
                 imageUrl = detected.imageUrl;

@@ -193,8 +193,9 @@ RÈGLES IMPÉRATIVES :
 1. Rédige en français soigné, clair et pédagogiquement rigoureux.
 2. La question doit cibler précisément le Critère ${options.criterion} (${options.criterionName || ''}) et spécifiquement le sous-aspect ${strandLabel} (${options.strandText || ''}).
 3. La question doit être concrète, stimulante et adaptée au niveau scolaire (${options.gradeLevel}).
-4. Si pertinent (expériences, mesures, comparaisons), formate l'énoncé en HTML propre avec des tableaux <table>, listes <ul> ou références à des schémas à légender avec repères [A, B, C, D] ou [1, 2, 3, 4].
-5. Retourne UNIQUEMENT un objet JSON valide conforme au schéma demandé.
+4. Si pertinent (expériences, mesures, comparaisons), formate l'énoncé en HTML propre avec des tableaux <table>, listes <ul>.
+5. FIGURES & COURBES : Si la question nécessite un schéma ou une courbe, assure-toi d'une cohérence absolue entre l'énoncé et la figure (mêmes sommets, mêmes valeurs, mêmes équations). Si aucune figure n'est requise, n'en invente pas.
+6. Retourne UNIQUEMENT un objet JSON valide conforme au schéma demandé.
     `.trim();
 
     userPrompt = `

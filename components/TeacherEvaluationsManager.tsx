@@ -9,7 +9,15 @@ import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
 import { optimizeEvaluationWithAI, formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
 import RichExerciseContent from './RichExerciseContent';
-import { EDUCATIONAL_DIAGRAMS, detectAndAttachEducationalDiagram, stripHtmlTags } from '../services/educationalDiagramService';
+import {
+  EDUCATIONAL_DIAGRAMS,
+  detectAndAttachEducationalDiagram,
+  generateDynamicFunctionCurve,
+  generateDynamicRightTriangle,
+  generateDynamicSolid,
+  generateDynamicPlantCell,
+  stripHtmlTags,
+} from '../services/educationalDiagramService';
 
 interface TeacherEvaluationsManagerProps {
   currentSubject?: string;
@@ -1862,10 +1870,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     <div>
                       <span className="text-xs font-black text-purple-950 flex items-center gap-1.5">
                         <ImageIcon size={14} className="text-purple-600" />
-                        Insérer si nécessaire des images, graphiques & diagrammes à légender
+                        Courbes, figures & schémas intelligents sur-mesure (100% compatibles)
                       </span>
                       <p className="text-[11px] text-purple-900/80 leading-relaxed mt-0.5">
-                        Associe automatiquement des <strong>figures géométriques cotées, schémas scientifiques (circuits, cellules, cycles...) ou graphiques de données</strong> pertinents selon la matière.
+                        Génère des <strong>figures géométriques cotées (triangles, Thalès, solides), courbes de fonctions réelles et schémas scientifiques</strong> qui complètent rigoureusement l'exercice et respectent fidèlement les lettres, valeurs et équations de l'énoncé (sans figure superflue ni contradictoire).
                       </p>
                     </div>
                   </label>
@@ -3053,10 +3061,124 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                 </div>
                               </div>
 
-                              {/* Boutons d'insertion rapide de schémas scientifiques, géométriques & diagrammes à légender */}
-                              <div className="pt-1.5">
-                                <span className="text-[10px] font-bold text-indigo-900 uppercase block mb-1">
-                                  Schémas & Diagrammes vectoriels à légender (1-clic pour insérer) :
+                              {/* Boutons d'insertion intelligente et sur-mesure de figures & courbes */}
+                              <div className="pt-2 space-y-2">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <span className="text-[10px] font-black text-indigo-950 uppercase">
+                                    Figures, Courbes & Schémas sur-mesure (100% compatibles) :
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const detected = detectAndAttachEducationalDiagram(
+                                        editingEvaluation.subject || '',
+                                        editingEvaluation.title || '',
+                                        ex.title,
+                                        stripHtmlTags(ex.content)
+                                      );
+                                      if (detected) {
+                                        handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                          imageUrl: detected.imageUrl,
+                                          imageCaption: detected.imageCaption
+                                        });
+                                      } else {
+                                        alert("💡 Cet exercice ne nécessite pas de figure géométrique ou de schéma visuel (résolution algébrique ou textuelle directe).");
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold transition flex items-center gap-1 shadow-2xs"
+                                    title="Analyser l'énoncé et générer une figure rigoureusement compatible avec les lettres et valeurs"
+                                  >
+                                    <Sparkles size={11} className="text-yellow-300" />
+                                    <span>Adapter automatiquement à cet énoncé</span>
+                                  </button>
+                                </div>
+
+                                {/* Générateurs dynamiques */}
+                                <div className="flex gap-1.5 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const res = generateDynamicFunctionCurve({});
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: res.imageUrl, imageCaption: res.imageCaption });
+                                    }}
+                                    className="px-2 py-1 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded text-[10px] font-bold text-purple-900 transition flex items-center gap-1"
+                                    title="Repère orthonormé avec droite affine graduée"
+                                  >
+                                    <span>📈</span>
+                                    <span>Courbe & Repère (O, I, J)</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const res = generateDynamicRightTriangle({ points: ['A', 'B', 'C'], rightAngleAt: 'B' });
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: res.imageUrl, imageCaption: res.imageCaption });
+                                    }}
+                                    className="px-2 py-1 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded text-[10px] font-bold text-blue-900 transition flex items-center gap-1"
+                                    title="Triangle rectangle avec angle droit et hypoténuse"
+                                  >
+                                    <span>📐</span>
+                                    <span>Triangle rectangle</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const res = generateDynamicSolid('cylindre');
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: res.imageUrl, imageCaption: res.imageCaption });
+                                    }}
+                                    className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded text-[10px] font-bold text-emerald-900 transition flex items-center gap-1"
+                                    title="Cylindre de révolution avec rayon et hauteur"
+                                  >
+                                    <span>🥫</span>
+                                    <span>Cylindre (R, h)</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const res = generateDynamicSolid('cone');
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: res.imageUrl, imageCaption: res.imageCaption });
+                                    }}
+                                    className="px-2 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded text-[10px] font-bold text-amber-900 transition flex items-center gap-1"
+                                    title="Cône de révolution avec sommet S, rayon R et hauteur h"
+                                  >
+                                    <span>🍦</span>
+                                    <span>Cône (S, R, h)</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const res = generateDynamicSolid('cube');
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: res.imageUrl, imageCaption: res.imageCaption });
+                                    }}
+                                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded text-[10px] font-bold text-slate-800 transition flex items-center gap-1"
+                                    title="Cube en perspective cavalière"
+                                  >
+                                    <span>📦</span>
+                                    <span>Cube (arête c)</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const res = generateDynamicPlantCell();
+                                      handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: res.imageUrl, imageCaption: res.imageCaption });
+                                    }}
+                                    className="px-2 py-1 bg-green-50 hover:bg-green-100 border border-green-200 rounded text-[10px] font-bold text-green-900 transition flex items-center gap-1"
+                                    title="Cellule végétale avec paroi pectocellulosique rectangulaire et chloroplastes"
+                                  >
+                                    <span>🌿</span>
+                                    <span>Cellule végétale</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Catalogue classique de schémas scientifiques normalisés */}
+                              <div className="pt-1 border-t border-slate-200">
+                                <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                                  Catalogue de schémas normalisés & diagrammes scientifiques :
                                 </span>
                                 <div className="flex gap-1.5 flex-wrap">
                                   {EDUCATIONAL_DIAGRAMS.map(diag => (
@@ -3064,10 +3186,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                       key={diag.id}
                                       type="button"
                                       onClick={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: diag.svgDataUri, imageCaption: diag.caption })}
-                                      className="px-2 py-1 bg-white hover:bg-indigo-50 border border-indigo-200 rounded text-[10px] font-semibold text-indigo-900 transition flex items-center gap-1 shadow-2xs"
+                                      className="px-2 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-medium text-slate-700 transition flex items-center gap-1 shadow-2xs"
                                       title={diag.description}
                                     >
-                                      <span>📐</span>
+                                      <span>🔬</span>
                                       <span>{diag.title}</span>
                                     </button>
                                   ))}
