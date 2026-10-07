@@ -5,6 +5,7 @@ import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../t
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import { stripHtmlTags } from '../services/educationalDiagramService';
 import { formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
+import { resolveArtworkOrImage, generateDynamicMuseumArtCard } from '../services/artworkService';
 import RichExerciseContent from './RichExerciseContent';
 
 interface EvaluationPrintViewProps {
@@ -33,6 +34,7 @@ function PrintSafeImage({
   const [failed, setFailed] = useState(false);
   if (!imageUrl) return null;
 
+  // 1. Si SVG brut
   if (imageUrl.startsWith('<svg')) {
     return (
       <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
@@ -49,19 +51,68 @@ function PrintSafeImage({
     );
   }
 
+  // 2. Si SVG data URI
+  if (imageUrl.startsWith('data:image/svg+xml')) {
+    return (
+      <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
+        <img
+          src={imageUrl}
+          alt={imageCaption || 'Illustration vectorielle'}
+          className="max-h-56 max-w-full mx-auto object-contain rounded"
+        />
+        {imageCaption && (
+          <p className="text-[10px] text-slate-700 italic mt-1 font-bold">
+            🖼️ {stripHtmlTags(imageCaption)}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // 3. Résolution d'oeuvres d'art
+  const resolved = resolveArtworkOrImage(imageUrl, imageCaption);
+  if (resolved && resolved.artwork) {
+    return (
+      <div className="my-2.5 p-2.5 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
+        <img
+          src={resolved.imageUrl}
+          alt={resolved.imageCaption}
+          className="max-h-56 max-w-full mx-auto object-contain rounded"
+        />
+        <div className="mt-1 text-[9.5px] text-slate-800 font-bold">
+          🎨 {resolved.artwork.name} ({resolved.artwork.year}) — {resolved.artwork.artist}
+        </div>
+        <p className="text-[8.5px] text-slate-500 italic">
+          {resolved.artwork.medium} • {resolved.artwork.museum}
+        </p>
+      </div>
+    );
+  }
+
   const isImageSource = imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://') || imageUrl.startsWith('/');
 
   if (!isImageSource || failed) {
     const captionText = imageCaption || (!isImageSource ? imageUrl : (isEn ? 'Visual Document' : 'Document visuel'));
+    const artCard = generateDynamicMuseumArtCard({
+      title: stripHtmlTags(captionText) || "Document d'Histoire des Arts",
+      artist: "Document Iconographique Officiel",
+      periodOrYear: "Épreuve PEI",
+      medium: "Document d'étude",
+      caption: stripHtmlTags(captionText),
+    });
+
     return (
-      <div className="my-2.5 p-2.5 bg-slate-50 border border-slate-300 rounded text-center avoid-break space-y-0.5">
-        <div className="font-bold text-slate-900 text-xs flex items-center justify-center gap-1.5">
-          <span>🖼️</span>
-          <span>{stripHtmlTags(captionText)}</span>
-        </div>
-        <p className="text-[9.5px] text-slate-500 italic">
-          {isEn ? 'Visual stimulus document for this task' : 'Document support pour cette tâche'}
-        </p>
+      <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
+        <img
+          src={artCard.imageUrl}
+          alt={artCard.imageCaption}
+          className="max-h-52 max-w-full mx-auto object-contain rounded"
+        />
+        {captionText && (
+          <p className="text-[9.5px] text-slate-700 italic mt-1 font-bold">
+            🖼️ {stripHtmlTags(captionText)}
+          </p>
+        )}
       </div>
     );
   }
@@ -71,6 +122,8 @@ function PrintSafeImage({
       <img
         src={imageUrl}
         alt={imageCaption || (isEn ? 'Task illustration' : 'Illustration exercice')}
+        referrerPolicy="no-referrer"
+        crossOrigin="anonymous"
         onError={() => setFailed(true)}
         className="max-h-56 max-w-full mx-auto object-contain rounded"
       />

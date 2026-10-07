@@ -1,5 +1,6 @@
 import { AssessmentData, AssessmentExercise, AssessmentSubQuestion, UnitPlan } from '../types';
 import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
+import { resolveArtworkOrImage } from './artworkService';
 
 /**
  * Convertit les tableaux au format Markdown (| entête 1 | entête 2 |) en balises HTML <table> propres.
@@ -517,10 +518,15 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
             const cleanContent = formatProfessionalHtml(ex.content) || `<p>${cleanTitle}</p>`;
             const cleanAnswer = ex.answer ? formatProfessionalHtml(ex.answer) : undefined;
 
-            // Détection automatique de schéma/diagramme si l'IA n'en a pas fourni et si l'option est active
+            // Détection et attachement d'oeuvre d'art, figure géométrique ou schéma éducatif
             let imageUrl = ex.imageUrl || '';
             let imageCaption = ex.imageCaption || '';
-            if (!imageUrl && insertVisualDiagrams) {
+
+            const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
+            if (resolvedArt) {
+              imageUrl = resolvedArt.imageUrl;
+              imageCaption = resolvedArt.imageCaption;
+            } else if (!imageUrl && insertVisualDiagrams) {
               const detected = detectAndAttachEducationalDiagram(subject, unitTitle, cleanTitle, cleanContent);
               if (detected) {
                 imageUrl = detected.imageUrl;
@@ -599,10 +605,15 @@ export function sanitizeAndFormatLocalAssessments(
       if (simpleContentKey) seenContents.add(simpleContentKey);
       if (simpleTitleKey) seenTitles.add(simpleTitleKey);
 
-      // Détection de schéma éducatif si pertinent
+      // Détection et attachement d'oeuvre d'art ou schéma éducatif
       let imageUrl = ex.imageUrl || '';
       let imageCaption = ex.imageCaption || '';
-      if (!imageUrl && (subject || unitTitle)) {
+
+      const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
+      if (resolvedArt) {
+        imageUrl = resolvedArt.imageUrl;
+        imageCaption = resolvedArt.imageCaption;
+      } else if (!imageUrl && (subject || unitTitle)) {
         const detected = detectAndAttachEducationalDiagram(subject, unitTitle, cleanTitle, cleanContent);
         if (detected) {
           imageUrl = detected.imageUrl;

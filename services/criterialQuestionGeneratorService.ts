@@ -1,6 +1,7 @@
 import { AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
 import { formatProfessionalHtml } from './evaluationAiOptimizerService';
+import { resolveArtworkOrImage, findMatchingArtwork } from './artworkService';
 
 export interface GenerateQuestionOptions {
   subject: string;
@@ -194,7 +195,9 @@ RÈGLES IMPÉRATIVES :
 2. La question doit cibler précisément le Critère ${options.criterion} (${options.criterionName || ''}) et spécifiquement le sous-aspect ${strandLabel} (${options.strandText || ''}).
 3. La question doit être concrète, stimulante et adaptée au niveau scolaire (${options.gradeLevel}).
 4. Si pertinent (expériences, mesures, comparaisons), formate l'énoncé en HTML propre avec des tableaux <table>, listes <ul>.
-5. FIGURES & COURBES : Si la question nécessite un schéma ou une courbe, assure-toi d'une cohérence absolue entre l'énoncé et la figure (mêmes sommets, mêmes valeurs, mêmes équations). Si aucune figure n'est requise, n'en invente pas.
+5. FIGURES, COURBES & OEUVRES D'ART :
+   - Pour les tâches d'arts visuels, d'histoire des arts ou d'analyse d'image, base l'étude sur une oeuvre d'art authentique et reconnaissable (ex: "Dora Maar au chat" de Pablo Picasso, "Guernica", "La Nuit étoilée" de Vincent van Gogh, "La Grande Vague de Kanagawa" d'Hokusai, "La Joconde" de Léonard de Vinci, "Le Cri" d'Edvard Munch, "La Jeune Fille à la perle" de Vermeer, "Composition" de Mondrian, ou "Mosaïque et zellige de l'Alhambra"). Nomme explicitement l'oeuvre et l'artiste dans le titre et l'énoncé.
+   - Pour les sciences et mathématiques : si la question nécessite un schéma ou une courbe, assure-toi d'une cohérence absolue entre l'énoncé et la figure (mêmes sommets, mêmes valeurs, mêmes équations). Si aucune figure n'est requise, n'en invente pas.
 6. Retourne UNIQUEMENT un objet JSON valide conforme au schéma demandé.
     `.trim();
 
@@ -277,10 +280,17 @@ Schéma JSON attendu :
     const cleanTitle = stripHtmlTags(parsed.title) || defaultTitle;
     const cleanContent = formatProfessionalHtml(parsed.content) || (isEn ? '<p>Complete the task described above.</p>' : '<p>Répondez à la consigne ci-dessus.</p>');
 
-    // Détection de schéma ou document éducatif si pertinent
+    // Détection et attachement d'oeuvre d'art, figure géométrique ou document visuel
     let imageUrl = parsed.imageUrl || '';
     let imageCaption = parsed.imageCaption || '';
-    if (!imageUrl) {
+
+    // 1. Résolution d'oeuvres d'art citées dans le titre, l'énoncé ou le champ image
+    const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
+    if (resolvedArt) {
+      imageUrl = resolvedArt.imageUrl;
+      imageCaption = resolvedArt.imageCaption;
+    } else if (!imageUrl) {
+      // 2. Détection de figures géométriques cotées, courbes mathématiques ou schémas SVT/Physique
       const detected = detectAndAttachEducationalDiagram(options.subject, options.unitTitle || '', cleanTitle, stripHtmlTags(cleanContent));
       if (detected) {
         imageUrl = detected.imageUrl;

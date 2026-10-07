@@ -10,6 +10,7 @@ import modRequestsHandler from './api/modification-requests.ts';
 import templateHandler from './api/template.ts';
 import usersHandler from './api/users.ts';
 import onlineEvaluationsHandler from './api/online-evaluations.ts';
+import imageProxyHandler from './api/image-proxy.ts';
 
 async function startServer() {
   const app = express();
@@ -28,6 +29,7 @@ async function startServer() {
   app.all('/api/template', (req, res) => templateHandler(req as any, res as any));
   app.all('/api/users', (req, res) => usersHandler(req as any, res as any));
   app.all('/api/online-evaluations', (req, res) => onlineEvaluationsHandler(req as any, res as any));
+  app.all('/api/image-proxy', (req, res) => imageProxyHandler(req as any, res as any));
 
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });

@@ -6,6 +6,8 @@
  * et des graphiques de données pour enrichir les évaluations en ligne et imprimées.
  */
 
+import { findMatchingArtwork, generateDynamicMuseumArtCard } from './artworkService';
+
 export interface EducationalDiagram {
   id: string;
   title: string;
@@ -1057,7 +1059,41 @@ export function detectAndAttachEducationalDiagram(
   const lower = text.toLowerCase();
   const subjLower = (subject || '').toLowerCase();
 
-  // 1. FILTRE DE NÉCESSITÉ VISUELLE STRICTE :
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CAS 0 : OEUVRES D'ART CÉLÈBRES, ARTS VISUELS & DOCUMENTS HISTORIQUES
+  // ═══════════════════════════════════════════════════════════════════════════
+  const matchedArt = findMatchingArtwork(text);
+  if (matchedArt) {
+    return {
+      imageUrl: matchedArt.svgDataUri || matchedArt.url,
+      imageCaption: matchedArt.caption,
+    };
+  }
+
+  const isArtSubject =
+    subjLower.includes('art') ||
+    subjLower.includes('plastique') ||
+    subjLower.includes('visuel') ||
+    subjLower.includes('musique') ||
+    lower.includes('oeuvre d\'art') ||
+    lower.includes('oeuvre') ||
+    lower.includes('tableau') ||
+    lower.includes('peinture');
+
+  // Si c'est un cours d'art explicite demandant l'analyse d'une oeuvre non répertoriée
+  if (isArtSubject && (lower.includes('analys') || lower.includes('observ') || lower.includes('tableau') || lower.includes('peinture'))) {
+    // Générer une élégante fiche muséale vectorielle au lieu d'un bloc vide
+    const artCard = generateDynamicMuseumArtCard({
+      title: title.replace(/^(?:Tâche|Task|Question)\s*\d*\s*[:\-]\s*/i, '').trim() || "Analyse Visuelle et Plastique",
+      artist: "Artiste / Document d'étude",
+      periodOrYear: "Histoire des Arts",
+      medium: "Analyse plastique et compositionnelle",
+      caption: `Document iconographique : ${title}`,
+    });
+    return artCard;
+  }
+
+  // 1. FILTRE DE NÉCESSITÉ VISUELLE STRICTE POUR LES SCIENCES ET MATHS :
   // L'exercice doit faire explicitement appel à une figure ou un schéma
   const hasExplicitVisualReference =
     lower.includes('figure') ||
@@ -1100,11 +1136,11 @@ export function detectAndAttachEducationalDiagram(
   if (lower.includes('triangle') && (lower.includes('rectangle') || lower.includes('hypoténuse') || lower.includes('pythagore'))) {
     // Tenter d'extraire les 3 lettres du triangle et le sommet de l'angle droit
     // ex: "triangle ABC rectangle en B" ou "triangle DEF rectangle en D" ou "MNP rectangle en M"
-    const match = text.match(/triangle\s+([A-Z]{3})\s+rectangle\s+en\s+([A-Z])/i) ||
-                  text.match(/([A-Z]{3})\s+est\s+un\s+triangle\s+rectangle\s+en\s+([A-Z])/i) ||
-                  text.match(/([A-Z]{3})\s+rectangle\s+en\s+([A-Z])/i);
+    const match = text.match(/\btriangle\s+([A-Za-z]{3})\s+rectangle\s+en\s+([A-Za-z])\b/i) ||
+                  text.match(/\b([A-Za-z]{3})\s+est\s+un\s+triangle\s+rectangle\s+en\s+([A-Za-z])\b/i) ||
+                  text.match(/(?<!trian)\b([A-Za-z]{3})\s+rectangle\s+en\s+([A-Za-z])\b/i);
 
-    if (match) {
+    if (match && match[1].toLowerCase() !== 'gle') {
       const triName = match[1].toUpperCase();
       const rightAt = match[2].toUpperCase();
       const letters = triName.split('') as [string, string, string];

@@ -13,6 +13,7 @@ import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './Scie
 import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import EvaluationPrintView from './EvaluationPrintView';
+import { resolveArtworkOrImage } from '../services/artworkService';
 
 interface StudentViewLayoutEditorModalProps {
   evaluation: OnlineEvaluation;
@@ -1045,18 +1046,36 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                           )}
 
                           {/* Image si présente */}
-                          {ex.imageUrl && (
-                            <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
-                              <img
-                                src={ex.imageUrl}
-                                alt={ex.imageCaption || 'Illustration'}
-                                className="max-h-60 max-w-full mx-auto object-contain rounded-xl"
-                              />
-                              {ex.imageCaption && (
-                                <p className="text-xs text-slate-600 italic mt-2">{ex.imageCaption}</p>
-                              )}
-                            </div>
-                          )}
+                          {ex.imageUrl && (() => {
+                            if (ex.imageUrl.startsWith('<svg')) {
+                              return (
+                                <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+                                  <div
+                                    className="max-h-60 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-60 [&>svg]:max-w-full [&>svg]:mx-auto"
+                                    dangerouslySetInnerHTML={{ __html: ex.imageUrl }}
+                                  />
+                                  {ex.imageCaption && (
+                                    <p className="text-xs text-slate-600 italic mt-2">{ex.imageCaption}</p>
+                                  )}
+                                </div>
+                              );
+                            }
+                            const resolved = resolveArtworkOrImage(ex.imageUrl, ex.imageCaption);
+                            const src = resolved?.imageUrl || ex.imageUrl;
+                            return (
+                              <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+                                <img
+                                  src={src}
+                                  alt={ex.imageCaption || 'Illustration'}
+                                  referrerPolicy="no-referrer"
+                                  className="max-h-60 max-w-full mx-auto object-contain rounded-xl"
+                                />
+                                {ex.imageCaption && (
+                                  <p className="text-xs text-slate-600 italic mt-2">{ex.imageCaption}</p>
+                                )}
+                              </div>
+                            );
+                          })()}
 
                           {/* Sous-questions ou Question directe */}
                           {hasSubQuestions ? (

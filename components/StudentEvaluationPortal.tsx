@@ -13,6 +13,7 @@ import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './Scie
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import VirtualTabletKeyboard from './VirtualTabletKeyboard';
 import RichExerciseContent from './RichExerciseContent';
+import { resolveArtworkOrImage, findMatchingArtwork, generateDynamicMuseumArtCard, getSafeArtworkImageUrl } from '../services/artworkService';
 
 interface StudentEvaluationPortalProps {
   initialAccessCode?: string;
@@ -31,14 +32,16 @@ const SafeExerciseImage: React.FC<{
   imageCaption?: string;
 }> = ({ imageUrl, imageCaption }) => {
   const [loadFailed, setLoadFailed] = useState(false);
+  const [tryProxy, setTryProxy] = useState(false);
 
   if (!imageUrl) return null;
 
+  // 1. Si c'est du SVG brut
   if (imageUrl.startsWith('<svg')) {
     return (
-      <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+      <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center shadow-xs">
         <div
-          className="max-h-64 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-64 [&>svg]:max-w-full [&>svg]:mx-auto"
+          className="max-h-72 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-72 [&>svg]:max-w-full [&>svg]:mx-auto [&>svg]:rounded-xl"
           dangerouslySetInnerHTML={{ __html: imageUrl }}
         />
         {imageCaption && (
@@ -50,30 +53,93 @@ const SafeExerciseImage: React.FC<{
     );
   }
 
-  const isImageSource = imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://') || imageUrl.startsWith('/');
-
-  if (!isImageSource || loadFailed) {
-    const captionText = imageCaption || (!isImageSource ? imageUrl : 'Document visuel support');
+  // 2. Si c'est un SVG data URI
+  if (imageUrl.startsWith('data:image/svg+xml')) {
     return (
-      <div className="my-2.5 p-3.5 bg-gradient-to-r from-purple-50/80 to-indigo-50/80 border border-purple-200 rounded-2xl text-center space-y-1 shadow-2xs">
-        <div className="inline-flex items-center gap-2 text-xs font-black text-purple-950">
-          <span className="text-base">🖼️</span>
-          <span>{captionText}</span>
-        </div>
-        <p className="text-[11px] text-purple-800 italic font-medium">
-          Document d'étude et d'analyse pour cette épreuve
-        </p>
+      <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center shadow-xs">
+        <img
+          src={imageUrl}
+          alt={imageCaption || 'Illustration vectorielle'}
+          className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
+        />
+        {imageCaption && (
+          <p className="text-xs text-slate-700 italic mt-2 font-bold">
+            🖼️ {imageCaption}
+          </p>
+        )}
       </div>
     );
   }
 
+  // 3. Vérifier si la source ou la légende correspond à une oeuvre d'art connue du catalogue
+  const resolved = resolveArtworkOrImage(imageUrl, imageCaption);
+  if (resolved && resolved.artwork) {
+    return (
+      <div className="my-2.5 p-3.5 bg-slate-900 border border-slate-800 rounded-2xl text-center shadow-md">
+        <img
+          src={resolved.imageUrl}
+          alt={resolved.imageCaption}
+          className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs"
+        />
+        <div className="mt-2.5 inline-block text-left p-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-slate-200">
+          <p className="text-xs text-white font-bold">
+            🎨 {resolved.artwork.name} ({resolved.artwork.year})
+          </p>
+          <p className="text-[11px] text-slate-300 font-medium">
+            {resolved.artwork.artist} • {resolved.artwork.medium} • {resolved.artwork.museum}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const isImageSource = imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://') || imageUrl.startsWith('/');
+
+  // 4. Si ce n'est pas une URL d'image valide ou si le chargement a échoué
+  if (!isImageSource || loadFailed) {
+    const captionText = imageCaption || (!isImageSource ? imageUrl : '');
+    const artCard = generateDynamicMuseumArtCard({
+      title: captionText || "Document d'Étude Visuelle",
+      artist: "Document Iconographique Officiel",
+      periodOrYear: "Analyse Visuelle et Plastique",
+      medium: "Support d'évaluation critériée",
+      caption: captionText || "Document d'étude pour cette épreuve",
+    });
+
+    return (
+      <div className="my-2.5 p-3 bg-slate-950 border border-slate-800 rounded-2xl text-center shadow-md">
+        <img
+          src={artCard.imageUrl}
+          alt={artCard.imageCaption}
+          className="max-h-72 max-w-full mx-auto object-contain rounded-xl shadow-xs"
+        />
+        {captionText && (
+          <p className="text-xs text-slate-300 italic mt-2 font-bold">
+            🖼️ {captionText}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // 5. Source normale avec retry par proxy en cas de blocage CORS/Referer
+  const finalSrc = tryProxy ? `/api/image-proxy?url=${encodeURIComponent(imageUrl)}` : imageUrl;
+
   return (
     <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center">
       <img
-        src={imageUrl}
+        src={finalSrc}
         alt={imageCaption || 'Illustration'}
-        onError={() => setLoadFailed(true)}
-        className="max-h-64 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
+        referrerPolicy="no-referrer"
+        crossOrigin="anonymous"
+        onError={() => {
+          if (!tryProxy && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
+            setTryProxy(true);
+          } else {
+            setLoadFailed(true);
+          }
+        }}
+        className="max-h-72 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
       />
       {imageCaption && (
         <p className="text-xs text-slate-700 italic mt-2 font-bold">

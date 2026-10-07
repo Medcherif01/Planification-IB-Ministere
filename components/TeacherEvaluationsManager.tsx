@@ -18,6 +18,13 @@ import {
   generateDynamicPlantCell,
   stripHtmlTags,
 } from '../services/educationalDiagramService';
+import {
+  FAMOUS_ARTWORKS,
+  resolveArtworkOrImage,
+  findMatchingArtwork,
+  generateDynamicMuseumArtCard,
+  getSafeArtworkImageUrl,
+} from '../services/artworkService';
 
 interface TeacherEvaluationsManagerProps {
   currentSubject?: string;
@@ -35,39 +42,6 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   C: { bg: 'bg-amber-50',   border: 'border-amber-300',  text: 'text-amber-800',   badge: 'bg-amber-600',   light: 'bg-amber-100' },
   D: { bg: 'bg-rose-50',    border: 'border-rose-300',   text: 'text-rose-800',    badge: 'bg-rose-600',    light: 'bg-rose-100' },
 };
-
-const ARTWORK_PRESETS = [
-  {
-    name: 'La Nuit étoilée (Van Gogh)',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg/800px-Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg',
-    caption: 'La Nuit étoilée, Vincent van Gogh (1889), Huile sur toile, MoMA New York'
-  },
-  {
-    name: 'La Joconde (Léonard de Vinci)',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/800px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg',
-    caption: 'Mona Lisa (La Joconde), Léonard de Vinci (1503-1506), Musée du Louvre'
-  },
-  {
-    name: 'La Grande Vague de Kanagawa (Hokusai)',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Tsunami_by_hokusai_19th_century.jpg/800px-Tsunami_by_hokusai_19th_century.jpg',
-    caption: 'La Grande Vague de Kanagawa, Katsushika Hokusai (vers 1831), Estampe japonaise'
-  },
-  {
-    name: 'Calligraphie Arabe Koufique',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Kufic_script_in_blue_Quran.jpg/800px-Kufic_script_in_blue_Quran.jpg',
-    caption: 'Coran Bleu, Calligraphie en écriture koufique dorée sur parchemin teinté à l\'indigo (IXe siècle)'
-  },
-  {
-    name: 'Art Islamique - Géométrie & Mosaïque',
-    url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Alhambra_Mosaics.jpg/800px-Alhambra_Mosaics.jpg',
-    caption: 'Motif géométrique et arabesque en zellige, Palais de l\'Alhambra, Grenade'
-  },
-  {
-    name: 'Guernica (Pablo Picasso)',
-    url: 'https://upload.wikimedia.org/wikipedia/en/7/74/PicassoGuernica.jpg',
-    caption: 'Guernica, Pablo Picasso (1937), Musée Reina Sofía Madrid'
-  }
-];
 
 const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   currentSubject,
@@ -354,15 +328,16 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         workspaceNeeded: true,
       };
     } else if (questionKind === 'art') {
+      const art = FAMOUS_ARTWORKS[0];
       newExercise = {
         title: `Tâche ${count} : Analyse Visuelle & Création Artistique`,
-        content: 'Observez l\'oeuvre ci-dessous. Analysez les contrastes de couleurs, la composition et les textures, puis réalisez votre proposition plastique dans le studio d\'art :',
+        content: `Observez l'oeuvre '${art.name}' (${art.artist}, ${art.year}) ci-dessous. Analysez les contrastes de couleurs, la composition et les textures, puis réalisez votre proposition plastique dans le studio d'art :`,
         criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
         strandIndex: roman,
         strandText: defaultStrandText,
         type: 'open',
-        imageUrl: ARTWORK_PRESETS[0].url,
-        imageCaption: ARTWORK_PRESETS[0].caption,
+        imageUrl: art.svgDataUri || art.url,
+        imageCaption: art.caption,
         workspaceNeeded: true,
       };
     } else if (questionKind === 'true_false') {
@@ -779,33 +754,40 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           let imageUrl = ex.imageUrl || '';
           let imageCaption = ex.imageCaption || '';
 
-          // Valider que imageUrl est bien une source d'image (data URI, url http/https, chemin, svg)
-          const isRealImage = Boolean(
-            imageUrl && (
-              imageUrl.startsWith('data:image/') ||
-              imageUrl.startsWith('http://') ||
-              imageUrl.startsWith('https://') ||
-              imageUrl.startsWith('/') ||
-              imageUrl.startsWith('<svg')
-            )
-          );
-          if (!isRealImage) {
-            if (!imageCaption && imageUrl.length > 5) {
-              imageCaption = imageUrl;
-            }
-            imageUrl = '';
-          }
-
-          if (!imageUrl && insertVisualDiagramsOnCreate) {
-            const detected = detectAndAttachEducationalDiagram(
-              selectedPlanForCreate.subject || currentSubject || '',
-              selectedPlanForCreate.title || '',
-              cleanTitle,
-              stripHtmlTags(cleanContent)
+          // 1. Résolution d'oeuvres d'art ou de documents visuels authentiques
+          const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
+          if (resolvedArt) {
+            imageUrl = resolvedArt.imageUrl;
+            imageCaption = resolvedArt.imageCaption;
+          } else {
+            // Valider que imageUrl est bien une source d'image (data URI, url http/https, chemin, svg)
+            const isRealImage = Boolean(
+              imageUrl && (
+                imageUrl.startsWith('data:image/') ||
+                imageUrl.startsWith('http://') ||
+                imageUrl.startsWith('https://') ||
+                imageUrl.startsWith('/') ||
+                imageUrl.startsWith('<svg')
+              )
             );
-            if (detected) {
-              imageUrl = detected.imageUrl;
-              imageCaption = detected.imageCaption;
+            if (!isRealImage) {
+              if (!imageCaption && imageUrl.length > 5) {
+                imageCaption = imageUrl;
+              }
+              imageUrl = '';
+            }
+
+            if (!imageUrl && insertVisualDiagramsOnCreate) {
+              const detected = detectAndAttachEducationalDiagram(
+                selectedPlanForCreate.subject || currentSubject || '',
+                selectedPlanForCreate.title || '',
+                cleanTitle,
+                stripHtmlTags(cleanContent)
+              );
+              if (detected) {
+                imageUrl = detected.imageUrl;
+                imageCaption = detected.imageCaption;
+              }
             }
           }
 
@@ -3044,18 +3026,23 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
                               {/* Boutons d'insertion rapide d'oeuvres d'art célèbres */}
                               <div className="pt-1">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
-                                  Exemples d'oeuvres d'art célèbres (1-clic pour insérer) :
+                                <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                                  Galerie d'oeuvres d'art célèbres (1-clic pour insérer avec dessin vectoriel garanti) :
                                 </span>
                                 <div className="flex gap-1.5 flex-wrap">
-                                  {ARTWORK_PRESETS.map(art => (
+                                  {FAMOUS_ARTWORKS.map(art => (
                                     <button
-                                      key={art.name}
+                                      key={art.id}
                                       type="button"
-                                      onClick={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: art.url, imageCaption: art.caption })}
-                                      className="px-2 py-1 bg-white hover:bg-purple-100 border border-slate-200 rounded text-[10px] font-semibold text-slate-700 transition"
+                                      onClick={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                        imageUrl: art.svgDataUri || art.url,
+                                        imageCaption: art.caption
+                                      })}
+                                      className="px-2 py-1 bg-white hover:bg-purple-100 border border-slate-200 rounded text-[10px] font-semibold text-slate-700 transition flex items-center gap-1 shadow-2xs"
+                                      title={`${art.name} (${art.artist}, ${art.year})`}
                                     >
-                                      🎨 {art.name}
+                                      <span>🎨</span>
+                                      <span>{art.name}</span>
                                     </button>
                                   ))}
                                 </div>
@@ -3197,19 +3184,23 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               </div>
 
                               {/* Aperçu de l'image */}
-                              {ex.imageUrl && (
-                                <div className="p-2 bg-white rounded-lg border border-slate-200 text-center max-w-xs mx-auto">
-                                  <img
-                                    src={ex.imageUrl}
-                                    alt={ex.imageCaption || 'Aperçu'}
-                                    className="max-h-36 mx-auto object-contain rounded"
-                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                                  />
-                                  {ex.imageCaption && (
-                                    <p className="text-[10px] text-slate-600 italic mt-1">{ex.imageCaption}</p>
-                                  )}
-                                </div>
-                              )}
+                              {ex.imageUrl && (() => {
+                                const resolved = resolveArtworkOrImage(ex.imageUrl, ex.imageCaption);
+                                const previewSrc = resolved?.imageUrl || ex.imageUrl;
+                                return (
+                                  <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-700 text-center max-w-sm mx-auto shadow-sm">
+                                    <img
+                                      src={previewSrc}
+                                      alt={ex.imageCaption || 'Aperçu'}
+                                      referrerPolicy="no-referrer"
+                                      className="max-h-44 mx-auto object-contain rounded-lg"
+                                    />
+                                    {ex.imageCaption && (
+                                      <p className="text-[10.5px] text-slate-300 italic mt-1.5 font-medium">{ex.imageCaption}</p>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                         );
