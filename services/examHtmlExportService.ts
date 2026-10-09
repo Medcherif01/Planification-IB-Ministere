@@ -1,6 +1,7 @@
 import { saveAs } from 'file-saver';
 import { Exam, QuestionType } from '../types';
 import { LOGO_ALKAWTAR_BASE64 } from './logoBase64';
+import { isArabicText } from '../constants';
 
 // Convertir les notations mathématiques simples pour affichage lisible
 function formatMathText(text: string): string {
@@ -62,7 +63,11 @@ function formatQuestionContent(content: string): string {
         }
         const cells = line.split('|').map(x => x.trim()).filter(x => x !== '');
         const tag = isHeader ? 'th' : 'td';
-        tableHtml += '<tr>' + cells.map(cell => `<${tag}>${cell}</${tag}>`).join('') + '</tr>';
+        tableHtml += '<tr>' + cells.map(cell => {
+          const isAr = isArabicText(cell);
+          const arAttrs = isAr ? ' dir="rtl" class="arabic-cell" style="direction: rtl !important; text-align: center !important;"' : '';
+          return `<${tag}${arAttrs}>${cell}</${tag}>`;
+        }).join('') + '</tr>';
         if (isHeader) isHeader = false;
       } else {
         if (inTable) {
@@ -598,6 +603,28 @@ export function generateExamHtml(exam: Exam, isCorrection: boolean = false): str
       padding-top: 8px;
     }
 
+    /* Support complet de la langue arabe : RTL et Centré dans toutes les cases */
+    .arabic-text,
+    [dir="rtl"],
+    .dir-rtl,
+    .arabic-cell,
+    td[dir="rtl"],
+    th[dir="rtl"] {
+      direction: rtl !important;
+      text-align: center !important;
+      font-family: 'Cairo', 'Amiri', Tahoma, sans-serif !important;
+      unicode-bidi: plaintext !important;
+    }
+    td.arabic-cell,
+    th.arabic-cell,
+    .exam-table td[dir="rtl"],
+    .exam-table th[dir="rtl"],
+    .exam-identity-table td[dir="rtl"],
+    .exam-grading-table td[dir="rtl"] {
+      text-align: center !important;
+      direction: rtl !important;
+    }
+
     /* Règles d'impression A4 strictes */
     @media print {
       body {
@@ -605,6 +632,20 @@ export function generateExamHtml(exam: Exam, isCorrection: boolean = false): str
         color: #000000 !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
+      }
+
+      .arabic-text,
+      [dir="rtl"],
+      .dir-rtl,
+      .arabic-cell,
+      td[dir="rtl"],
+      th[dir="rtl"],
+      td.arabic-cell,
+      th.arabic-cell {
+        direction: rtl !important;
+        text-align: center !important;
+        font-family: 'Cairo', 'Amiri', Tahoma, sans-serif !important;
+        unicode-bidi: plaintext !important;
       }
 
       .no-print {

@@ -28,6 +28,7 @@ const inMemoryUsers: any[] = [
     role: 'admin',
     displayName: 'Mohamed (Administrateur)',
     subjects: [],
+    section: 'Mixte',
     createdAt: new Date().toISOString(),
     isActive: true,
   },
@@ -39,6 +40,93 @@ const inMemoryUsers: any[] = [
     role: 'admin',
     displayName: 'Administrateur',
     subjects: [],
+    section: 'Mixte',
+    createdAt: new Date().toISOString(),
+    isActive: true,
+  },
+  // Enseignants Section Garçons
+  {
+    id: 'user_teacher_majed',
+    _id: 'user_teacher_majed',
+    username: 'Majed',
+    passwordHash: '8eb3224b17bfd620ca532a82924151fa1faeb28ec561f95dcf7ea47d47fc9ec6',
+    role: 'teacher',
+    displayName: 'Majed (Études Islamiques)',
+    subjects: ['Individus et sociétés'],
+    section: 'Garçons',
+    createdAt: new Date().toISOString(),
+    isActive: true,
+  },
+  {
+    id: 'user_teacher_anouar',
+    _id: 'user_teacher_anouar',
+    username: 'Anouar',
+    passwordHash: '8eb3224b17bfd620ca532a82924151fa1faeb28ec561f95dcf7ea47d47fc9ec6',
+    role: 'teacher',
+    displayName: 'Anouar (Design)',
+    subjects: ['Design'],
+    section: 'Garçons',
+    createdAt: new Date().toISOString(),
+    isActive: true,
+  },
+  {
+    id: 'user_teacher_mali',
+    _id: 'user_teacher_mali',
+    username: 'MohamedAli',
+    passwordHash: '8eb3224b17bfd620ca532a82924151fa1faeb28ec561f95dcf7ea47d47fc9ec6',
+    role: 'teacher',
+    displayName: 'Mohamed Ali (EPS)',
+    subjects: ['Éducation physique et à la santé'],
+    section: 'Garçons',
+    createdAt: new Date().toISOString(),
+    isActive: true,
+  },
+  {
+    id: 'user_teacher_imad',
+    _id: 'user_teacher_imad',
+    username: 'Imad',
+    passwordHash: '8eb3224b17bfd620ca532a82924151fa1faeb28ec561f95dcf7ea47d47fc9ec6',
+    role: 'teacher',
+    displayName: 'Imad (Langue Arabe)',
+    subjects: ['Langue et littérature'],
+    section: 'Garçons',
+    createdAt: new Date().toISOString(),
+    isActive: true,
+  },
+  {
+    id: 'user_teacher_kenneh',
+    _id: 'user_teacher_kenneh',
+    username: 'Kenneh',
+    passwordHash: '8eb3224b17bfd620ca532a82924151fa1faeb28ec561f95dcf7ea47d47fc9ec6',
+    role: 'teacher',
+    displayName: 'Kenneh (Anglais)',
+    subjects: ['Acquisition de langues'],
+    section: 'Garçons',
+    createdAt: new Date().toISOString(),
+    isActive: true,
+  },
+  {
+    id: 'user_teacher_youssef',
+    _id: 'user_teacher_youssef',
+    username: 'Youssef',
+    passwordHash: '8eb3224b17bfd620ca532a82924151fa1faeb28ec561f95dcf7ea47d47fc9ec6',
+    role: 'teacher',
+    displayName: 'Youssef (L.L - Section Garçons)',
+    subjects: ['Langue et littérature'],
+    section: 'Garçons',
+    createdAt: new Date().toISOString(),
+    isActive: true,
+  },
+  // Enseignante Section Filles
+  {
+    id: 'user_teacher_nesrine',
+    _id: 'user_teacher_nesrine',
+    username: 'Nesrine',
+    passwordHash: '8eb3224b17bfd620ca532a82924151fa1faeb28ec561f95dcf7ea47d47fc9ec6',
+    role: 'teacher',
+    displayName: 'Nesrine (L.L - Section Filles)',
+    subjects: ['Langue et littérature'],
+    section: 'Filles',
     createdAt: new Date().toISOString(),
     isActive: true,
   }
@@ -203,6 +291,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             role: user.role,
             displayName: user.displayName,
             subjects: user.subjects || [],
+            section: user.section || 'Mixte',
           },
         });
       }
@@ -212,11 +301,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (req.method === 'POST') {
-        const { username, password, displayName, subjects } = req.body;
+        const { username, password, displayName, subjects, section } = req.body;
         if (!username || !password || !displayName) return res.status(400).json({ error: 'username, password et displayName requis' });
         const hash = await hashPassword(password);
         const id = `user_${Date.now()}`;
-        const newUser = { id, _id: id, username, passwordHash: hash, role: 'teacher', displayName, subjects: subjects || [], createdAt: new Date().toISOString(), isActive: true };
+        const newUser = { id, _id: id, username, passwordHash: hash, role: 'teacher', displayName, subjects: subjects || [], section: section || 'Mixte', createdAt: new Date().toISOString(), isActive: true };
         inMemoryUsers.push(newUser);
         return res.status(201).json({ success: true, id });
       }
@@ -246,6 +335,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           role: user.role,
           displayName: user.displayName,
           subjects: user.subjects || [],
+          section: user.section || 'Mixte',
         },
       });
     }
@@ -268,7 +358,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (callerRole !== 'admin') {
         return res.status(403).json({ error: 'Accès réservé à l\'administrateur' });
       }
-      const { username, password, displayName, subjects } = req.body;
+      const { username, password, displayName, subjects, section } = req.body;
       if (!username || !password || !displayName) {
         return res.status(400).json({ error: 'username, password et displayName requis' });
       }
@@ -283,6 +373,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         role: 'teacher',
         displayName,
         subjects: subjects || [],
+        section: section || 'Mixte',
         createdAt: new Date().toISOString(),
         isActive: true,
       });
@@ -297,11 +388,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const { id } = req.query;
       if (!id) return res.status(400).json({ error: 'id requis' });
-      const { username, password, displayName, subjects, isActive } = req.body;
+      const { username, password, displayName, subjects, section, isActive } = req.body;
       const update: Record<string, unknown> = {};
       if (username !== undefined) update.username = username;
       if (displayName !== undefined) update.displayName = displayName;
       if (subjects !== undefined) update.subjects = subjects;
+      if (section !== undefined) update.section = section;
       if (isActive !== undefined) update.isActive = isActive;
       if (password) update.passwordHash = await hashPassword(password);
       update.updatedAt = new Date().toISOString();

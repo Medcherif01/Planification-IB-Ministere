@@ -8,12 +8,16 @@ export function normalizeMatricule(matricule?: string): string {
   return (matricule || '').trim().toUpperCase();
 }
 
-// Normaliser le nom de la classe (ex: "PEI1" -> "PEI 1", "PEI 1 (6ème)" -> "PEI 1")
+// Normaliser le nom de la classe (ex: "PEI1" -> "PEI 1", "PEI1 Garçons" -> "PEI 1 Garçons", "PEI1 Filles" -> "PEI 1 Filles")
 export function normalizeGradeLabel(grade: string): string {
   if (!grade) return 'PEI 1';
   const m = grade.match(/PEI\s*([1-5])/i);
-  if (m) return `PEI ${m[1]}`;
-  return grade.trim();
+  const base = m ? `PEI ${m[1]}` : grade.trim();
+  const isGarcons = /gar[cç]on|boy/i.test(grade);
+  const isFilles = /fille|girl/i.test(grade);
+  if (isGarcons) return `${base} Garçons`;
+  if (isFilles) return `${base} Filles`;
+  return base;
 }
 
 export function getLocalStudents(grade?: string): ClassStudent[] {

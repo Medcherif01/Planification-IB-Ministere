@@ -24,7 +24,9 @@ import {
 } from 'lucide-react';
 import AdminPanel from './AdminPanel';
 import CalendarView from './CalendarView';
+import WeeklyPlanModal from './WeeklyPlanModal';
 import type { AppUser } from '../services/authService';
+import { SCHOOL_SECTIONS, SchoolSection } from '../constants';
 import { downloadCompleteExcelBackup, importAllDataFromExcel } from '../services/excelBackupService';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -145,6 +147,11 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showCalendar, setShowCalendar] = useState<string | null>(null); // grade string or null
+  const [activeSection, setActiveSection] = useState<SchoolSection>(() => {
+    if (currentUser?.section === 'Filles') return 'Filles';
+    return 'Garçons';
+  });
+  const [showWeeklyPlan, setShowWeeklyPlan] = useState<{ grade: string; section: SchoolSection } | null>(null);
 
   // Dériver les infos user depuis currentUser prop (avec fallback localStorage)
   const userName = currentUser?.displayName || localStorage.getItem('userName') || 'Administrateur';
@@ -467,6 +474,15 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
         onClose={() => setShowCalendar(null)}
       />
     )}
+
+    {/* Weekly Plan Modal */}
+    {showWeeklyPlan && (
+      <WeeklyPlanModal
+        initialSection={showWeeklyPlan.section}
+        initialGrade={showWeeklyPlan.grade}
+        onClose={() => setShowWeeklyPlan(null)}
+      />
+    )}
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100">
 
       {/* ══ HEADER ══ */}
@@ -509,6 +525,42 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
 
           {/* Right actions */}
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* SÉLECTEUR DE SECTION GARÇONS / FILLES */}
+            <div className="flex items-center bg-black/20 p-1 rounded-xl border border-white/20">
+              <button
+                onClick={() => setActiveSection('Garçons')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                  activeSection === 'Garçons'
+                    ? 'bg-blue-500 text-white shadow-sm'
+                    : 'text-white/70 hover:text-white'
+                }`}
+                title="Afficher la Section Garçons"
+              >
+                <span>👨 Garçons</span>
+              </button>
+              <button
+                onClick={() => setActiveSection('Filles')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                  activeSection === 'Filles'
+                    ? 'bg-rose-500 text-white shadow-sm'
+                    : 'text-white/70 hover:text-white'
+                }`}
+                title="Afficher la Section Filles"
+              >
+                <span>👩 Filles</span>
+              </button>
+            </div>
+
+            {/* BOUTON PLAN HEBDOMADAIRE OFFICIEL */}
+            <button
+              onClick={() => setShowWeeklyPlan({ grade: selectedGrade || 'PEI 1', section: activeSection })}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg text-xs font-bold transition border border-cyan-300/40 shadow-sm"
+              title="Ouvrir le Plan Hebdomadaire Al Kawthar"
+            >
+              <Calendar size={13} />
+              <span>📅 Plan Hebdo</span>
+            </button>
+
             <div className="hidden sm:block text-right">
               <p className="text-blue-100 text-xs">Connecté en tant que</p>
               <p className="text-white text-xs font-semibold">
@@ -724,14 +776,23 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
                         )}
                       </div>
                     </button>
-                    {/* Bouton Calendrier sous la carte */}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setShowCalendar(grade); }}
-                      className="flex items-center justify-center gap-1.5 w-full py-1.5 bg-teal-50 hover:bg-teal-100 border border-teal-200 border-t-0 rounded-b-xl text-teal-700 text-xs font-semibold transition"
-                      title={`Calendrier annuel de ${grade}`}
-                    >
-                      <Calendar size={11} /> Calendrier
-                    </button>
+                    {/* Boutons Calendrier et Plan Hebdo sous la carte */}
+                    <div className="flex border border-teal-200 border-t-0 rounded-b-xl overflow-hidden">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowCalendar(grade); }}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-semibold transition border-r border-teal-200"
+                        title={`Calendrier annuel de ${grade}`}
+                      >
+                        <Calendar size={11} /> Calendrier
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowWeeklyPlan({ grade, section: activeSection }); }}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 text-xs font-bold transition"
+                        title={`Plan hebdomadaire de ${grade} (Section ${activeSection})`}
+                      >
+                        <span>📋 Plan Hebdo</span>
+                      </button>
+                    </div>
                     </div>
                   );
                 })}
@@ -766,6 +827,15 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
                 )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
+                {/* Bouton Plan Hebdomadaire */}
+                <button
+                  onClick={() => setShowWeeklyPlan({ grade: selectedGrade, section: activeSection })}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white rounded-xl text-sm font-bold transition shadow-sm border border-cyan-500"
+                  title={`Voir le plan hebdomadaire de ${selectedGrade} (Section ${activeSection})`}
+                >
+                  <Calendar size={15} />
+                  Plan Hebdo ({activeSection})
+                </button>
                 {/* Bouton Calendrier */}
                 <button
                   onClick={() => setShowCalendar(selectedGrade)}

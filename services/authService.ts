@@ -9,6 +9,7 @@ export interface AppUser {
   role: 'admin' | 'teacher';
   displayName: string;
   subjects: string[]; // Matières attribuées (vide = tout pour admin)
+  section?: 'Garçons' | 'Filles' | 'Mixte'; // Section attribuée (Garçons, Filles ou Mixte)
 }
 
 export interface ModificationRequest {
@@ -119,12 +120,36 @@ export async function loginUser(username: string, password: string): Promise<App
 
   // Fallback local credentials
   const LOCAL_USERS: AppUser[] = [
-    { id: 'local-admin', username: 'Mohamed', role: 'admin', displayName: 'Mohamed (Administrateur)', subjects: [] },
-    { id: 'local-admin2', username: 'Alkawthar', role: 'admin', displayName: 'Administrateur', subjects: [] },
+    { id: 'local-admin', username: 'Mohamed', role: 'admin', displayName: 'Mohamed (Administrateur)', subjects: [], section: 'Mixte' },
+    { id: 'local-admin2', username: 'Alkawthar', role: 'admin', displayName: 'Administrateur', subjects: [], section: 'Mixte' },
+    // Enseignants Section Garçons
+    { id: 'teacher-majed', username: 'Majed', role: 'teacher', displayName: 'Majed (Études Islamiques)', subjects: ['Individus et sociétés'], section: 'Garçons' },
+    { id: 'teacher-anouar', username: 'Anouar', role: 'teacher', displayName: 'Anouar (Design)', subjects: ['Design'], section: 'Garçons' },
+    { id: 'teacher-mali', username: 'MohamedAli', role: 'teacher', displayName: 'Mohamed Ali (EPS)', subjects: ['Éducation physique et à la santé'], section: 'Garçons' },
+    { id: 'teacher-imad', username: 'Imad', role: 'teacher', displayName: 'Imad (Langue Arabe)', subjects: ['Langue et littérature'], section: 'Garçons' },
+    { id: 'teacher-kenneh', username: 'Kenneh', role: 'teacher', displayName: 'Kenneh (Anglais)', subjects: ['Acquisition de langues'], section: 'Garçons' },
+    { id: 'teacher-youssef', username: 'Youssef', role: 'teacher', displayName: 'Youssef (L.L - Section Garçons)', subjects: ['Langue et littérature'], section: 'Garçons' },
+    { id: 'teacher-karim', username: 'Karim', role: 'teacher', displayName: 'Karim (Sciences)', subjects: ['Sciences'], section: 'Garçons' },
+    // Enseignantes Section Filles
+    { id: 'teacher-nesrine', username: 'Nesrine', role: 'teacher', displayName: 'Nesrine (L.L - Section Filles)', subjects: ['Langue et littérature'], section: 'Filles' },
+    { id: 'teacher-samira', username: 'Samira', role: 'teacher', displayName: 'Samira (Maths - Section Filles)', subjects: ['Mathématiques'], section: 'Filles' },
+    { id: 'teacher-fatima', username: 'Fatima', role: 'teacher', displayName: 'Fatima (Études Islamiques - Filles)', subjects: ['Individus et sociétés'], section: 'Filles' },
+    { id: 'teacher-hajar', username: 'Hajar', role: 'teacher', displayName: 'Hajar (Langue Arabe - Filles)', subjects: ['Langue et littérature'], section: 'Filles' },
   ];
   const LOCAL_PASSWORDS: Record<string, string> = {
     'Mohamed': 'Alkawthar86',
     'Alkawthar': 'Alkawthar@7786',
+    'Majed': 'Alkawthar2024',
+    'Anouar': 'Alkawthar2024',
+    'MohamedAli': 'Alkawthar2024',
+    'Imad': 'Alkawthar2024',
+    'Kenneh': 'Alkawthar2024',
+    'Youssef': 'Alkawthar2024',
+    'Karim': 'Alkawthar2024',
+    'Nesrine': 'Alkawthar2024',
+    'Samira': 'Alkawthar2024',
+    'Fatima': 'Alkawthar2024',
+    'Hajar': 'Alkawthar2024',
   };
 
   const user = LOCAL_USERS.find(u => u.username === username);
@@ -148,6 +173,7 @@ export async function createTeacher(data: {
   password: string;
   displayName: string;
   subjects: string[];
+  section?: 'Garçons' | 'Filles' | 'Mixte';
 }): Promise<string> {
   const response = await fetch('/api/users', {
     method: 'POST',
@@ -167,6 +193,7 @@ export async function updateTeacher(id: string, data: Partial<{
   password: string;
   displayName: string;
   subjects: string[];
+  section?: 'Garçons' | 'Filles' | 'Mixte';
   isActive: boolean;
 }>): Promise<void> {
   const response = await fetch(`/api/users?id=${id}`, {

@@ -43,3 +43,97 @@ body {
 .exam-preview-content table tr:nth-child(even) td {
   background-color: #f8fafc;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   ARABIC TEXT & TABLES: RTL + CENTRÉ DANS TOUTES LES CASES
+   ══════════════════════════════════════════════════════════════ */
+.font-arabic {
+  font-family: 'Cairo', 'Amiri', 'Segoe UI', Tahoma, sans-serif;
+}
+
+/* Règle universelle pour tout texte arabe dans tableau, carte, case ou aperçu */
+.dir-rtl,
+[dir="rtl"],
+.arabic-cell,
+.arabic-content,
+[data-arabic="true"] {
+  direction: rtl !important;
+  text-align: center !important;
+  unicode-bidi: plaintext;
+}
+
+/* Forcer le centrage de toutes les cellules contenant de l'arabe */
+td[dir="rtl"],
+th[dir="rtl"],
+.table-cell-arabic,
+.arabic-box,
+td.arabic-cell,
+th.arabic-cell {
+  direction: rtl !important;
+  text-align: center !important;
+  justify-content: center !important;
+  align-items: center !important;
+  unicode-bidi: plaintext;
+}
+
+/* S'assurer que tous les sous-éléments enfants dans les cellules arabes sont également centrés */
+td[dir="rtl"] p,
+td[dir="rtl"] div,
+td[dir="rtl"] span,
+td[dir="rtl"] textarea,
+td[dir="rtl"] input,
+th[dir="rtl"] p,
+th[dir="rtl"] div,
+th[dir="rtl"] span,
+.arabic-cell p,
+.arabic-cell div,
+.arabic-cell span,
+.arabic-cell textarea,
+.arabic-cell input {
+  text-align: center !important;
+  direction: rtl !important;
+}
+
+/* Règles pour l'impression et l'exportation PDF */
+@media print {
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-only {
+    display: block !important;
+  }
+  
+  /* L'écriture arabe reste strictement RTL et centrée en PDF / impression */
+  .dir-rtl,
+  [dir="rtl"],
+  .arabic-cell,
+  .arabic-content,
+  [data-arabic="true"],
+  td[dir="rtl"],
+  th[dir="rtl"],
+  .table-cell-arabic,
+  .arabic-box,
+  td.arabic-cell,
+  th.arabic-cell {
+    direction: rtl !important;
+    text-align: center !important;
+    justify-content: center !important;
+    align-items: center !important;
+    unicode-bidi: plaintext;
+  }
+
+  td[dir="rtl"] *,
+  th[dir="rtl"] *,
+  .arabic-cell *,
+  [dir="rtl"] * {
+    text-align: center !important;
+    direction: rtl !important;
+  }
+}
+

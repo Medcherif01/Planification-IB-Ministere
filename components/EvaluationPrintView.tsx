@@ -430,7 +430,19 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
       size: A4 portrait;
       margin: 10mm;
     }
+    .arabic-text, [dir="rtl"], .dir-rtl, td[dir="rtl"], th[dir="rtl"], .arabic-cell {
+      direction: rtl !important;
+      text-align: center !important;
+      font-family: 'Cairo', 'Amiri', Tahoma, sans-serif !important;
+      unicode-bidi: plaintext !important;
+    }
     @media print {
+      .arabic-text, [dir="rtl"], .dir-rtl, td[dir="rtl"], th[dir="rtl"], .arabic-cell {
+        direction: rtl !important;
+        text-align: center !important;
+        font-family: 'Cairo', 'Amiri', Tahoma, sans-serif !important;
+        unicode-bidi: plaintext !important;
+      }
       html, body {
         background: #ffffff !important;
         color: #0f172a !important;
