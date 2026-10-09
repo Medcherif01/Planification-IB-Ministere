@@ -16,7 +16,6 @@ import AssessmentViewerModal from './AssessmentViewerModal';
 import UnitPlanFormImport from './UnitPlanForm';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 import TeacherEvaluationsManager from './TeacherEvaluationsManager';
-import WeeklyPlanModal from './WeeklyPlanModal';
 
 interface DashboardProps {
   currentSubject: string;
@@ -362,7 +361,6 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
 
   // State: Assessment Viewer/Editor Modal
   const [viewerPlan, setViewerPlan] = useState<UnitPlan | null>(null);
-  const [showWeeklyPlanModal, setShowWeeklyPlanModal] = useState(false);
 
   // ── État : Mise à jour des objectifs d'une unité ──────────────────────────────
   const [updatingAssessmentId, setUpdatingAssessmentId] = useState<string | null>(null);
@@ -1846,14 +1844,6 @@ Chapitre 4 : Algèbre et équations
           </div>
         </div>
         <div className="flex gap-3 flex-wrap">
-             <button
-               onClick={() => setShowWeeklyPlanModal(true)}
-               className="flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white px-4 py-3 rounded-xl font-bold shadow-lg transition transform hover:-translate-y-0.5 border border-cyan-400/30"
-               title="Ouvrir le Plan Hebdomadaire Al Kawthar"
-             >
-               <Calendar size={18} />
-               Plan Hebdo
-             </button>
              <button 
               onClick={onLogout}
               className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white border border-white/20 px-4 py-3 rounded-xl font-semibold shadow transition"
@@ -4230,14 +4220,6 @@ Chapitre 4 : Algèbre et équations
           setModRequestPlan(null);
           alert('✅ Votre demande a été envoyée à l\'administrateur. Vous serez notifié dès qu\'elle sera traitée.');
         }}
-      />
-    )}
-    {/* ── Modale Plan Hebdomadaire Al Kawthar ────────────────────────────── */}
-    {showWeeklyPlanModal && (
-      <WeeklyPlanModal
-        initialGrade={currentGrade}
-        initialSection={currentUser?.section === 'Filles' ? 'Filles' : 'Garçons'}
-        onClose={() => setShowWeeklyPlanModal(false)}
       />
     )}
     </>

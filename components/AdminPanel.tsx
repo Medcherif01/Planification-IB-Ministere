@@ -50,7 +50,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   // ── Students by Class state ───────────────────────────────────────────────
   const [allClassStudents, setAllClassStudents] = useState<ClassStudent[]>([]);
   const [selectedStudentGrade, setSelectedStudentGrade] = useState<string>(PEI_GRADES[0] || 'PEI 1');
-  const [studentSectionFilter, setStudentSectionFilter] = useState<'Garçons' | 'Filles'>('Garçons');
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [newStudentName, setNewStudentName] = useState('');
   const [newStudentNumber, setNewStudentNumber] = useState('');
@@ -73,7 +72,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   const [newPassword, setNewPassword] = useState('');
   const [newDisplayName, setNewDisplayName] = useState('');
   const [newSubjects, setNewSubjects] = useState<string[]>([]);
-  const [newSection, setNewSection] = useState<'Garçons' | 'Filles' | 'Mixte'>('Garçons');
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
   const [userFormError, setUserFormError] = useState('');
@@ -190,22 +188,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     }
   };
 
-  const currentTargetGrade = `${selectedStudentGrade} ${studentSectionFilter}`;
-  const studentsForCurrentGrade = allClassStudents.filter(s => {
-    if (s.grade === currentTargetGrade) return true;
-    if (s.grade?.includes('Garçon')) return studentSectionFilter === 'Garçons';
-    if (s.grade?.includes('Fille')) return studentSectionFilter === 'Filles';
-    if (s.section) return s.section === studentSectionFilter;
-    return s.grade === selectedStudentGrade && studentSectionFilter === 'Garçons';
-  });
+  const studentsForCurrentGrade = allClassStudents.filter(
+    s => s.grade === selectedStudentGrade
+  );
 
   const handleAddSingleStudent = async () => {
     if (!newStudentName.trim()) return;
     setSavingStudents(true);
     try {
       await saveStudentsForGrade(
-        [{ name: newStudentName.trim(), studentNumber: newStudentNumber.trim(), grade: currentTargetGrade, section: studentSectionFilter }],
-        currentTargetGrade,
+        [{ name: newStudentName.trim(), studentNumber: newStudentNumber.trim(), grade: selectedStudentGrade }],
+        selectedStudentGrade,
         false
       );
       setNewStudentName('');
@@ -222,11 +215,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     try {
       const parsed = parseBulkStudentText(
         bulkStudentText,
-        currentTargetGrade,
+        selectedStudentGrade,
         studentsForCurrentGrade.length + 1
-      ).map(p => ({ ...p, section: studentSectionFilter }));
+      );
       if (parsed.length === 0) return;
-      await saveStudentsForGrade(parsed, currentTargetGrade, false);
+      await saveStudentsForGrade(parsed, selectedStudentGrade, false);
       setBulkStudentText('');
       setShowBulkStudentBox(false);
       await loadStudents();
@@ -240,8 +233,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     setSavingStudents(true);
     try {
       await saveStudentsForGrade(
-        [{ id: stuId, name: editStudentName.trim(), studentNumber: editStudentNumber.trim(), grade: currentTargetGrade, section: studentSectionFilter }],
-        currentTargetGrade,
+        [{ id: stuId, name: editStudentName.trim(), studentNumber: editStudentNumber.trim(), grade: selectedStudentGrade }],
+        selectedStudentGrade,
         false
       );
       setEditingStudentId(null);
@@ -260,7 +253,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   const handleClearClass = async () => {
     if (!window.confirm(`Voulez-vous vider toute la liste des élèves de la classe ${selectedStudentGrade} ?`)) return;
     await clearGradeStudents(selectedStudentGrade);
-    await clearGradeStudents(`${selectedStudentGrade} ${studentSectionFilter}`);
     await loadStudents();
   };
 
@@ -278,9 +270,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
         password: newPassword.trim(),
         displayName: newDisplayName.trim(),
         subjects: newSubjects,
-        section: newSection,
       });
-      setNewUsername(''); setNewPassword(''); setNewDisplayName(''); setNewSubjects([]); setNewSection('Garçons');
+      setNewUsername(''); setNewPassword(''); setNewDisplayName(''); setNewSubjects([]);
       setShowAddForm(false);
       await loadUsers();
     } catch (e: any) {
@@ -299,14 +290,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
       const updateData: Parameters<typeof updateTeacher>[1] = {
         displayName: newDisplayName,
         subjects: newSubjects,
-        section: newSection,
         isActive: true,
       };
       if (newPassword.trim()) updateData.password = newPassword.trim();
       if (newUsername.trim() !== editingUser.username) updateData.username = newUsername.trim();
       await updateTeacher(editingUser.id, updateData);
       setEditingUser(null);
-      setNewUsername(''); setNewPassword(''); setNewDisplayName(''); setNewSubjects([]); setNewSection('Garçons');
+      setNewUsername(''); setNewPassword(''); setNewDisplayName(''); setNewSubjects([]);
       await loadUsers();
     } catch (e: any) {
       setUserFormError(e.message || 'Erreur modification');
@@ -321,7 +311,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     setNewDisplayName(user.displayName);
     setNewPassword('');
     setNewSubjects(user.subjects || []);
-    setNewSection(user.section || 'Garçons');
     setUserFormError('');
     setShowAddForm(false);
   };
@@ -329,7 +318,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   const cancelUserForm = () => {
     setEditingUser(null);
     setShowAddForm(false);
-    setNewUsername(''); setNewPassword(''); setNewDisplayName(''); setNewSubjects([]); setNewSection('Garçons');
+    setNewUsername(''); setNewPassword(''); setNewDisplayName(''); setNewSubjects([]);
     setUserFormError('');
   };
 
@@ -626,48 +615,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                       </div>
                     </div>
 
-                    {/* Section attribuée (Garçons / Filles / Mixte) */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-2">
-                        Section d'enseignement (séparation stricte garçons / filles)
-                      </label>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setNewSection('Garçons')}
-                          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold border transition ${
-                            newSection === 'Garçons'
-                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                              : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
-                          }`}
-                        >
-                          <span>👨 Section Garçons</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setNewSection('Filles')}
-                          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold border transition ${
-                            newSection === 'Filles'
-                              ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
-                              : 'bg-white text-slate-700 border-slate-300 hover:border-rose-400'
-                          }`}
-                        >
-                          <span>👩 Section Filles</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setNewSection('Mixte')}
-                          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold border transition ${
-                            newSection === 'Mixte'
-                              ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
-                              : 'bg-white text-slate-700 border-slate-300 hover:border-slate-500'
-                          }`}
-                        >
-                          <span>👥 Mixte (Les deux)</span>
-                        </button>
-                      </div>
-                    </div>
-
                     {/* Matières */}
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-2">
@@ -741,17 +688,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                               }`}>
                                 {user.role === 'admin' ? '👑 Admin' : '👨‍🏫 Enseignant'}
                               </span>
-                              {user.role !== 'admin' && (
-                                <span className={`text-xs px-2 py-0.5 rounded-full font-bold border ${
-                                  user.section === 'Filles'
-                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                    : user.section === 'Mixte'
-                                    ? 'bg-slate-100 text-slate-700 border-slate-300'
-                                    : 'bg-blue-50 text-blue-700 border-blue-200'
-                                }`}>
-                                  {user.section === 'Filles' ? '👩 Filles' : user.section === 'Mixte' ? '👥 Mixte' : '👨 Garçons'}
-                                </span>
-                              )}
                             </div>
                             <p className="text-xs text-slate-400">@{user.username}</p>
                             {user.subjects && user.subjects.length > 0 && (
@@ -816,38 +752,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                   </button>
                 </div>
 
-                {/* Sélecteur de Section (Séparation stricte Garçons / Filles) */}
-                <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-xl w-fit border border-slate-200">
-                  <span className="text-xs font-bold text-slate-600 px-2">Section :</span>
-                  <button
-                    type="button"
-                    onClick={() => setStudentSectionFilter('Garçons')}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                      studentSectionFilter === 'Garçons'
-                        ? 'bg-blue-600 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-white'
-                    }`}
-                  >
-                    <span>👨 Section Garçons</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStudentSectionFilter('Filles')}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                      studentSectionFilter === 'Filles'
-                        ? 'bg-rose-600 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-white'
-                    }`}
-                  >
-                    <span>👩 Section Filles</span>
-                  </button>
-                </div>
-
                 {/* Sélecteur de classe PEI 1 .. PEI 5 */}
                 <div className="flex items-center gap-2 flex-wrap">
                   {PEI_GRADES.map(grade => {
-                    const fullGradeName = `${grade} ${studentSectionFilter}`;
-                    const count = allClassStudents.filter(s => s.grade === fullGradeName || (s.grade === grade && s.section === studentSectionFilter)).length;
+                    const count = allClassStudents.filter(s => s.grade === grade).length;
                     const isSelected = selectedStudentGrade === grade;
                     return (
                       <button
@@ -859,13 +767,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                         }}
                         className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border-2 transition ${
                           isSelected
-                            ? studentSectionFilter === 'Garçons'
-                              ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
-                              : 'border-rose-600 bg-rose-600 text-white shadow-sm'
+                            ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
                             : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300'
                         }`}
                       >
-                        <span>{grade} ({studentSectionFilter})</span>
+                        <span>{grade}</span>
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10px] font-black ${
                             isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'

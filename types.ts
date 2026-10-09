@@ -115,7 +115,6 @@ export interface UnitPlan {
   subject: string;
   gradeLevel: string;
   duration: string;
-  section?: 'Garçons' | 'Filles' | 'Mixte'; // Section (Garçons ou Filles)
   // Informations générales supplémentaires
   schoolYear?: string; // Année scolaire
   numberOfPeriods?: string; // Nombre de périodes
@@ -633,44 +632,7 @@ export interface ClassStudent {
   name: string;          // Nom et prénom de l'élève
   studentNumber: string; // Numéro d'inscription / Matricule
   grade: string;         // ex: "PEI 1", "PEI 2", "PEI 3", "PEI 4", "PEI 5"
-  section?: 'Garçons' | 'Filles'; // Section de l'élève
   createdAt?: string;
-}
-
-// ===== PLAN HEBDOMADAIRE (WEEKLY PLAN) TYPES =====
-
-export type SchoolSection = 'Garçons' | 'Filles';
-
-export interface WeeklyPlanItem {
-  id: string;
-  period: string; // "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"
-  subject: string; // Nom de la matière (ex: "الدراسات الإسلامية", "Maths", etc.)
-  teacherName: string; // Enseignant assigné
-  classworkTitle?: string; // Titre du cours / chapitre
-  classworkDescription: string; // Travail de classe
-  support?: string; // Manuel, page, matériel, lien support
-  homework?: string; // Devoirs à faire (ou vide si Aucun)
-  hasHomework: boolean; // true si devoirs, false si "Aucun"
-}
-
-export interface WeeklyPlanDay {
-  dayNameFr: string; // "Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi"
-  dayNameAr: string; // "الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس"
-  dateFormattedFr: string; // ex: "Dimanche 11 Octobre 2026"
-  items: WeeklyPlanItem[];
-}
-
-export interface WeeklyPlan {
-  id: string;
-  section: SchoolSection; // "Garçons" | "Filles"
-  grade: string; // ex: "PEI1 Garçons", "PEI1 Filles"
-  weekNumber: number; // 1 à 38
-  semester: number; // 1 ou 2
-  startDate: string; // ex: "2026-10-11"
-  endDate: string; // ex: "2026-10-15"
-  dateRangeText: string; // ex: "du Dimanche 11 Octobre 2026 à Jeudi 15 Octobre 2026"
-  days: WeeklyPlanDay[];
-  lastUpdated?: string;
 }
 
 

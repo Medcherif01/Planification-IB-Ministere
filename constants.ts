@@ -121,48 +121,6 @@ export const INTERDISCIPLINARY_SUBJECT = "Thème interdisciplinaire";
 // PEI grades available for planning
 export const PEI_GRADES = ["PEI 1", "PEI 2", "PEI 3", "PEI 4", "PEI 5"];
 
-// Sections scolaires Al Kawthar (Séparation stricte Garçons / Filles)
-export type SchoolSection = 'Garçons' | 'Filles';
-
-export interface SectionConfig {
-  id: SchoolSection;
-  label: string;
-  shortLabel: string;
-  emoji: string;
-  color: string;
-  badgeBg: string;
-  border: string;
-}
-
-export const SCHOOL_SECTIONS: SectionConfig[] = [
-  {
-    id: 'Garçons',
-    label: 'Section Garçons 👨',
-    shortLabel: 'Garçons',
-    emoji: '👨',
-    color: 'from-blue-600 to-indigo-700',
-    badgeBg: 'bg-blue-100 text-blue-800 border-blue-300',
-    border: 'border-blue-400',
-  },
-  {
-    id: 'Filles',
-    label: 'Section Filles 👩',
-    shortLabel: 'Filles',
-    emoji: '👩',
-    color: 'from-rose-500 to-pink-600',
-    badgeBg: 'bg-rose-100 text-rose-800 border-rose-300',
-    border: 'border-rose-400',
-  },
-];
-
-/**
- * Détecte si un texte contient des caractères arabes
- */
-export function isArabicText(text?: string | null): boolean {
-  if (!text) return false;
-  return /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
-}
-
 export const PLAN_TEMPLATE_URL = "https://docs.google.com/document/d/144_yUOythmkjTsP9PA4k5YLOpRFyV7Zv/export?format=docx";
 export const EVAL_TEMPLATE_URL = "https://docs.google.com/document/d/15ASfn_LF-jsPh5CYn4FJvEBSpm31hPAA/export?format=docx";
 

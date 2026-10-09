@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { UnitPlan, UnitSession } from '../types';
 import { BookOpen, Copy, Check, List, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react';
-import { isArabicText } from '../constants';
 
 export interface ChapterItem {
   id: string;
@@ -579,7 +578,7 @@ export const ChaptersLessonsViewer: React.FC<ChaptersLessonsViewerProps> = ({
                 className={`rounded-lg border ${theme.border} ${theme.bg} p-2 transition-all`}
               >
                 {/* ── Chapitre avec badge et tiret gras ── */}
-                <div className={`flex items-baseline gap-2 ${isArabicText(chap.title) ? 'dir-rtl font-arabic' : ''}`} dir={isArabicText(chap.title) ? 'rtl' : 'ltr'}>
+                <div className="flex items-baseline gap-2">
                   <span className={`text-sm font-black ${theme.dash} select-none shrink-0`}>
                     —
                   </span>
@@ -587,7 +586,7 @@ export const ChaptersLessonsViewer: React.FC<ChaptersLessonsViewerProps> = ({
                     <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase ${theme.badge}`}>
                       Chap {chap.number || chapIdx + 1}
                     </span>
-                    <span className={`font-bold text-slate-900 leading-snug ${isArabicText(chap.title) ? 'font-arabic' : ''}`}>
+                    <span className="font-bold text-slate-900 leading-snug">
                       {chap.title}
                     </span>
                   </div>
@@ -598,17 +597,15 @@ export const ChaptersLessonsViewer: React.FC<ChaptersLessonsViewerProps> = ({
                   <div className="mt-1.5 pl-4 space-y-1">
                     {chap.lessons.map((lesson, lesIdx) => {
                       const cleanTitle = lesson.title.replace(/^[-*•–—]\s*/, '');
-                      const isAr = isArabicText(cleanTitle);
                       return (
                         <div
                           key={lesson.id || lesIdx}
-                          className={`flex items-baseline gap-2 py-0.5 px-2 rounded ${theme.lessonBg} border ${theme.lessonBorder} ${isAr ? 'dir-rtl font-arabic' : ''}`}
-                          dir={isAr ? 'rtl' : 'ltr'}
+                          className={`flex items-baseline gap-2 py-0.5 px-2 rounded ${theme.lessonBg} border ${theme.lessonBorder}`}
                         >
                           <span className={`text-xs font-black select-none shrink-0 ${theme.lessonDash}`}>
                             -
                           </span>
-                          <span className={`text-slate-800 font-medium leading-snug ${isAr ? 'font-arabic' : ''}`}>
+                          <span className="text-slate-800 font-medium leading-snug">
                             {cleanTitle}
                           </span>
                           {lesson.duration && (
