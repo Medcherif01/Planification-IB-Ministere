@@ -287,6 +287,21 @@ export async function getSubmissionsForEvaluation(evaluationId: string): Promise
   return getLocalSubmissions().filter(s => s.evaluationId === evaluationId);
 }
 
+export async function getAllSubmissions(): Promise<StudentSubmission[]> {
+  try {
+    const res = await fetch(`${API_BASE}?action=submissions`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('[EvaluationService] API offline, utilisation cache submissions');
+  }
+  return getLocalSubmissions();
+}
+
 export async function getStudentSubmission(accessCode: string, studentNumber: string, evaluationId?: string): Promise<StudentSubmission | null> {
   const code = accessCode.trim().toUpperCase();
   const num = studentNumber.trim();

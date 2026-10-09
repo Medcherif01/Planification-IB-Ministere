@@ -15,6 +15,8 @@ import HoursCalculatorModal from './HoursCalculatorModal';
 import AssessmentViewerModal from './AssessmentViewerModal';
 import UnitPlanFormImport from './UnitPlanForm';
 import ChaptersLessonsViewer from './ChaptersLessonsViewer';
+import GradedEvaluationsRecapModal from './GradedEvaluationsRecapModal';
+import DistributeChaptersModal from './DistributeChaptersModal';
 import TeacherEvaluationsManager from './TeacherEvaluationsManager';
 
 interface DashboardProps {
@@ -280,6 +282,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   const isAdmin = currentUser?.role === 'admin' || !currentUser || localStorage.getItem('userRole') === 'admin';
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [isOnlineEvaluationsOpen, setIsOnlineEvaluationsOpen] = useState(false);
+  const [isRecapModalOpen, setIsRecapModalOpen] = useState(false);
+  const [isDistributeChaptersOpen, setIsDistributeChaptersOpen] = useState(false);
   const [onlineEvalTargetPlan, setOnlineEvalTargetPlan] = useState<UnitPlan | null>(null);
   // Pre-fill subject and grade from session
   const [bulkSubject, setBulkSubject] = useState(currentSubject);
@@ -1898,6 +1902,20 @@ Chapitre 4 : Algèbre et équations
                  Imprimer Descriptifs
                </button>
              )}
+             <button
+               onClick={() => setIsDistributeChaptersOpen(true)}
+               className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white border border-blue-400/40 px-5 py-3 rounded-xl font-semibold shadow-lg transition hover:-translate-y-0.5"
+               title="Ajouter tous les chapitres et leçons pour que l'IA les distribue dans les unités correspondantes sans modifier leur contenu"
+             >
+               📚 Maj Chapitres & Leçons
+             </button>
+             <button
+               onClick={() => setIsRecapModalOpen(true)}
+               className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border border-emerald-400/40 px-5 py-3 rounded-xl font-semibold shadow-lg transition hover:-translate-y-0.5"
+               title="Tableau récapitulatif des notes des évaluations déjà corrigées par matière, critères et semestre avec commentaires"
+             >
+               📊 Tableau Récap Notes
+             </button>
              <button
                onClick={() => {
                  setOnlineEvalTargetPlan(filteredPlans.length > 0 ? filteredPlans[0] : null);
@@ -3817,6 +3835,26 @@ Chapitre 4 : Algèbre et équations
     {/* ═══════════════════════════════════════════════════════════════════
         MODAL : GESTION DES ÉVALUATIONS ÉLECTRONIQUES & COPIES ÉLÈVES
         ═══════════════════════════════════════════════════════════════════ */}
+    {/* Modale Tableau Récapitulatif des Notes Corrigées */}
+    <GradedEvaluationsRecapModal
+      isOpen={isRecapModalOpen}
+      onClose={() => setIsRecapModalOpen(false)}
+      currentSubject={currentSubject}
+      currentGrade={currentGrade}
+    />
+
+    {/* Modale Distribution des Chapitres et Leçons dans les Unités existantes */}
+    <DistributeChaptersModal
+      isOpen={isDistributeChaptersOpen}
+      onClose={() => setIsDistributeChaptersOpen(false)}
+      units={plans}
+      currentSubject={currentSubject}
+      currentGrade={currentGrade}
+      onUpdateUnit={(updated) => {
+        if (onUpdateUnit) onUpdateUnit(updated);
+      }}
+    />
+
     {isOnlineEvaluationsOpen && (
       <TeacherEvaluationsManager
         currentSubject={currentSubject}

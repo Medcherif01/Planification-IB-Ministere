@@ -22,6 +22,7 @@ import {
   ChevronUp, BookMarked, GraduationCap, FolderOpen, ExternalLink,
   Table, Shield, Lock, Calendar, FileSpreadsheet, Upload,
 } from 'lucide-react';
+import GradedEvaluationsRecapModal from './GradedEvaluationsRecapModal';
 import AdminPanel from './AdminPanel';
 import CalendarView from './CalendarView';
 import type { AppUser } from '../services/authService';
@@ -144,7 +145,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
 
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const [showCalendar, setShowCalendar] = useState<string | null>(null); // grade string or null
+  const [showCalendar, setShowCalendar] = useState<string | null>(null);
+  const [showRecapModal, setShowRecapModal] = useState(false); // grade string or null
 
   // Dériver les infos user depuis currentUser prop (avec fallback localStorage)
   const userName = currentUser?.displayName || localStorage.getItem('userName') || 'Administrateur';
@@ -451,6 +453,12 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
 
   return (
     <>
+    {/* Modale Tableau Récapitulatif des Notes Corrigées */}
+    <GradedEvaluationsRecapModal
+      isOpen={showRecapModal}
+      onClose={() => setShowRecapModal(false)}
+    />
+
     {/* Admin Panel Modal */}
     {showAdminPanel && isAdmin && (
       <AdminPanel
@@ -575,6 +583,13 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
                 📝 Examens
               </button>
             )}
+            <button
+              onClick={() => setShowRecapModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/90 hover:bg-emerald-400 text-white rounded-lg text-xs font-semibold transition border border-emerald-300/40 shadow-sm"
+              title="Tableau récapitulatif des notes des évaluations corrigées par matière, critères et semestre"
+            >
+              📊 Tableau Récap Notes
+            </button>
             {onOpenEvaluationsManager && (
               <button
                 onClick={onOpenEvaluationsManager}

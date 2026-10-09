@@ -2894,6 +2894,82 @@ Retourne UNIQUEMENT un tableau JSON valide au format :
 // en respectant scrupuleusement les titres préférés et le regroupement des chapitres
 // Remplissant TOUS les champs demandés
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Assigne intelligemment les chapitres et leçons fournis aux unités existantes
+ * d'une matière SANS modifier le contenu pédagogique interne de ces unités
+ * (titres, énoncés, concepts, contextes, évaluations restent intacts).
+ * Met uniquement à jour la répartition des chapitres et des leçons.
+ */
+export const distributeChaptersIntoExistingUnits = async (
+  syllabusText: string,
+  existingUnits: UnitPlan[],
+  subject: string,
+  gradeLevel: string
+): Promise<{ unitId: string; unitTitle: string; chapters: string; lessons?: string[] }[]> => {
+  if (!existingUnits || existingUnits.length === 0) {
+    throw new Error("Aucune unité existante trouvée pour cette matière et classe.");
+  }
+
+  const unitsList = existingUnits.map((u, i) => ({
+    id: u.id,
+    index: i + 1,
+    title: u.title,
+    keyConcept: u.keyConcept || '',
+    relatedConcepts: u.relatedConcepts || [],
+    currentChapters: u.chapters || '',
+  }));
+
+  const prompt = `Tu es un coordonnateur pédagogique expert du PEI (Programme d'Éducation Intermédiaire de l'IB).
+Voici la liste des unités DÉJÀ EXISTANTES pour la matière "${subject}" (${gradeLevel}) :
+${JSON.stringify(unitsList, null, 2)}
+
+Voici l'ensemble des nouveaux chapitres et leçons fournis par l'enseignant :
+---
+${syllabusText}
+---
+
+MISSION STRICTE :
+Tu dois placer et répartir harmonieusement et logiquement l'ENSEMBLE de ces chapitres et de leurs leçons dans les ${existingUnits.length} unités qui conviennent le mieux selon leurs titres et thèmes.
+RÈGLES IMPÉRATIVES :
+1. Tu ne dois PAS inventer de nouvelles unités. Utilise UNIQUEMENT les ${existingUnits.length} unités fournies avec leurs identifiants "id" exacts.
+2. Tous les chapitres et leçons saisis par l'enseignant doivent être placés dans l'unité la plus pertinente.
+3. Pour chaque unité, formate le texte "chapters" de façon claire et élégante (ex: "Chapitre 1 : ...
+- Leçon 1 : ...
+- Leçon 2 : ...").
+4. Si possible, fournis également la liste structurée des leçons dans "lessons".
+
+Réponds UNIQUEMENT en JSON avec la structure exacte suivante :
+[
+  {
+    "unitId": "<id exact de l'unité>",
+    "chapters": "<chapitres et leçons assignés à cette unité>",
+    "lessons": ["<leçon 1>", "<leçon 2>"]
+  }
+]
+`;
+
+  const raw = await callGeminiViaProxy(
+    prompt,
+    "Tu es un expert coordonnateur pédagogique IB PEI qui analyse et distribue rigoureusement les chapitres dans les unités existantes sans rien tronquer. Réponds en JSON valide uniquement.",
+    { responseMimeType: 'application/json', temperature: 0.3 }
+  );
+
+  const cleaned = cleanJsonText(raw);
+  const parsed = JSON.parse(cleaned);
+  const list: any[] = Array.isArray(parsed) ? parsed : (parsed.assignments || parsed.units || []);
+
+  return list.map(item => {
+    const matchedUnit = existingUnits.find(u => u.id === item.unitId) || existingUnits[0];
+    return {
+      unitId: matchedUnit.id,
+      unitTitle: matchedUnit.title,
+      chapters: item.chapters || '',
+      lessons: Array.isArray(item.lessons) ? item.lessons : undefined,
+    };
+  });
+};
+
 export const generateCourseFromUnitGroupings = async (
   groupings: UnitGroupingPreference[],
   subject: string,

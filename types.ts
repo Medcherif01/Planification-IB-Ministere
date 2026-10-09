@@ -121,6 +121,7 @@ export interface UnitPlan {
   numberOfHours?: string; // Nombre d'heures
   startDate?: string;
   endDate?: string;
+  semester?: 'Semestre 1' | 'Semestre 2' | string; // Semestre 1 ou Semestre 2
   prerequisites?: string; // Prérequis
   
   chapters?: string; // Liste des chapitres/leçons de cette unité
@@ -568,6 +569,7 @@ export interface OnlineEvaluation {
   grade: string;
   unitId?: string;
   unitTitle?: string;
+  semester?: 'Semestre 1' | 'Semestre 2' | string;
   teacherName: string;
   teacherUsername?: string;
   createdAt: string;

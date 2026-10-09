@@ -4,6 +4,7 @@ import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, Assessme
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini, deleteStudentSubmission } from '../services/onlineEvaluationService';
 import { generateCleanStudentCodesForEvaluation, fetchAllStudents } from '../services/studentRosterService';
 import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
+import GradedEvaluationsRecapModal from './GradedEvaluationsRecapModal';
 import EvaluationPrintView from './EvaluationPrintView';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
@@ -64,6 +65,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [customTitle, setCustomTitle] = useState('');
   const [customDuration, setCustomDuration] = useState('45');
   const [customInstructions, setCustomInstructions] = useState('Répondez de manière structurée et détaillée à chaque question.');
+  const [customSemester, setCustomSemester] = useState<'Semestre 1' | 'Semestre 2'>('Semestre 1');
+  const [showRecapModal, setShowRecapModal] = useState(false);
 
   // Question editing modal
   const [editingEvaluation, setEditingEvaluation] = useState<OnlineEvaluation | null>(null);
@@ -733,6 +736,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           subject: selectedPlanForCreate.subject || currentSubject || 'Matière',
           gradeLevel: targetGrade,
           unitTitle: selectedPlanForCreate.title,
+        semester: customSemester || (selectedPlanForCreate as any).semester || 'Semestre 1',
           statementOfInquiry: selectedPlanForCreate.statementOfInquiry,
           keyConcept: selectedPlanForCreate.keyConcept,
           relatedConcepts: selectedPlanForCreate.relatedConcepts,
@@ -1225,6 +1229,13 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setShowRecapModal(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-black rounded-xl shadow-lg transition"
+              title="Afficher le tableau récapitulatif des notes corrigées par élève, matière, critères et semestre"
+            >
+              📊 Tableau Récap des Notes
+            </button>
+            <button
               onClick={() => {
                 setSelectedPlanForCreate(currentUnitPlan || allUnitPlans[0] || null);
                 setShowCreateModal(true);
@@ -1641,6 +1652,37 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     placeholder="Ex: Évaluation sommative — Unité 2"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-purple-400 outline-none"
                   />
+                </div>
+
+                {/* Semestre */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    Semestre d'évaluation *
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCustomSemester('Semestre 1')}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition border ${
+                        customSemester === 'Semestre 1'
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-purple-50'
+                      }`}
+                    >
+                      Semestre 1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomSemester('Semestre 2')}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition border ${
+                        customSemester === 'Semestre 2'
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-purple-50'
+                      }`}
+                    >
+                      Semestre 2
+                    </button>
+                  </div>
                 </div>
 
                 {/* Durée */}
@@ -3947,6 +3989,13 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         )}
 
       </div>
+          {/* ── MODALE RÉCAPITULATIF DES NOTES CORRIGÉES ── */}
+      <GradedEvaluationsRecapModal
+        isOpen={showRecapModal}
+        onClose={() => setShowRecapModal(false)}
+        currentSubject={currentSubject}
+        currentGrade={currentGrade}
+      />
     </div>
   );
 };
