@@ -266,6 +266,7 @@ interface OptimizeEvaluationParams {
   subject: string;
   gradeLevel: string;
   unitTitle: string;
+  semester?: string;
   statementOfInquiry?: string;
   keyConcept?: string;
   relatedConcepts?: string[];

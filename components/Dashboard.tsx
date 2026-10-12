@@ -1918,11 +1918,11 @@ Chapitre 4 : Algèbre et équations
              </button>
              <button
                onClick={() => {
-                 setOnlineEvalTargetPlan(filteredPlans.length > 0 ? filteredPlans[0] : null);
+                 setOnlineEvalTargetPlan(null);
                  setIsOnlineEvaluationsOpen(true);
                }}
                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white border border-purple-400/40 px-5 py-3 rounded-xl font-semibold shadow-lg transition hover:-translate-y-0.5"
-               title="Gérer les évaluations électroniques et les copies des élèves"
+               title="Afficher les unités de la matière pour lancer une évaluation électronique indépendante et gérer les copies"
              >
                💻 Évals Électroniques
              </button>
@@ -2387,18 +2387,16 @@ Chapitre 4 : Algèbre et équations
                                     Voir Évals
                                   </button>
                                 )}
-                                {plan.assessments && plan.assessments.length > 0 && (
-                                  <button
-                                    onClick={() => {
-                                      setOnlineEvalTargetPlan(plan);
-                                      setIsOnlineEvaluationsOpen(true);
-                                    }}
-                                    className="flex items-center gap-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-2 py-1 rounded transition text-xs font-semibold"
-                                    title="Lancer cette évaluation en ligne pour les élèves ou corriger les copies"
-                                  >
-                                    💻 Éval En Ligne
-                                  </button>
-                                )}
+                                <button
+                                  onClick={() => {
+                                    setOnlineEvalTargetPlan(plan);
+                                    setIsOnlineEvaluationsOpen(true);
+                                  }}
+                                  className="flex items-center gap-1 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 px-2 py-1 rounded transition text-xs font-semibold"
+                                  title={`Lancer l'évaluation électronique indépendante pour l'unité : ${plan.title}`}
+                                >
+                                  💻 Éval Électronique
+                                </button>
                                 {/* ── Boutons admin uniquement : Mise à jour Évals + Ajouter Détails ── */}
                                 {isAdmin && (
                                   <>

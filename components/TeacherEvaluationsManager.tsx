@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders, Calculator } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders, Calculator, Layers, BookOpen } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini, deleteStudentSubmission } from '../services/onlineEvaluationService';
 import { generateCleanStudentCodesForEvaluation, fetchAllStudents } from '../services/studentRosterService';
 import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
+import { SUBJECTS, PEI_GRADES } from '../constants';
 import GradedEvaluationsRecapModal from './GradedEvaluationsRecapModal';
 import EvaluationPrintView from './EvaluationPrintView';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
@@ -67,6 +68,14 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [customInstructions, setCustomInstructions] = useState('Répondez de manière structurée et détaillée à chaque question.');
   const [customSemester, setCustomSemester] = useState<'Semestre 1' | 'Semestre 2'>('Semestre 1');
   const [showRecapModal, setShowRecapModal] = useState(false);
+
+  // Navigation tabs : Unités de la matière (sélection & indépendance) VS Évaluations générées
+  const [managerTab, setManagerTab] = useState<'units' | 'evaluations'>('units');
+  const [unitSubjectFilter, setUnitSubjectFilter] = useState<string>(currentSubject || '');
+  const [unitGradeFilter, setUnitGradeFilter] = useState<string>(currentGrade || '');
+  const [unitSemesterFilter, setUnitSemesterFilter] = useState<string>('');
+  const [evalUnitFilter, setEvalUnitFilter] = useState<string>('');
+  const [evalSemesterFilter, setEvalSemesterFilter] = useState<string>('');
 
   // Question editing modal
   const [editingEvaluation, setEditingEvaluation] = useState<OnlineEvaluation | null>(null);
@@ -144,12 +153,53 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   useEffect(() => {
     if (currentUnitPlan) {
       setSelectedPlanForCreate(currentUnitPlan);
-      setCustomTitle(`Évaluation critériée — ${currentUnitPlan.title}`);
+      setCustomTitle(`Évaluation sommative — ${currentUnitPlan.title}`);
+      if (currentUnitPlan.semester) {
+        setCustomSemester(((currentUnitPlan.semester as any) === 'Semestre 2') ? 'Semestre 2' : 'Semestre 1');
+      }
+      if (currentUnitPlan.subject) setUnitSubjectFilter(currentUnitPlan.subject);
+      if (currentUnitPlan.gradeLevel) setUnitGradeFilter(currentUnitPlan.gradeLevel);
       if (currentUnitPlan.assessments && currentUnitPlan.assessments.length > 0) {
         setSelectedCriteriaForCreate(currentUnitPlan.assessments.map(a => a.criterion));
+      } else {
+        setSelectedCriteriaForCreate(['A', 'B', 'C', 'D']);
       }
+      setShowCreateModal(true);
     }
   }, [currentUnitPlan]);
+
+  // Lancer l'évaluation pour une unité spécifique (garantie d'indépendance)
+  const handleLaunchForUnit = (unit: UnitPlan) => {
+    setSelectedPlanForCreate(unit);
+    setCustomTitle(`Évaluation : ${unit.title}`);
+    setCustomSemester(((unit.semester as any) === 'Semestre 2') ? 'Semestre 2' : 'Semestre 1');
+    if (unit.assessments && unit.assessments.length > 0) {
+      setSelectedCriteriaForCreate(unit.assessments.map(a => a.criterion));
+    } else {
+      setSelectedCriteriaForCreate(['A', 'B', 'C', 'D']);
+    }
+    setShowCreateModal(true);
+  };
+
+  // Liste des matières uniques disponibles
+  const availableSubjects = useMemo(() => {
+    const set = new Set<string>();
+    if (currentSubject) set.add(currentSubject);
+    allUnitPlans.forEach(p => { if (p.subject) set.add(p.subject); });
+    evaluations.forEach(e => { if (e.subject) set.add(e.subject); });
+    SUBJECTS.forEach(s => set.add(s));
+    return Array.from(set).filter(Boolean);
+  }, [currentSubject, allUnitPlans, evaluations]);
+
+  // Unités filtrées pour la matière sélectionnée (chacune indépendante)
+  const unitsForSelectedSubject = useMemo(() => {
+    return allUnitPlans.filter(p => {
+      if (unitSubjectFilter && p.subject !== unitSubjectFilter) return false;
+      if (unitGradeFilter && p.gradeLevel !== unitGradeFilter) return false;
+      if (unitSemesterFilter && p.semester !== unitSemesterFilter) return false;
+      return true;
+    });
+  }, [allUnitPlans, unitSubjectFilter, unitGradeFilter, unitSemesterFilter]);
 
   // Mettre à jour les critères sélectionnés par défaut dès que l'unité change
   useEffect(() => {
@@ -819,6 +869,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         grade: targetGrade,
         unitId: selectedPlanForCreate.id,
         unitTitle: selectedPlanForCreate.title,
+        semester: customSemester || (selectedPlanForCreate as any)?.semester || 'Semestre 1',
         teacherName: currentUser?.displayName || selectedPlanForCreate.teacherName || 'Enseignant',
         teacherUsername: currentUser?.username || '',
         statementOfInquiry: selectedPlanForCreate.statementOfInquiry,
@@ -1196,16 +1247,26 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   };
 
   // Filtrer les évaluations
-  const filteredEvaluations = evaluations.filter(e => {
-    const q = searchQuery.toLowerCase().trim();
-    if (!q) return true;
-    return (
-      e.title.toLowerCase().includes(q) ||
-      e.accessCode.toLowerCase().includes(q) ||
-      e.subject.toLowerCase().includes(q) ||
-      e.grade.toLowerCase().includes(q)
-    );
-  });
+  const filteredEvaluations = useMemo(() => {
+    return evaluations.filter(e => {
+      const q = searchQuery.toLowerCase().trim();
+      if (q && !(
+        e.title.toLowerCase().includes(q) ||
+        e.accessCode.toLowerCase().includes(q) ||
+        e.subject.toLowerCase().includes(q) ||
+        e.grade.toLowerCase().includes(q)
+      )) {
+        return false;
+      }
+      if (evalUnitFilter && e.unitId !== evalUnitFilter && e.unitTitle !== evalUnitFilter) {
+        return false;
+      }
+      if (evalSemesterFilter && (e as any).semester !== evalSemesterFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [evaluations, searchQuery, evalUnitFilter, evalSemesterFilter]);
 
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
@@ -1253,26 +1314,332 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           </div>
         </header>
 
+        {/* ── SOUS-HEADER NAVIGATION ONGLETS : UNITÉS VS ÉVALUATIONS ── */}
+        <div className="bg-slate-100 border-b border-slate-200 px-5 py-2.5 flex items-center justify-between gap-3 flex-wrap flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setManagerTab('units')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition ${
+                managerTab === 'units'
+                  ? 'bg-purple-700 text-white shadow-md'
+                  : 'bg-white text-slate-700 hover:bg-slate-200/80 border border-slate-300'
+              }`}
+            >
+              <Layers size={15} />
+              <span>Unités de la matière & Lancer l'évaluation</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                managerTab === 'units' ? 'bg-purple-900 text-purple-100' : 'bg-slate-100 text-slate-700'
+              }`}>
+                {unitsForSelectedSubject.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setManagerTab('evaluations')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition ${
+                managerTab === 'evaluations'
+                  ? 'bg-purple-700 text-white shadow-md'
+                  : 'bg-white text-slate-700 hover:bg-slate-200/80 border border-slate-300'
+              }`}
+            >
+              <FileText size={15} />
+              <span>Évaluations générées & Copies</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                managerTab === 'evaluations' ? 'bg-purple-900 text-purple-100' : 'bg-slate-100 text-slate-700'
+              }`}>
+                {evaluations.length}
+              </span>
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-600 font-semibold flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Chaque unité est strictement indépendante</span>
+          </div>
+        </div>
+
         {/* ── BODY DE GESTION ── */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
 
-          {/* Recherche & Filtres */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-80">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Rechercher par titre, code ou matière…"
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-purple-400 font-medium"
-              />
-              <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
-            </div>
+          {/* ═══════════════════════════════════════════════════════════════════
+              ONGLET 1 : LISTE DES UNITÉS DE LA MATIÈRE (INDÉPENDANCE GARANTIE)
+              ═══════════════════════════════════════════════════════════════════ */}
+          {managerTab === 'units' && (
+            <div className="space-y-6">
+              {/* Bannière Explicative Indépendance IB */}
+              <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3.5 shadow-xs">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white font-bold flex items-center justify-center text-lg flex-shrink-0 shadow-sm">
+                  🛡️
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-sm font-black text-indigo-950">
+                      Unités de cours & Évaluations Indépendantes
+                    </h4>
+                    <span className="text-[11px] font-bold bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                      Règle d'Indépendance IB
+                    </span>
+                  </div>
+                  <p className="text-xs text-indigo-900/85 leading-relaxed">
+                    Chaque unité est <strong>totalement indépendante</strong> de l'autre : l'énoncé de recherche, les critères (A, B, C, D), les contextes et les questions d'évaluation électronique appartiennent <strong>exclusivement à l'unité choisie</strong> sans interférence. Sélectionnez ci-dessous l'unité pour laquelle vous souhaitez générer une épreuve électronique.
+                  </p>
+                </div>
+              </div>
 
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="font-semibold text-slate-700">{filteredEvaluations.length}</span> évaluation(s) disponible(s)
+              {/* Filtres de sélection (Matière, Classe, Semestre) */}
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Sélecteur Matière */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-bold text-slate-600">Matière :</span>
+                    <select
+                      value={unitSubjectFilter}
+                      onChange={e => setUnitSubjectFilter(e.target.value)}
+                      className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-purple-400 outline-none"
+                    >
+                      <option value="">Toutes les matières</option>
+                      {availableSubjects.map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Sélecteur Classe / Niveau */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-bold text-slate-600">Classe :</span>
+                    <select
+                      value={unitGradeFilter}
+                      onChange={e => setUnitGradeFilter(e.target.value)}
+                      className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-purple-400 outline-none"
+                    >
+                      <option value="">Toutes les classes</option>
+                      {PEI_GRADES.map(g => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Sélecteur Semestre */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-bold text-slate-600">Semestre :</span>
+                    <select
+                      value={unitSemesterFilter}
+                      onChange={e => setUnitSemesterFilter(e.target.value)}
+                      className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-purple-400 outline-none"
+                    >
+                      <option value="">Tous les semestres</option>
+                      <option value="Semestre 1">Semestre 1</option>
+                      <option value="Semestre 2">Semestre 2</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="text-xs font-semibold text-slate-500">
+                  <strong className="text-purple-700">{unitsForSelectedSubject.length}</strong> unité(s) disponible(s)
+                </div>
+              </div>
+
+              {/* Grille des unités indépendantes */}
+              {unitsForSelectedSubject.length === 0 ? (
+                <div className="p-12 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50">
+                  <Layers size={40} className="mx-auto text-slate-300 mb-2" />
+                  <h4 className="font-bold text-slate-700 text-sm">Aucune unité trouvée pour ces critères</h4>
+                  <p className="text-slate-400 text-xs mt-1 max-w-md mx-auto">
+                    Sélectionnez une autre matière ou classe ci-dessus pour afficher la liste de vos unités de cours.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {unitsForSelectedSubject.map((unit, uIdx) => {
+                    const evalsForThisUnit = evaluations.filter(e => e.unitId === unit.id || (e.unitTitle && e.unitTitle.toLowerCase() === unit.title.toLowerCase()));
+                    const unitSem = unit.semester || (unit.title.toLowerCase().includes('semestre 2') ? 'Semestre 2' : 'Semestre 1');
+
+                    return (
+                      <div
+                        key={unit.id || uIdx}
+                        className="bg-white rounded-3xl p-5 border border-slate-200 hover:border-purple-300 shadow-xs hover:shadow-lg transition flex flex-col justify-between space-y-4 relative group"
+                      >
+                        <div className="space-y-3">
+                          {/* Top row */}
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono text-xs font-black px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-800">
+                                Unité {uIdx + 1}
+                              </span>
+                              <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg ${
+                                unitSem === 'Semestre 2' ? 'bg-violet-100 text-violet-800' : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {unitSem}
+                              </span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1" title="Chaque unité est indépendante">
+                                🔒 Indépendante
+                              </span>
+                            </div>
+                            <span className="text-xs font-bold text-slate-400">
+                              {unit.gradeLevel || currentGrade}
+                            </span>
+                          </div>
+
+                          {/* Title */}
+                          <h3 className="font-extrabold text-slate-900 text-sm group-hover:text-purple-700 transition leading-snug">
+                            {unit.title}
+                          </h3>
+
+                          {/* Inquiry statement */}
+                          {unit.statementOfInquiry && (
+                            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-xs text-slate-700 italic leading-relaxed">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase not-italic block mb-0.5">
+                                Énoncé de recherche
+                              </span>
+                              « {unit.statementOfInquiry} »
+                            </div>
+                          )}
+
+                          {/* Concepts */}
+                          <div className="flex flex-wrap gap-1.5 text-xs">
+                            {unit.keyConcept && (
+                              <span className="text-[11px] font-semibold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200/60">
+                                Concept clé : <strong>{unit.keyConcept}</strong>
+                              </span>
+                            )}
+                            {unit.relatedConcepts && unit.relatedConcepts.length > 0 && (
+                              <span className="text-[11px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md border border-purple-200/60">
+                                Connexes : <strong>{unit.relatedConcepts.join(', ')}</strong>
+                              </span>
+                            )}
+                          </div>
+
+                          {/* IB Criteria */}
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                              Critères évalués dans cette unité :
+                            </span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {unit.assessments && unit.assessments.length > 0 ? (
+                                unit.assessments.map(a => {
+                                  const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
+                                  return (
+                                    <span
+                                      key={a.criterion}
+                                      className={`text-[10px] font-black px-2.5 py-0.5 rounded-md border ${col.light} ${col.text} ${col.border}`}
+                                    >
+                                      Critère {a.criterion} {a.maxPoints ? `(/${a.maxPoints})` : '(/8)'}
+                                    </span>
+                                  );
+                                })
+                              ) : (
+                                <span className="text-[11px] text-slate-400 italic">
+                                  Critères A, B, C, D (Générés à la demande)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Chapters excerpt */}
+                          {unit.chapters && (
+                            <div className="text-[11px] text-slate-600 bg-amber-50/70 border border-amber-200/70 rounded-xl p-2 line-clamp-2">
+                              <span className="font-bold text-amber-900">Chapitres : </span>{unit.chapters}
+                            </div>
+                          )}
+
+                          {/* Evaluations already generated status */}
+                          {evalsForThisUnit.length > 0 ? (
+                            <div className="flex items-center justify-between text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-xl font-bold">
+                              <span className="flex items-center gap-1.5">
+                                <CheckCircle size={14} className="text-emerald-600" />
+                                {evalsForThisUnit.length} éval(s) déjà créée(s)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEvalUnitFilter(unit.id);
+                                  setManagerTab('evaluations');
+                                }}
+                                className="text-purple-700 hover:text-purple-900 underline text-xs font-black"
+                              >
+                                Voir copies →
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-xs text-slate-400 bg-slate-50 border border-dashed border-slate-200 px-3 py-1.5 rounded-xl text-center">
+                              Aucune évaluation en ligne encore pour cette unité
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action button: Launch generation for THIS unit */}
+                        <button
+                          type="button"
+                          onClick={() => handleLaunchForUnit(unit)}
+                          className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-2xl font-black text-xs shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 transform active:scale-[0.99]"
+                          title={`Générer et lancer l'évaluation électronique exclusivement pour l'unité : ${unit.title}`}
+                        >
+                          <Sparkles size={16} className="text-amber-300" />
+                          <span>⚡ Lancer l'évaluation de cette unité</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════════════════
+              ONGLET 2 : LISTE DES ÉVALUATIONS ÉLECTRONIQUES GÉNÉRÉES
+              ═══════════════════════════════════════════════════════════════════ */}
+          {managerTab === 'evaluations' && (
+            <div className="space-y-6">
+              {/* Recherche & Filtres avancés */}
+              <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
+                <div className="relative w-full md:w-80">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Rechercher par titre, code ou matière…"
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-purple-400 font-medium"
+                  />
+                  <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                  {/* Filtre par Unité */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-bold text-slate-600">Unité :</span>
+                    <select
+                      value={evalUnitFilter}
+                      onChange={e => setEvalUnitFilter(e.target.value)}
+                      className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400 max-w-[200px]"
+                    >
+                      <option value="">Toutes les unités</option>
+                      {unitsForSelectedSubject.map(u => (
+                        <option key={u.id} value={u.id}>
+                          {u.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Filtre par Semestre */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-bold text-slate-600">Semestre :</span>
+                    <select
+                      value={evalSemesterFilter}
+                      onChange={e => setEvalSemesterFilter(e.target.value)}
+                      className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400"
+                    >
+                      <option value="">Tous les semestres</option>
+                      <option value="Semestre 1">Semestre 1</option>
+                      <option value="Semestre 2">Semestre 2</option>
+                    </select>
+                  </div>
+
+                  <div className="text-xs text-slate-500 font-semibold ml-auto">
+                    <span className="font-bold text-purple-700">{filteredEvaluations.length}</span> évaluation(s)
+                  </div>
+                </div>
+              </div>
 
           {/* Liste des évaluations publiées */}
           {loading ? (
@@ -1486,6 +1853,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               })}
             </div>
           )}
+        </div>
+      )}
 
           {/* ═════════════════════════════════════════════════════════════════
               SECTION : COPIES D'ÉLÈVES POUR L'ÉVALUATION SÉLECTIONNÉE
@@ -1618,25 +1987,56 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               </div>
 
               <div className="p-6 space-y-4">
+                {/* Information d'indépendance de l'unité */}
+                {selectedPlanForCreate && (
+                  <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl p-3 flex items-start gap-2.5">
+                    <span className="text-base flex-shrink-0">🔒</span>
+                    <div className="text-xs">
+                      <div className="font-black text-indigo-950">
+                        Unité autonome : {selectedPlanForCreate.title}
+                      </div>
+                      <div className="text-indigo-800 font-medium text-[11px] mt-0.5 leading-relaxed">
+                        Cette évaluation est 100% indépendante : énoncé de recherche, critères et questions générées porteront exclusivement sur cette unité.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Choix de l'unité source */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
-                    Unité de cours de référence *
+                    Unité de cours de référence (Indépendante) *
                   </label>
                   <select
                     value={selectedPlanForCreate?.id || ''}
                     onChange={e => {
                       const found = allUnitPlans.find(p => p.id === e.target.value) || null;
                       setSelectedPlanForCreate(found);
-                      if (found) setCustomTitle(`Évaluation : ${found.title}`);
+                      if (found) {
+                        setCustomTitle(`Évaluation : ${found.title}`);
+                        if (found.semester) {
+                          setCustomSemester(((found.semester as any) === 'Semestre 2') ? 'Semestre 2' : 'Semestre 1');
+                        }
+                        if (found.assessments && found.assessments.length > 0) {
+                          setSelectedCriteriaForCreate(found.assessments.map(a => a.criterion));
+                        }
+                      }
                     }}
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-purple-400 outline-none"
                   >
-                    {allUnitPlans.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.title} ({p.subject} - {p.gradeLevel})
-                      </option>
-                    ))}
+                    {unitsForSelectedSubject.length > 0 ? (
+                      unitsForSelectedSubject.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.title} ({p.subject} - {p.gradeLevel}) {p.semester ? `[${p.semester}]` : ''}
+                        </option>
+                      ))
+                    ) : (
+                      allUnitPlans.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.title} ({p.subject} - {p.gradeLevel}) {p.semester ? `[${p.semester}]` : ''}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
 
