@@ -31,6 +31,7 @@ import {
   importAllDataFromExcel,
   importAllDataFromCSV
 } from '../services/excelBackupService';
+import { loadPlansFromDatabase, savePlansToDatabase } from '../services/databaseService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -345,6 +346,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   // ── Handle request action ─────────────────────────────────────────────────
   const handleRequestAction = async (id: string, action: 'approved' | 'rejected', note?: string) => {
     try {
+      const targetReq = requests.find(r => r.id === id);
+      if (action === 'approved' && targetReq && targetReq.requestType === 'deletion' && targetReq.subject && targetReq.grade) {
+        const existingPlans = await loadPlansFromDatabase(targetReq.subject, targetReq.grade);
+        const filtered = existingPlans.filter(p => p.id !== targetReq.unitId && p.title !== targetReq.unitTitle);
+        await savePlansToDatabase(targetReq.subject, targetReq.grade, filtered);
+        window.dispatchEvent(new CustomEvent('planifications_updated'));
+      }
       await updateRequestStatus(id, action, note);
       await loadRequests();
     } catch (e: any) {

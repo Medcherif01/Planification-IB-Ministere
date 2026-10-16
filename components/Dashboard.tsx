@@ -30,6 +30,7 @@ interface DashboardProps {
   onAddSingleUnit?: (plan: UnitPlan) => void;
   onUpdateUnit?: (plan: UnitPlan) => void;
   onLogout: () => void;
+  onGoToBooklets?: () => void;
   currentUser?: AppUser | null;
 }
 
@@ -277,7 +278,7 @@ export const mergeAIDetailsIntoPlan = (detailUpdatePlan: UnitPlan, g: Partial<Un
   return merged;
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, plans, onCreateNew, onEdit, onDelete, onAddPlans, onAddSingleUnit, onUpdateUnit, onLogout, currentUser }) => {
+const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, plans, onCreateNew, onEdit, onDelete, onAddPlans, onAddSingleUnit, onUpdateUnit, onLogout, onGoToBooklets, currentUser }) => {
   // Permissions basées sur le rôle
   const isAdmin = currentUser?.role === 'admin' || !currentUser || localStorage.getItem('userRole') === 'admin';
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -399,6 +400,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
 
   // ── État : Demande de modification (enseignant) ───────────────────────────
   const [modRequestPlan, setModRequestPlan] = useState<UnitPlan | null>(null);
+  const [modRequestType, setModRequestType] = useState<'modification' | 'creation' | 'deletion'>('modification');
   const [showModRequestModal, setShowModRequestModal] = useState(false);
 
   // Vérifier la complétude de la matière sur tous les PEI au montage
@@ -2070,6 +2072,17 @@ Chapitre 4 : Algèbre et équations
                   : `ZIP Plans Word (${plans.length})`}
               </button>
             )}
+            {/* ── Bouton Livrets Scolaires PEI ─── */}
+            {onGoToBooklets && (
+              <button
+                onClick={onGoToBooklets}
+                className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-bold shadow transition hover:-translate-y-0.5"
+                title="Accéder aux Livrets Scolaires PEI (Bulletins officiels IB, critères ATL et export PDF)"
+              >
+                <BookOpen size={20} />
+                Livrets ({currentGrade})
+              </button>
+            )}
             {/* ── Bouton Demander une modification ─ enseignant seulement ─ */}
             {!isAdmin && plans.length > 0 && (
               <button
@@ -2280,13 +2293,30 @@ Chapitre 4 : Algèbre et équations
                                     </button>
                                   </>
                                 ) : (
-                                  <button
-                                    onClick={() => { setModRequestPlan(plan); setShowModRequestModal(true); }}
-                                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition ml-auto"
-                                    title="Demander une modification à l'administrateur"
-                                  >
-                                    <PenLine size={18} />
-                                  </button>
+                                  <div className="flex items-center gap-1 ml-auto">
+                                    <button
+                                      onClick={() => {
+                                        setModRequestPlan(plan);
+                                        setModRequestType('modification');
+                                        setShowModRequestModal(true);
+                                      }}
+                                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition"
+                                      title="Demander une modification de cette unité à l'administrateur"
+                                    >
+                                      <PenLine size={18} />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setModRequestPlan(plan);
+                                        setModRequestType('deletion');
+                                        setShowModRequestModal(true);
+                                      }}
+                                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition"
+                                      title="Demander la suppression de cette unité (Autorisation administrateur requise)"
+                                    >
+                                      <Trash2 size={18} />
+                                    </button>
+                                  </div>
                                 )}
                             </div>
                         </div>
@@ -4249,6 +4279,7 @@ Chapitre 4 : Algèbre et équations
     {showModRequestModal && modRequestPlan && (
       <ModificationRequestModal
         plan={modRequestPlan}
+        initialRequestType={modRequestType}
         currentUser={currentUser || null}
         onClose={() => { setShowModRequestModal(false); setModRequestPlan(null); }}
         onSuccess={() => {

@@ -344,6 +344,7 @@ export enum AppView {
   EXAMS_WIZARD = 'EXAMS_WIZARD',
   STUDENT_PORTAL = 'STUDENT_PORTAL',
   TEACHER_EVALUATIONS = 'TEACHER_EVALUATIONS',
+  STUDENT_BOOKLETS = 'STUDENT_BOOKLETS',
 }
 
 export enum GlobalContext {
@@ -635,6 +636,72 @@ export interface ClassStudent {
   studentNumber: string; // Numéro d'inscription / Matricule
   grade: string;         // ex: "PEI 1", "PEI 2", "PEI 3", "PEI 4", "PEI 5"
   createdAt?: string;
+  birthDate?: string;    // Date de naissance (optionnelle pour livret scolaire, ex: 15/12/2012)
+  photoUrl?: string;     // URL ou dataUrl de la photo d'identité
 }
+
+// ===== LIVRET SCOLAIRE PEI (BULLETIN OFFICIEL IB) =====
+
+export type ATLLevel = 'E' | 'A' | 'PA' | 'I';
+
+export interface StudentATLSkillRatings {
+  communication: ATLLevel;
+  collaboration: ATLLevel;
+  autogestion: ATLLevel;
+  recherche: ATLLevel;
+  reflexion: ATLLevel;
+}
+
+export interface SubjectCriteriaScore {
+  name: string; // Nom du critère (ex: "Analyse", "Recherche de modèles")
+  t1?: number | null; // Note Trimestre 1 (0-8)
+  t2?: number | null; // Note Trimestre 2 (0-8)
+  final?: number | null; // Note finale atteinte (0-8)
+}
+
+export interface StudentSubjectReport {
+  subject: string;
+  teacherName: string;
+  criteria: {
+    A: SubjectCriteriaScore;
+    B: SubjectCriteriaScore;
+    C: SubjectCriteriaScore;
+    D: SubjectCriteriaScore;
+  };
+  seuil32?: number | null; // Somme des 4 critères /32
+  finalGrade?: number | null; // Note finale /8 (ou niveau IB 1 à 7)
+  observations: string; // Commentaire pédagogique narratif
+  lastUpdated?: string;
+  updatedBy?: string;
+}
+
+export interface StudentBooklet {
+  id: string; // e.g. "booklet_PEI4_2025_2026_T1_stu_123"
+  grade: string; // e.g. "PEI 4"
+  schoolYear: string; // e.g. "2025/2026"
+  term: string; // e.g. "1er trimestre", "2e trimestre", "3e trimestre"
+  studentId: string;
+  studentName: string;
+  studentNumber: string;
+  birthDate?: string;
+  photoUrl?: string;
+  licenseNumber?: string; // e.g. "4351440107"
+  schoolName?: string;
+  schoolAddress?: string;
+  schoolPhone?: string;
+  schoolWebsite?: string;
+  directorSignature?: string;
+  parentSignature?: string;
+  directorComment?: string;
+  parentComment?: string;
+  // Compétences Approches de l'Apprentissage (ATL) par matière pour le tableau général
+  atlBySubject: Record<string, StudentATLSkillRatings>;
+  // Détail par matière (critères /8, seuil /32, note finale /8 et observations)
+  subjects: Record<string, StudentSubjectReport>;
+  createdAt: string;
+  updatedAt: string;
+  lastUpdatedBy?: string;
+}
+
 
 

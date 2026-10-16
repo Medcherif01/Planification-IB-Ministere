@@ -9,6 +9,7 @@ interface ModificationRequestModalProps {
   onClose: () => void;
   onSuccess?: () => void;
   currentUser?: AppUser | null;
+  initialRequestType?: 'modification' | 'creation' | 'deletion';
 }
 
 const REQUEST_TYPES = [
@@ -17,8 +18,8 @@ const REQUEST_TYPES = [
   { value: 'deletion', label: '🗑️ Suppression d\'une unité' },
 ];
 
-const ModificationRequestModal: React.FC<ModificationRequestModalProps> = ({ plan, onClose, onSuccess, currentUser: propUser }) => {
-  const [requestType, setRequestType] = useState('modification');
+const ModificationRequestModal: React.FC<ModificationRequestModalProps> = ({ plan, onClose, onSuccess, currentUser: propUser, initialRequestType }) => {
+  const [requestType, setRequestType] = useState(initialRequestType || 'modification');
   const [description, setDescription] = useState('');
   const [sending, setSending] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -119,7 +120,7 @@ const ModificationRequestModal: React.FC<ModificationRequestModalProps> = ({ pla
                         type="radio"
                         value={t.value}
                         checked={requestType === t.value}
-                        onChange={() => setRequestType(t.value)}
+                        onChange={() => setRequestType(t.value as 'modification' | 'creation' | 'deletion')}
                         className="text-indigo-600"
                       />
                       <span className="text-sm font-medium text-slate-700">{t.label}</span>

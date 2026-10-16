@@ -35,6 +35,7 @@ interface HomeScreenProps {
   onGoToExams: () => void;
   onOpenEvaluationsManager?: () => void;
   onGoToStudentPortal?: () => void;
+  onGoToBooklets?: (grade?: string) => void;
   currentUser?: AppUser | null;
 }
 
@@ -140,6 +141,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
   onGoToExams,
   onOpenEvaluationsManager,
   onGoToStudentPortal,
+  onGoToBooklets,
   currentUser,
 }) => {
 
@@ -590,6 +592,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
             >
               📊 Tableau Récap Notes
             </button>
+            {onGoToBooklets && (
+              <button
+                onClick={() => onGoToBooklets(selectedGrade || 'PEI 4')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold transition border border-blue-300/40 shadow-sm"
+                title="Accéder aux Livrets Scolaires PEI (Bulletins officiels IB, notes par critères, compétences ATL et export PDF)"
+              >
+                <BookOpen size={13} />
+                <span>Livrets Scolaires</span>
+              </button>
+            )}
             {onOpenEvaluationsManager && (
               <button
                 onClick={onOpenEvaluationsManager}
@@ -1133,6 +1145,40 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+            </div>
+
+            {/* ─────────────────────────────────────────────────────────
+                Section: Livrets Scolaires PEI (Bulletins officiels IB)
+            ───────────────────────────────────────────────────────── */}
+            <div className="bg-gradient-to-br from-blue-50 via-indigo-50 to-sky-50 rounded-2xl border-2 border-blue-200 shadow-sm overflow-hidden">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-5 border-b border-blue-100 gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-md flex-shrink-0 text-white">
+                    <BookOpen size={22} />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-blue-950 text-base flex items-center gap-2">
+                      Livrets Scolaires PEI — Bulletins Officiels IB
+                      <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded-full">
+                        {selectedGrade}
+                      </span>
+                    </h3>
+                    <p className="text-blue-700/80 text-xs mt-0.5">
+                      Saisie manuelle ou import des notes électroniques, critères initiaux ATL par matière, commentaires IA et export PDF haute fidélité conforme Al-Kawthar.
+                    </p>
+                  </div>
+                </div>
+
+                {onGoToBooklets && (
+                  <button
+                    onClick={() => onGoToBooklets(selectedGrade)}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition hover:-translate-y-0.5 whitespace-nowrap"
+                  >
+                    <BookOpen size={15} />
+                    Ouvrir les Livrets ({selectedGrade})
+                  </button>
                 )}
               </div>
             </div>

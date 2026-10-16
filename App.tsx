@@ -8,6 +8,7 @@ import ExamsWizard from './components/ExamsWizard';
 import ErrorBoundary from './components/ErrorBoundary';
 import StudentEvaluationPortal from './components/StudentEvaluationPortal';
 import TeacherEvaluationsManager from './components/TeacherEvaluationsManager';
+import StudentBookletsManager from './components/StudentBookletsManager';
 import { sanitizeUnitPlan } from './services/geminiService';
 import { loadPlansFromDatabase, savePlansToDatabase, migrateLocalStorageToMongoDB, needsMigration, cleanupInvalidLocalStorageKeys } from './services/databaseService';
 import { mergePlansWithReplacement, deduplicatePlans } from './services/excelBackupService';
@@ -81,6 +82,10 @@ const App: React.FC = () => {
   const [currentPlans, setCurrentPlans] = useState<UnitPlan[]>([]);
   const [editingPlan, setEditingPlan] = useState<UnitPlan | undefined>(undefined);
   const [migrationDone, setMigrationDone] = useState(false);
+  const [bookletGrade, setBookletGrade] = useState<string>('PEI 4');
+
+  // Ref pour suivre la session actuellement chargée et empêcher toute contamination inter-classes
+  const loadedSessionKeyRef = React.useRef<string | null>(null);
 
   // Migration automatique au démarrage
   useEffect(() => {
@@ -101,35 +106,67 @@ const App: React.FC = () => {
     runMigration();
   }, []);
 
-  // Charger les plans quand la session change
+  // Charger les plans quand la session change (et vider immédiatement pour éviter toute fuite vers une autre classe)
   useEffect(() => {
     if (session && session.subject && session.grade) {
+      const targetKey = `${session.subject.trim()}_${session.grade.trim()}`;
+      loadedSessionKeyRef.current = null;
+      setCurrentPlans([]); // Nettoie immédiatement les plans de l'ancienne classe
+
       const loadPlans = async () => {
         try {
           const plans = await loadPlansFromDatabase(session.subject, session.grade);
-          const sanitizedPlans = plans.map(p => sanitizeUnitPlan(p, session.subject, session.grade));
-          setCurrentPlans(sanitizedPlans);
+          // Filtrage STRICT : ne garder que les unités appartenant explicitement à cette classe et matière
+          const strictlyFiltered = plans.filter(p => {
+            const matchesSubject = !p.subject || p.subject.trim().toLowerCase() === session.subject.trim().toLowerCase();
+            const matchesGrade = !p.gradeLevel || p.gradeLevel.trim().toLowerCase() === session.grade.trim().toLowerCase();
+            return matchesSubject && matchesGrade;
+          });
+          const sanitizedPlans = strictlyFiltered.map(p => sanitizeUnitPlan(p, session.subject, session.grade));
+
+          // Vérifier que la session n'a pas basculé entre temps
+          if (session && `${session.subject.trim()}_${session.grade.trim()}` === targetKey) {
+            loadedSessionKeyRef.current = targetKey;
+            setCurrentPlans(sanitizedPlans);
+          }
         } catch (error) {
           console.error('❌ Erreur chargement plans:', error);
         }
       };
       loadPlans();
+    } else {
+      loadedSessionKeyRef.current = null;
+      setCurrentPlans([]);
     }
-  }, [session]);
+  }, [session?.subject, session?.grade]);
 
-  // Sauvegarder automatiquement quand les plans changent
+  // Sauvegarder automatiquement quand les plans changent APRÈS chargement complet
   useEffect(() => {
     if (session && session.subject && session.grade && currentPlans.length > 0) {
-      const savePlans = async () => {
-        try {
-          await savePlansToDatabase(session.subject, session.grade, currentPlans);
-        } catch (error) {
-          console.error('❌ Erreur sauvegarde plans:', error);
+      const currentKey = `${session.subject.trim()}_${session.grade.trim()}`;
+      // Vérifier que les plans actuels correspondent bien à la session courante chargée
+      if (loadedSessionKeyRef.current === currentKey) {
+        // Valider l'intégrité de classe de chaque unité
+        const allMatchGrade = currentPlans.every(p =>
+          (!p.gradeLevel || p.gradeLevel.trim().toLowerCase() === session.grade.trim().toLowerCase()) &&
+          (!p.subject || p.subject.trim().toLowerCase() === session.subject.trim().toLowerCase())
+        );
+
+        if (allMatchGrade) {
+          const savePlans = async () => {
+            try {
+              await savePlansToDatabase(session.subject, session.grade, currentPlans);
+            } catch (error) {
+              console.error('❌ Erreur sauvegarde plans:', error);
+            }
+          };
+          savePlans();
+        } else {
+          console.warn('⚠️ Sauvegarde automatique ignorée pour préserver la séparation stricte des classes.');
         }
-      };
-      savePlans();
+      }
     }
-  }, [currentPlans, session]);
+  }, [currentPlans]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -353,12 +390,31 @@ const App: React.FC = () => {
     );
   }
 
+  if (view === AppView.STUDENT_BOOKLETS) {
+    return (
+      <StudentBookletsManager
+        currentUser={currentUser}
+        initialGrade={bookletGrade || session?.grade || 'PEI 4'}
+        onClose={() => {
+          const nextView = session && session.subject && session.grade ? AppView.DASHBOARD : AppView.HOME;
+          setView(nextView);
+          localStorage.setItem('currentView', nextView);
+        }}
+      />
+    );
+  }
+
   if (view === AppView.HOME) {
     return (
       <HomeScreen
         onSelectSubjectGrade={handleSelectSubjectGrade}
         onLogout={handleLogout}
         onGoToExams={handleGoToExams}
+        onGoToBooklets={(grade) => {
+          if (grade) setBookletGrade(grade);
+          setView(AppView.STUDENT_BOOKLETS);
+          localStorage.setItem('currentView', AppView.STUDENT_BOOKLETS);
+        }}
         onOpenEvaluationsManager={() => {
           setView(AppView.TEACHER_EVALUATIONS);
           localStorage.setItem('currentView', AppView.TEACHER_EVALUATIONS);
@@ -390,6 +446,11 @@ const App: React.FC = () => {
           onAddSingleUnit={handleAddSingleUnit}
           onUpdateUnit={handleUpdateUnit}
           onLogout={handleBackToHome}
+          onGoToBooklets={() => {
+            if (session?.grade) setBookletGrade(session.grade);
+            setView(AppView.STUDENT_BOOKLETS);
+            localStorage.setItem('currentView', AppView.STUDENT_BOOKLETS);
+          }}
           currentUser={currentUser}
         />
       ) : (
