@@ -6,6 +6,8 @@ import {
   ATL_DESCRIPTORS,
   DEFAULT_SCHOOL_INFO,
 } from '../services/studentBookletService';
+import { LOGO_ALKAWTAR_BASE64 } from '../services/logoBase64';
+import { convertGoogleDriveUrl } from '../services/studentRosterService';
 import { X, Printer, Download, Eye, Award } from 'lucide-react';
 
 interface StudentBookletPrintModalProps {
@@ -117,6 +119,8 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
             max-width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           .booklet-page {
             page-break-after: always !important;
@@ -127,6 +131,8 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
             margin: 0 !important;
             padding: 12mm 14mm !important;
             background: white !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           @page {
             size: A4 portrait;
@@ -200,15 +206,37 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
                   alt="Al-Kawthar"
                   className="w-full h-full object-contain"
                   onError={e => {
-                    e.currentTarget.style.display = 'none';
+                    e.currentTarget.src = LOGO_ALKAWTAR_BASE64;
                   }}
                 />
               </div>
-              <div className="w-18 h-18 rounded-full border-2 border-blue-400 p-1 flex items-center justify-center bg-white shadow-sm">
-                <div className="text-center">
-                  <span className="block font-serif font-black text-blue-800 text-xl leading-none">ib</span>
-                  <span className="text-[7px] text-blue-900 font-bold uppercase tracking-tighter block mt-0.5">World School</span>
-                </div>
+              <div className="w-20 h-20 rounded-full border-2 border-blue-400 p-1 flex items-center justify-center bg-white shadow-sm overflow-hidden">
+                {booklet.ibLogoUrl ? (
+                  <img
+                    src={convertGoogleDriveUrl(booklet.ibLogoUrl)}
+                    alt="IB World School"
+                    className="w-full h-full object-contain"
+                    onError={e => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <div className="text-center w-full h-full flex flex-col items-center justify-center">
+                    <svg viewBox="0 0 100 100" className="w-full h-full" style={{ maxHeight: '70px' }}>
+                      <circle cx="50" cy="50" r="46" fill="none" stroke="#0f3f63" strokeWidth="2.5" />
+                      <circle cx="50" cy="50" r="41" fill="none" stroke="#7eaac9" strokeWidth="1" strokeDasharray="2,2" />
+                      <text x="50" y="30" textAnchor="middle" fontSize="7" fontWeight="bold" fill="#0f3f63" letterSpacing="0.8">
+                        ÉCOLE DU MONDE DU
+                      </text>
+                      <text x="50" y="58" textAnchor="middle" fontFamily="serif" fontSize="30" fontWeight="bold" fill="#0d83be">
+                        ib
+                      </text>
+                      <text x="50" y="73" textAnchor="middle" fontSize="6.5" fontWeight="bold" fill="#0f3f63" letterSpacing="0.6">
+                        WORLD SCHOOL
+                      </text>
+                    </svg>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -254,8 +282,8 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
             <div className="w-24 bg-[#0d83be] text-white font-bold flex items-center justify-center text-lg tracking-wider select-none shrink-0">
               <span className="text-center font-semibold">Élève</span>
             </div>
-            <div className="flex-1 p-5 flex items-center justify-between">
-              <div className="space-y-3">
+            <div className="flex-1 p-5 flex items-center justify-between gap-4">
+              <div className="space-y-3 min-w-0">
                 <p className="text-sm">
                   <span className="text-slate-500 font-medium">Nom et Prénom : </span>
                   <strong className="text-slate-900 font-bold text-base">{booklet.studentName}</strong>
@@ -270,15 +298,30 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
                   </p>
                 )}
               </div>
-              <div className="w-28 h-32 rounded-lg border-2 border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shadow-inner">
+              <div className="w-28 h-36 rounded-lg border-2 border-[#7eaac9] bg-slate-50 overflow-hidden flex items-center justify-center shadow-xs shrink-0">
                 {booklet.photoUrl ? (
-                  <img src={booklet.photoUrl} alt={booklet.studentName} className="w-full h-full object-cover" />
+                  <img
+                    src={convertGoogleDriveUrl(booklet.photoUrl)}
+                    alt={booklet.studentName}
+                    className="w-full h-full object-cover"
+                    onError={e => {
+                      const match = booklet.photoUrl?.match(/(?:drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?id=|thumbnail\?id=)|lh3\.googleusercontent\.com\/d\/)([a-zA-Z0-9_-]{20,})/i);
+                      if (match && match[1]) {
+                        const fallbackUrl = `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+                        if (e.currentTarget.src !== fallbackUrl) {
+                          e.currentTarget.src = fallbackUrl;
+                          return;
+                        }
+                      }
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
                 ) : (
                   <div className="text-center p-2 text-slate-400">
                     <div className="w-12 h-12 mx-auto rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold text-lg mb-1">
                       {booklet.studentName?.charAt(0) || 'E'}
                     </div>
-                    <span className="text-[10px] text-slate-400 block">Photo élève</span>
+                    <span className="text-[10px] text-slate-400 block font-medium">Photo élève</span>
                   </div>
                 )}
               </div>

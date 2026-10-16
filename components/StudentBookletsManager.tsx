@@ -16,14 +16,16 @@ import {
   importStudentScoresFromOnlineEvaluations,
   generateBookletObservationWithAI,
   matchBookletSubject,
+  updateStudentInBooklets,
 } from '../services/studentBookletService';
-import { fetchAllStudents } from '../services/studentRosterService';
+import { fetchAllStudents, updateStudentProfile, convertGoogleDriveUrl } from '../services/studentRosterService';
 import { PEI_GRADES } from '../constants';
 import { StudentBookletPrintModal } from './StudentBookletPrintModal';
 import {
   Award,
   BookOpen,
   Calendar,
+  Camera,
   CheckCircle,
   ChevronLeft,
   ChevronRight,
@@ -36,17 +38,21 @@ import {
   Filter,
   GraduationCap,
   HelpCircle,
+  Image as ImageIcon,
   Info,
   Layers,
+  Link2,
   Loader2,
   Printer,
   RefreshCw,
   Save,
   Search,
   Sparkles,
+  Upload,
   User,
   Users,
   Wand2,
+  X,
 } from 'lucide-react';
 
 interface StudentBookletsManagerProps {
@@ -99,6 +105,83 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
   const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(false);
   const [printAllClass, setPrintAllClass] = useState<boolean>(false);
 
+  // Edit student profile modal state (Nom, Date de naissance, Photo Drive)
+  const [isEditStudentModalOpen, setIsEditStudentModalOpen] = useState<boolean>(false);
+  const [editStudentName, setEditStudentName] = useState<string>('');
+  const [editStudentBirthDate, setEditStudentBirthDate] = useState<string>('');
+  const [editStudentNumber, setEditStudentNumber] = useState<string>('');
+  const [editStudentPhotoUrl, setEditStudentPhotoUrl] = useState<string>('');
+  const [editStudentIbLogoUrl, setEditStudentIbLogoUrl] = useState<string>('');
+  const [isSavingStudentProfile, setIsSavingStudentProfile] = useState<boolean>(false);
+  const [studentEditError, setStudentEditError] = useState<string>('');
+
+  const handleOpenEditStudentModal = (stu: ClassStudent) => {
+    const b = booklets[stu.id];
+    setEditStudentName(stu.name || b?.studentName || '');
+    setEditStudentBirthDate(stu.birthDate || b?.birthDate || '');
+    setEditStudentNumber(stu.studentNumber || b?.studentNumber || '');
+    setEditStudentPhotoUrl(stu.photoUrl || b?.photoUrl || '');
+    setEditStudentIbLogoUrl(b?.ibLogoUrl || '');
+    setStudentEditError('');
+    setIsEditStudentModalOpen(true);
+  };
+
+  const handleSaveStudentProfile = async () => {
+    if (!currentStudent) return;
+    if (!editStudentName.trim()) {
+      setStudentEditError("Le nom de l'élève est obligatoire.");
+      return;
+    }
+    setIsSavingStudentProfile(true);
+    setStudentEditError('');
+    try {
+      const convertedPhoto = convertGoogleDriveUrl(editStudentPhotoUrl);
+      const convertedIbLogo = convertGoogleDriveUrl(editStudentIbLogoUrl);
+
+      // 1. Mettre à jour l'élève dans le registre de classe
+      const updatedStu = await updateStudentProfile(currentStudent.id, {
+        name: editStudentName.trim(),
+        birthDate: editStudentBirthDate.trim(),
+        studentNumber: editStudentNumber.trim(),
+        photoUrl: convertedPhoto,
+      });
+
+      if (updatedStu) {
+        setStudents(prev => prev.map(s => (s.id === updatedStu.id ? updatedStu : s)));
+      }
+
+      // 2. Mettre à jour le livret actif
+      if (currentBooklet) {
+        const updatedBooklet: StudentBooklet = {
+          ...currentBooklet,
+          studentName: editStudentName.trim(),
+          birthDate: editStudentBirthDate.trim(),
+          studentNumber: editStudentNumber.trim(),
+          photoUrl: convertedPhoto,
+          ibLogoUrl: convertedIbLogo,
+          updatedAt: new Date().toISOString(),
+        };
+        const saved = await saveBooklet(updatedBooklet);
+        setBooklets(prev => ({ ...prev, [currentStudent.id]: saved }));
+      }
+
+      // 3. Synchroniser tous les livrets de cet élève
+      await updateStudentInBooklets(currentStudent.id, {
+        name: editStudentName.trim(),
+        birthDate: editStudentBirthDate.trim(),
+        photoUrl: convertedPhoto,
+      });
+
+      setSaveSuccessMsg(`✅ Fiche de "${editStudentName.trim()}" et livret mis à jour avec succès !`);
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
+      setIsEditStudentModalOpen(false);
+    } catch (err: any) {
+      setStudentEditError(`Erreur: ${err?.message || err}`);
+    } finally {
+      setIsSavingStudentProfile(false);
+    }
+  };
+
   // Load students and booklets for selected grade, year, and term
   const loadData = async () => {
     setLoading(true);
@@ -115,7 +198,13 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
           b => b.studentId === stu.id || (stu.studentNumber && b.studentNumber === stu.studentNumber)
         );
         if (found) {
-          bookletsMap[stu.id] = found;
+          bookletsMap[stu.id] = {
+            ...found,
+            studentName: stu.name || found.studentName,
+            birthDate: stu.birthDate !== undefined && stu.birthDate !== '' ? stu.birthDate : found.birthDate,
+            photoUrl: stu.photoUrl !== undefined && stu.photoUrl !== '' ? convertGoogleDriveUrl(stu.photoUrl) : convertGoogleDriveUrl(found.photoUrl),
+            studentNumber: stu.studentNumber || found.studentNumber,
+          };
         } else {
           bookletsMap[stu.id] = createDefaultBooklet(stu, selectedGrade, schoolYear, term);
         }
@@ -555,23 +644,41 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
                 const subReport = b?.subjects?.[selectedSubject];
                 const hasScore = subReport && subReport.finalGrade && subReport.finalGrade > 0;
 
+                const photoSrc = convertGoogleDriveUrl(stu.photoUrl || b?.photoUrl);
                 return (
                   <button
                     key={stu.id}
                     onClick={() => setSelectedStudentId(stu.id)}
-                    className={`w-full text-left p-3 rounded-xl transition flex items-center justify-between gap-2 ${
+                    className={`w-full text-left p-2.5 rounded-xl transition flex items-center justify-between gap-2.5 ${
                       isSelected
                         ? 'bg-blue-50 border border-blue-300 text-blue-900 shadow-xs'
                         : 'hover:bg-slate-50 text-slate-700'
                     }`}
                   >
-                    <div className="min-w-0">
-                      <p className="font-semibold text-xs truncate">
-                        {idx + 1}. {stu.name}
-                      </p>
-                      <p className="text-[11px] text-slate-400 font-mono">
-                        {stu.studentNumber || `Élève #${idx + 1}`}
-                      </p>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-full overflow-hidden bg-blue-100 border border-slate-200 shrink-0 flex items-center justify-center text-xs font-bold text-blue-800 shadow-2xs">
+                        {photoSrc ? (
+                          <img
+                            src={photoSrc}
+                            alt={stu.name}
+                            className="w-full h-full object-cover"
+                            onError={e => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <span>{stu.name.charAt(0)}</span>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-xs truncate">
+                          {idx + 1}. {stu.name}
+                        </p>
+                        <p className="text-[11px] text-slate-400 font-mono">
+                          {stu.studentNumber || `Élève #${idx + 1}`}
+                          {stu.birthDate && <span className="ml-1 text-[10px] text-slate-400 font-sans">· {stu.birthDate}</span>}
+                        </p>
+                      </div>
                     </div>
 
                     <div className="flex-shrink-0 text-right">
@@ -600,13 +707,53 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
               {/* Header of selected student */}
               <div className="flex flex-wrap items-center justify-between pb-4 border-b border-slate-100 gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-800 font-bold flex items-center justify-center text-lg border-2 border-blue-200">
-                    {currentStudent.name.charAt(0)}
+                  <div className="relative group">
+                    <div className="w-14 h-14 rounded-full bg-blue-100 text-blue-800 font-bold flex items-center justify-center text-xl border-2 border-blue-300 shadow-sm overflow-hidden">
+                      {convertGoogleDriveUrl(currentStudent.photoUrl || currentBooklet.photoUrl) ? (
+                        <img
+                          src={convertGoogleDriveUrl(currentStudent.photoUrl || currentBooklet.photoUrl)}
+                          alt={currentStudent.name}
+                          className="w-full h-full object-cover"
+                          onError={e => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        currentStudent.name.charAt(0)
+                      )}
+                    </div>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditStudentModal(currentStudent)}
+                        className="absolute -bottom-1 -right-1 p-1 bg-amber-500 hover:bg-amber-600 text-white rounded-full shadow transition"
+                        title="Changer la photo (Google Drive)"
+                      >
+                        <Camera size={12} />
+                      </button>
+                    )}
                   </div>
                   <div>
-                    <h2 className="text-lg font-black text-slate-800">{currentStudent.name}</h2>
-                    <p className="text-xs text-slate-500">
-                      Matricule : <span className="font-mono font-bold text-slate-700">{currentStudent.studentNumber || '—'}</span> • Classe : {selectedGrade}
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-black text-slate-800">{currentStudent.name}</h2>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditStudentModal(currentStudent)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-[11px] font-bold transition shadow-2xs"
+                          title="Modifier le nom, date de naissance ou photo Drive de cet élève"
+                        >
+                          <Edit2 size={12} />
+                          Modifier la fiche élève
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Matricule : <span className="font-mono font-bold text-slate-700">{currentStudent.studentNumber || '—'}</span>
+                      <span className="mx-1.5 text-slate-300">•</span>
+                      Né(e) le : <span className="font-semibold text-slate-700">{currentStudent.birthDate || currentBooklet.birthDate || 'Non renseignée'}</span>
+                      <span className="mx-1.5 text-slate-300">•</span>
+                      Classe : <span className="font-semibold text-blue-700">{selectedGrade}</span>
                     </p>
                   </div>
                 </div>
@@ -934,6 +1081,201 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
           )}
         </div>
       </div>
+
+      {/* ── Modal Modification Fiche Élève (Nom, Date de naissance, Image Drive) ── */}
+      {isEditStudentModalOpen && currentStudent && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-fadeIn">
+            <div className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-white/10 rounded-xl">
+                  <User size={18} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base">
+                    Modifier la fiche élève
+                  </h3>
+                  <p className="text-xs text-blue-200">
+                    {currentStudent.name} • {selectedGrade}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditStudentModalOpen(false)}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                handleSaveStudentProfile();
+              }}
+              className="p-6 space-y-4"
+            >
+              {studentEditError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-medium">
+                  {studentEditError}
+                </div>
+              )}
+
+              {/* Nom et Prénom */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                  Nom et Prénom de l'élève *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editStudentName}
+                  onChange={e => setEditStudentName(e.target.value)}
+                  placeholder="Ex: Adam Benali"
+                  className="w-full px-3 py-2 text-xs sm:text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                />
+              </div>
+
+              {/* Matricule & Date de naissance */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    N° Matricule / Code
+                  </label>
+                  <input
+                    type="text"
+                    value={editStudentNumber}
+                    onChange={e => setEditStudentNumber(e.target.value)}
+                    placeholder="Ex: PEI4-001"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    Date de naissance
+                  </label>
+                  <input
+                    type="text"
+                    value={editStudentBirthDate}
+                    onChange={e => setEditStudentBirthDate(e.target.value)}
+                    placeholder="Ex: 15/12/2012"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">Format: JJ/MM/AAAA</span>
+                </div>
+              </div>
+
+              {/* Photo de l'élève (Lien Google Drive / URL) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 flex items-center justify-between">
+                  <span>Photo de l'élève (Lien Google Drive ou URL)</span>
+                  <span className="text-[11px] text-blue-600 font-normal">Lien Drive automatique</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={editStudentPhotoUrl}
+                    onChange={e => setEditStudentPhotoUrl(e.target.value)}
+                    placeholder="https://drive.google.com/file/d/.../view?usp=sharing ou URL d'image"
+                    className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  />
+                  <Link2 size={15} className="absolute left-3 top-2.5 text-slate-400" />
+                </div>
+                <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+                  <span>Collez le lien de partage Google Drive de la photo.</span>
+                  <label className="cursor-pointer text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1">
+                    <Upload size={12} />
+                    <span>Photo locale</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = ev => {
+                            if (ev.target?.result) {
+                              setEditStudentPhotoUrl(ev.target.result as string);
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {/* Aperçu direct de l'image */}
+                {editStudentPhotoUrl && (
+                  <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-3">
+                    <div className="w-16 h-20 rounded-lg overflow-hidden border border-slate-300 bg-white shrink-0 flex items-center justify-center shadow-xs">
+                      <img
+                        src={convertGoogleDriveUrl(editStudentPhotoUrl)}
+                        alt="Aperçu photo"
+                        className="w-full h-full object-cover"
+                        onError={e => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-800 flex items-center gap-1 text-emerald-700">
+                        <CheckCircle size={13} /> Photo prête pour le livret
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                        {editStudentPhotoUrl.includes('drive.google.com') ? 'Lien Google Drive converti avec succès' : 'URL image'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setEditStudentPhotoUrl('')}
+                        className="text-[10px] text-rose-600 hover:text-rose-800 font-bold mt-1"
+                      >
+                        Supprimer la photo
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Option Logo IB World School personnalisé */}
+              <div className="pt-2 border-t border-slate-100">
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Logo IB World School (Optionnel : Lien Google Drive)</span>
+                  <span className="text-[10px] text-slate-400">Par défaut : Logo officiel IB</span>
+                </label>
+                <input
+                  type="text"
+                  value={editStudentIbLogoUrl}
+                  onChange={e => setEditStudentIbLogoUrl(e.target.value)}
+                  placeholder="Laissez vide pour utiliser le logo officiel IB ou collez un lien Drive"
+                  className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-mono bg-slate-50"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsEditStudentModalOpen(false)}
+                  className="px-4 py-2 border border-slate-300 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-50 transition"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingStudentProfile}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-1.5 disabled:opacity-60"
+                >
+                  {isSavingStudentProfile ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  Enregistrer et Synchroniser le Livret
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal Impression / Export PDF ── */}
       <StudentBookletPrintModal

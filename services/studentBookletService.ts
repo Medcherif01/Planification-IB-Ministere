@@ -1,5 +1,8 @@
 import { StudentBooklet, StudentSubjectReport, StudentATLSkillRatings, ATLLevel, ClassStudent } from '../types';
 import { getEvaluations, getSubmissionsForEvaluation } from './onlineEvaluationService';
+import { convertGoogleDriveUrl } from './studentRosterService';
+
+export { convertGoogleDriveUrl };
 
 export const BOOKLET_SUBJECTS = [
   'Langue et littérature (Français)',
@@ -286,7 +289,7 @@ export function createDefaultBooklet(
     studentName: student.name,
     studentNumber: student.studentNumber,
     birthDate: student.birthDate || '',
-    photoUrl: student.photoUrl || '',
+    photoUrl: convertGoogleDriveUrl(student.photoUrl || ''),
     licenseNumber: DEFAULT_SCHOOL_INFO.licenseNumber,
     schoolName: DEFAULT_SCHOOL_INFO.name,
     schoolAddress: DEFAULT_SCHOOL_INFO.address,
@@ -301,6 +304,37 @@ export function createDefaultBooklet(
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Met à jour les informations de l'élève (nom, date de naissance, photo Drive)
+ * dans tous les livrets scolaires existants de cet élève
+ */
+export async function updateStudentInBooklets(
+  studentId: string,
+  updates: { name?: string; birthDate?: string; photoUrl?: string }
+): Promise<void> {
+  const store = loadLocalBooklets();
+  let modified = false;
+
+  for (const b of Object.values(store)) {
+    if (b.studentId === studentId) {
+      if (updates.name !== undefined) b.studentName = updates.name.trim();
+      if (updates.birthDate !== undefined) b.birthDate = updates.birthDate.trim();
+      if (updates.photoUrl !== undefined) b.photoUrl = convertGoogleDriveUrl(updates.photoUrl);
+      b.updatedAt = new Date().toISOString();
+      modified = true;
+      try {
+        await saveBooklet(b);
+      } catch (e) {
+        console.warn('Erreur synchro livret après mise à jour élève:', e);
+      }
+    }
+  }
+
+  if (modified) {
+    saveLocalBooklets(store);
+  }
 }
 
 /**

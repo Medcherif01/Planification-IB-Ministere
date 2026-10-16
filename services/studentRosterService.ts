@@ -16,6 +16,36 @@ export function normalizeGradeLabel(grade: string): string {
   return grade.trim();
 }
 
+/**
+ * Convertit un lien Google Drive (partage / affichage) en URL d'image directe intégrable
+ */
+export function convertGoogleDriveUrl(url?: string): string {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:image/')) return trimmed;
+
+  // Formats d'URL Google Drive reconnus :
+  // https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+  // https://drive.google.com/file/d/FILE_ID/view
+  // https://drive.google.com/open?id=FILE_ID
+  // https://drive.google.com/uc?id=FILE_ID
+  // https://drive.google.com/thumbnail?id=FILE_ID
+  // https://lh3.googleusercontent.com/d/FILE_ID
+  const driveRegex = /(?:drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?id=|thumbnail\?id=)|lh3\.googleusercontent\.com\/d\/)([a-zA-Z0-9_-]{20,})/i;
+  const match = trimmed.match(driveRegex);
+  if (match && match[1]) {
+    return `https://lh3.googleusercontent.com/d/${match[1]}`;
+  }
+
+  // Si l'utilisateur colle directement l'ID du fichier Google Drive
+  if (/^[a-zA-Z0-9_-]{25,45}$/.test(trimmed)) {
+    return `https://lh3.googleusercontent.com/d/${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 export function getLocalStudents(grade?: string): ClassStudent[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -127,6 +157,8 @@ export async function saveStudentsForGrade(
       name: cleanName,
       studentNumber: cleanNumber,
       grade: normGrade,
+      birthDate: st.birthDate !== undefined ? st.birthDate.trim() : (existingIdx >= 0 ? prepared[existingIdx].birthDate || '' : ''),
+      photoUrl: convertGoogleDriveUrl(st.photoUrl !== undefined ? st.photoUrl : (existingIdx >= 0 ? prepared[existingIdx].photoUrl || '' : '')),
       createdAt: st.createdAt || new Date().toISOString(),
     };
 
@@ -176,6 +208,48 @@ export async function saveStudentsForGrade(
   }
 
   return sortedGrade;
+}
+
+/**
+ * Met à jour le profil d'un élève (Nom, matricule, date de naissance, photo Drive)
+ * et persiste en local et sur le serveur
+ */
+export async function updateStudentProfile(
+  studentId: string,
+  updates: Partial<ClassStudent>
+): Promise<ClassStudent | null> {
+  const all = getLocalStudents();
+  const idx = all.findIndex(s => s.id === studentId);
+  if (idx < 0) return null;
+
+  const current = all[idx];
+  const updatedStudent: ClassStudent = {
+    ...current,
+    name: updates.name !== undefined ? updates.name.trim() : current.name,
+    studentNumber: updates.studentNumber !== undefined ? updates.studentNumber.trim() : current.studentNumber,
+    birthDate: updates.birthDate !== undefined ? updates.birthDate.trim() : (current.birthDate || ''),
+    photoUrl: updates.photoUrl !== undefined ? convertGoogleDriveUrl(updates.photoUrl) : (current.photoUrl || ''),
+    grade: updates.grade ? normalizeGradeLabel(updates.grade) : current.grade,
+  };
+
+  all[idx] = updatedStudent;
+  saveLocalStudents(all);
+
+  try {
+    await fetch('/api/users?entity=students', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        students: [updatedStudent],
+        grade: updatedStudent.grade,
+        replaceGrade: false,
+      }),
+    });
+  } catch (e) {
+    console.warn('Erreur sauvegarde profil élève distant:', e);
+  }
+
+  return updatedStudent;
 }
 
 export async function removeStudentById(studentId: string): Promise<void> {
