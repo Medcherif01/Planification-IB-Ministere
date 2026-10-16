@@ -34,7 +34,12 @@ export function getCurrentUser(): AppUser | null {
   try {
     const raw = localStorage.getItem('currentUser');
     if (!raw) return null;
-    return JSON.parse(raw) as AppUser;
+    const user = JSON.parse(raw) as AppUser;
+    if (user && user.username === 'Mohamed') {
+      setCurrentUser(null);
+      return null;
+    }
+    return user;
   } catch {
     return null;
   }
@@ -119,11 +124,11 @@ export async function loginUser(username: string, password: string): Promise<App
 
   // Fallback local credentials
   const LOCAL_USERS: AppUser[] = [
-    { id: 'local-admin', username: 'Mohamed', role: 'admin', displayName: 'Mohamed (Administrateur)', subjects: [] },
+    { id: 'local-admin', username: 'Mohamed2020', role: 'admin', displayName: 'Mohamed (Administrateur)', subjects: [] },
     { id: 'local-admin2', username: 'Alkawthar', role: 'admin', displayName: 'Administrateur', subjects: [] },
   ];
   const LOCAL_PASSWORDS: Record<string, string> = {
-    'Mohamed': 'Alkawthar86',
+    'Mohamed2020': '120786Mmed',
     'Alkawthar': 'Alkawthar@7786',
   };
 

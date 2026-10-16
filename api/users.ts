@@ -23,8 +23,8 @@ const inMemoryUsers: any[] = [
   {
     id: 'user_admin_mohamed',
     _id: 'user_admin_mohamed',
-    username: 'Mohamed',
-    passwordHash: '8eb3224b17bfd620ca532a82924151fa1faeb28ec561f95dcf7ea47d47fc9ec6', // Alkawthar86
+    username: 'Mohamed2020',
+    passwordHash: 'bb3caa892402611beda12f7c87ee1dcc208b3ca854235f8c5ce2ed77a2d480ec', // 120786Mmed
     role: 'admin',
     displayName: 'Mohamed (Administrateur)',
     subjects: [],
@@ -63,14 +63,24 @@ async function getDB() {
   }
 }
 
-// Seed admin user if no users exist
+// Seed admin user or migrate old Mohamed to Mohamed2020
 async function seedAdminIfNeeded(db: ReturnType<MongoClient['db']>) {
   const col = db.collection(COLLECTION);
+  const oldAdmin = await col.findOne({ username: 'Mohamed' });
+  if (oldAdmin) {
+    const newHash = await hashPassword('120786Mmed');
+    await col.updateOne(
+      { username: 'Mohamed' },
+      { $set: { username: 'Mohamed2020', passwordHash: newHash } }
+    );
+    console.log('[Users] Admin migré de Mohamed vers Mohamed2020');
+  }
+
   const count = await col.countDocuments();
   if (count === 0) {
-    const adminHash = await hashPassword('Alkawthar86');
+    const adminHash = await hashPassword('120786Mmed');
     await col.insertOne({
-      username: 'Mohamed',
+      username: 'Mohamed2020',
       passwordHash: adminHash,
       role: 'admin',
       displayName: 'Mohamed (Administrateur)',
@@ -78,7 +88,7 @@ async function seedAdminIfNeeded(db: ReturnType<MongoClient['db']>) {
       createdAt: new Date().toISOString(),
       isActive: true,
     });
-    console.log('[Users] Admin par défaut créé: Mohamed');
+    console.log('[Users] Admin par défaut créé: Mohamed2020');
   }
 }
 
