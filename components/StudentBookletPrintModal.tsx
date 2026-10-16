@@ -107,6 +107,22 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
       {/* Print Stylesheet */}
       <style>{`
         @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          .booklet-print-document, .booklet-print-document * {
+            visibility: visible !important;
+          }
+          .booklet-print-document {
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            display: block !important;
+          }
           body, html {
             background: white !important;
             height: auto !important;
@@ -114,13 +130,6 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
           }
           .print\:hidden {
             display: none !important;
-          }
-          .booklet-print-document {
-            width: 100% !important;
-            max-width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            display: block !important;
           }
           .booklet-page {
             page-break-after: always !important;
