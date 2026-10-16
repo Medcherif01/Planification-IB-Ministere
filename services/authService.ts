@@ -33,13 +33,16 @@ export interface ModificationRequest {
 export function getCurrentUser(): AppUser | null {
   try {
     const raw = localStorage.getItem('currentUser');
-    if (!raw) return null;
-    const user = JSON.parse(raw) as AppUser;
-    if (user && user.username === 'Mohamed') {
+    const username = localStorage.getItem('userUsername');
+    if (username === 'Mohamed' || (raw && JSON.parse(raw)?.username === 'Mohamed')) {
       setCurrentUser(null);
+      if (typeof window !== 'undefined') {
+        window.location.reload();
+      }
       return null;
     }
-    return user;
+    if (!raw) return null;
+    return JSON.parse(raw) as AppUser;
   } catch {
     return null;
   }
