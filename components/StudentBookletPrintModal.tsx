@@ -120,6 +120,7 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
             max-width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
+            display: block !important;
           }
           .booklet-page {
             page-break-after: always !important;
@@ -127,7 +128,10 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
             page-break-inside: avoid !important;
             break-inside: avoid !important;
             height: 297mm !important;
+            min-height: 297mm !important;
             max-height: 297mm !important;
+            display: block !important;
+            position: relative !important;
             box-shadow: none !important;
             border: none !important;
             margin: 0 !important;
@@ -135,6 +139,7 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
             background: white !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+            overflow: hidden !important;
           }
           @page {
             size: A4 portrait;
@@ -146,6 +151,7 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
           background: white;
           width: 210mm;
           min-height: 297mm;
+          height: 297mm;
           padding: 16mm 18mm;
           margin-bottom: 24px;
           box-shadow: 0 10px 30px rgba(0,0,0,0.3);
@@ -153,6 +159,7 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
           position: relative;
           box-sizing: border-box;
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          overflow: hidden;
         }
 
         .header-blue-card {
@@ -196,12 +203,19 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
   const schoolLogoUrlToUse = globalSchoolLogo || booklet.schoolLogoUrl;
   const ibLogoUrlToUse = globalIbLogo || booklet.ibLogoUrl;
 
+  const renderFooter = (pageNum: string) => (
+    <div className="absolute bottom-4 left-6 right-6 pt-3 border-t border-slate-200 flex justify-between items-center bg-white">
+      <span className="text-[10px] text-slate-400">{booklet.studentName} — Livret Scolaire</span>
+      <span className="text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded">{pageNum}</span>
+    </div>
+  );
+
   return (
     <div className="space-y-6 print:space-y-0">
       {/* ═══════════════════════════════════════════════════════════════════════
           PAGE 1 : PAGE DE GARDE / COUVERTURE
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="booklet-page flex flex-col justify-between">
+      <div className="booklet-page">
         <div>
           {/* Header avec Logos et Titre */}
           <div className="flex items-center justify-between gap-4 mt-6">
@@ -361,16 +375,14 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           </div>
         </div>
 
-        {/* Pied de page décoratif */}
-        <div className="mt-auto pt-6 text-center text-xs text-slate-400 border-t border-slate-200">
-          Les Écoles Internationales Al-Kawthar — Programme d'Éducation Intermédiaire (PEI)
-        </div>
+        {renderFooter('Couverture')}
+        <div className="page-corner-decor" />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           PAGE 2 : TABLEAU DES NIVEAUX IB & DESCRIPTEURS ATL
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="booklet-page flex flex-col justify-between">
+      <div className="booklet-page">
         <div>
           {/* Tableau 1 : Niveaux IB & Descripteurs */}
           <div className="mb-6">
@@ -429,18 +441,14 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           </div>
         </div>
 
-        {/* Numérotation de page & filigrane */}
-        <div className="flex justify-between items-end mt-auto pt-4 border-t border-slate-200">
-          <span className="text-[10px] text-slate-400">{booklet.studentName} — Livret Scolaire</span>
-          <span className="text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded">1</span>
-        </div>
+        {renderFooter('1')}
         <div className="page-corner-decor" />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           PAGE 3 : MATRICE ATL GÉNÉRALE + MATIÈRE 1 (Français)
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="booklet-page flex flex-col justify-between">
+      <div className="booklet-page">
         <div>
           {/* Titre centré */}
           <div className="text-center my-4">
@@ -493,17 +501,14 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           />
         </div>
 
-        <div className="flex justify-between items-end mt-auto pt-4 border-t border-slate-200">
-          <span className="text-[10px] text-slate-400">{booklet.studentName} — Livret Scolaire</span>
-          <span className="text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded">2</span>
-        </div>
+        {renderFooter('2')}
         <div className="page-corner-decor" />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           PAGE 4 : MATIÈRES 2 & 3 (Arabe & Anglais)
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="booklet-page flex flex-col justify-between">
+      <div className="booklet-page">
         <div className="space-y-6">
           <SubjectEvaluationBlock
             subjectName="Acquisition de langue (اللغة العربية)"
@@ -517,17 +522,14 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           />
         </div>
 
-        <div className="flex justify-between items-end mt-auto pt-4 border-t border-slate-200">
-          <span className="text-[10px] text-slate-400">{booklet.studentName} — Livret Scolaire</span>
-          <span className="text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded">3</span>
-        </div>
+        {renderFooter('3')}
         <div className="page-corner-decor" />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           PAGE 5 : MATIÈRES 4 & 5 (Individus et Sociétés & Sciences)
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="booklet-page flex flex-col justify-between">
+      <div className="booklet-page">
         <div className="space-y-6">
           <SubjectEvaluationBlock
             subjectName="Individus et sociétés"
@@ -540,17 +542,14 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           />
         </div>
 
-        <div className="flex justify-between items-end mt-auto pt-4 border-t border-slate-200">
-          <span className="text-[10px] text-slate-400">{booklet.studentName} — Livret Scolaire</span>
-          <span className="text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded">4</span>
-        </div>
+        {renderFooter('4')}
         <div className="page-corner-decor" />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           PAGE 6 : MATIÈRES 6 & 7 (Mathématiques & Art visuel)
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="booklet-page flex flex-col justify-between">
+      <div className="booklet-page">
         <div className="space-y-6">
           <SubjectEvaluationBlock
             subjectName="Mathématiques"
@@ -563,17 +562,14 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           />
         </div>
 
-        <div className="flex justify-between items-end mt-auto pt-4 border-t border-slate-200">
-          <span className="text-[10px] text-slate-400">{booklet.studentName} — Livret Scolaire</span>
-          <span className="text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded">5</span>
-        </div>
+        {renderFooter('5')}
         <div className="page-corner-decor" />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           PAGE 7 : MATIÈRES 8 & 9 (EPS & Design)
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="booklet-page flex flex-col justify-between">
+      <div className="booklet-page">
         <div className="space-y-6">
           <SubjectEvaluationBlock
             subjectName="Éducation physique et sportive"
@@ -586,17 +582,14 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           />
         </div>
 
-        <div className="flex justify-between items-end mt-auto pt-4 border-t border-slate-200">
-          <span className="text-[10px] text-slate-400">{booklet.studentName} — Livret Scolaire</span>
-          <span className="text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded">6</span>
-        </div>
+        {renderFooter('6')}
         <div className="page-corner-decor" />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           PAGE 8 : SIGNATURES ET COMMENTAIRES DE FIN D'ANNÉE
           ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="booklet-page flex flex-col justify-between">
+      <div className="booklet-page">
         <div>
           <div className="mt-8">
             <table className="w-full table-border border-collapse">
@@ -637,10 +630,7 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           </div>
         </div>
 
-        <div className="flex justify-between items-end mt-auto pt-4 border-t border-slate-200">
-          <span className="text-[10px] text-slate-400">{booklet.studentName} — Livret Scolaire</span>
-          <span className="text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded">7</span>
-        </div>
+        {renderFooter('7')}
         <div className="page-corner-decor" />
       </div>
     </div>
