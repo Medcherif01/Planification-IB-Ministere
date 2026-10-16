@@ -588,3 +588,28 @@ ${customGuidance ? `Consigne particulière de l'enseignant : ${customGuidance}` 
   // Clean markdown asterisks and leading/trailing quotes
   return rawText.replace(/\*\*/g, '').replace(/^["']|["']$/g, '').trim();
 }
+
+export function getGlobalSchoolLogo(): string {
+  try {
+    return localStorage.getItem('global_school_logo_url') || '';
+  } catch { return ''; }
+}
+
+export function setGlobalSchoolLogo(url: string): void {
+  try {
+    localStorage.setItem('global_school_logo_url', url);
+  } catch {}
+}
+
+export function getGlobalIbLogo(): string {
+  try {
+    return localStorage.getItem('global_ib_logo_url') || '';
+  } catch { return ''; }
+}
+
+export function setGlobalIbLogo(url: string): void {
+  try {
+    localStorage.setItem('global_ib_logo_url', url);
+  } catch {}
+}
+

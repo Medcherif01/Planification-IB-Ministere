@@ -3,8 +3,12 @@ import {
   Users, Plus, Edit2, Trash2, Shield, BookOpen, CheckCircle,
   XCircle, Clock, Download, Upload, RefreshCw, Eye, EyeOff,
   AlertCircle, Loader2, ChevronDown, ChevronUp, X, Save,
-  Bell, UserCheck, UserX, Database, FileText, FileSpreadsheet, Check
+  Bell, UserCheck, UserX, Database, FileText, FileSpreadsheet, Check, Award
 } from 'lucide-react';
+import {
+  getGlobalSchoolLogo, setGlobalSchoolLogo,
+  getGlobalIbLogo, setGlobalIbLogo, convertGoogleDriveUrl
+} from '../services/studentBookletService';
 import {
   listUsers, createTeacher, updateTeacher, deleteTeacher,
   listModificationRequests, updateRequestStatus,
@@ -41,7 +45,7 @@ interface AdminPanelProps {
   onImportCSV?: (file: File) => void;
 }
 
-type AdminTab = 'users' | 'students' | 'copies' | 'requests' | 'data';
+type AdminTab = 'users' | 'students' | 'copies' | 'requests' | 'data' | 'logos';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -92,6 +96,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
 
   // ── Import ref ────────────────────────────────────────────────────────────
   const importRef = useRef<HTMLInputElement>(null);
+
+  // ── Global Logos state ────────────────────────────────────────────────────
+  const [schoolLogoInput, setSchoolLogoInput] = useState(getGlobalSchoolLogo());
+  const [ibLogoInput, setIbLogoInput] = useState(getGlobalIbLogo());
+  const [logoSavedMsg, setLogoSavedMsg] = useState(false);
+
+  const handleSaveLogos = () => {
+    setGlobalSchoolLogo(schoolLogoInput.trim());
+    setGlobalIbLogo(ibLogoInput.trim());
+    setLogoSavedMsg(true);
+    setTimeout(() => setLogoSavedMsg(false), 3000);
+  };
 
   // ── Load users ────────────────────────────────────────────────────────────
   const loadUsers = async () => {
@@ -532,6 +548,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
               { id: 'students' as AdminTab, label: `Élèves par classe (${allClassStudents.length})`, icon: <UserCheck size={15} /> },
               { id: 'copies' as AdminTab, label: 'Copies d\'élèves (Suppression Admin)', icon: <FileText size={15} /> },
               { id: 'requests' as AdminTab, label: `Demandes${pendingCount > 0 ? ` (${pendingCount})` : ''}`, icon: <Bell size={15} /> },
+              { id: 'logos' as AdminTab, label: 'Logos (École & IB)', icon: <Award size={15} /> },
               { id: 'data' as AdminTab, label: 'Données', icon: <Database size={15} /> },
             ].map(tab => (
               <button
@@ -549,6 +566,106 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
           </div>
 
           <div className="p-6">
+
+            {/* ══ TAB: LOGOS ═══════════════════════════════════════════════════ */}
+            {activeTab === 'logos' && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base flex items-center gap-2 mb-1">
+                    <Award size={18} className="text-blue-600" /> Gestion des Logos Permanents (École et IB)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Définissez les liens Google Drive ou URLs des logos officiels qui s'afficheront en permanence sur la couverture et les en-têtes de tous les livrets scolaires (modifiable à tout moment par l'administrateur).
+                  </p>
+                </div>
+
+                {logoSavedMsg && (
+                  <div className="bg-green-50 border border-green-200 text-green-700 rounded-xl p-4 text-sm flex items-center gap-2">
+                    <CheckCircle size={18} /> Logos permanents mis à jour et enregistrés avec succès !
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* École Logo */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Logo de l'École (ex: Al-Kawthar) — Lien Google Drive ou URL
+                      </label>
+                      <input
+                        type="text"
+                        value={schoolLogoInput}
+                        onChange={e => setSchoolLogoInput(e.target.value)}
+                        placeholder="https://drive.google.com/file/d/... ou URL directe"
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-xs bg-white focus:ring-2 focus:ring-blue-400 outline-none font-mono"
+                      />
+                    </div>
+                    <div className="flex items-center gap-4 pt-2">
+                      <div className="w-20 h-20 rounded-full border-2 border-blue-300 bg-white p-1 flex items-center justify-center overflow-hidden shadow-xs">
+                        <img
+                          src={schoolLogoInput ? convertGoogleDriveUrl(schoolLogoInput) : '/logo-alkawtar.png'}
+                          alt="Preview École"
+                          className="w-full h-full object-contain"
+                          onError={e => {
+                            e.currentTarget.src = '/logo-alkawtar.png';
+                          }}
+                        />
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        Aperçu du logo de l'école appliqué sur tous les livrets.
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* IB Logo */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Logo de l'IB (World School) — Lien Google Drive ou URL
+                      </label>
+                      <input
+                        type="text"
+                        value={ibLogoInput}
+                        onChange={e => setIbLogoInput(e.target.value)}
+                        placeholder="https://drive.google.com/file/d/... ou URL directe"
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-xs bg-white focus:ring-2 focus:ring-blue-400 outline-none font-mono"
+                      />
+                    </div>
+                    <div className="flex items-center gap-4 pt-2">
+                      <div className="w-20 h-20 rounded-full border-2 border-blue-300 bg-white p-1 flex items-center justify-center overflow-hidden shadow-xs">
+                        {ibLogoInput ? (
+                          <img
+                            src={convertGoogleDriveUrl(ibLogoInput)}
+                            alt="Preview IB"
+                            className="w-full h-full object-contain"
+                            onError={e => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <div className="text-center text-[10px] text-slate-400 font-bold flex flex-col items-center justify-center h-full">
+                            <span className="text-blue-600 font-serif text-lg">ib</span>
+                            <span>WORLD SCHOOL</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        Aperçu du logo IB appliqué sur tous les livrets.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-4">
+                  <button
+                    onClick={handleSaveLogos}
+                    className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold shadow transition"
+                  >
+                    <Save size={16} /> Enregistrer les logos permanents
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* ══ TAB: USERS ═══════════════════════════════════════════════════ */}
             {activeTab === 'users' && (

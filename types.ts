@@ -690,6 +690,7 @@ export interface StudentBooklet {
   schoolAddress?: string;
   schoolPhone?: string;
   schoolWebsite?: string;
+  schoolLogoUrl?: string;
   ibLogoUrl?: string;
   directorSignature?: string;
   parentSignature?: string;

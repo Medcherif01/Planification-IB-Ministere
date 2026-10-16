@@ -5,6 +5,8 @@ import {
   IB_GRADE_DESCRIPTORS,
   ATL_DESCRIPTORS,
   DEFAULT_SCHOOL_INFO,
+  getGlobalSchoolLogo,
+  getGlobalIbLogo,
 } from '../services/studentBookletService';
 import { LOGO_ALKAWTAR_BASE64 } from '../services/logoBase64';
 import { convertGoogleDriveUrl } from '../services/studentRosterService';
@@ -105,31 +107,31 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
       {/* Print Stylesheet */}
       <style>{`
         @media print {
-          body * {
-            visibility: hidden;
+          body, html {
+            background: white !important;
+            height: auto !important;
+            overflow: visible !important;
           }
-          .booklet-print-document, .booklet-print-document * {
-            visibility: visible;
+          .print\:hidden {
+            display: none !important;
           }
           .booklet-print-document {
-            position: absolute;
-            left: 0;
-            top: 0;
             width: 100% !important;
             max-width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
           }
           .booklet-page {
             page-break-after: always !important;
             break-after: page !important;
-            min-height: 296mm !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            height: 297mm !important;
+            max-height: 297mm !important;
             box-shadow: none !important;
             border: none !important;
             margin: 0 !important;
-            padding: 12mm 14mm !important;
+            padding: 14mm 16mm !important;
             background: white !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
@@ -189,6 +191,11 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
 export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = ({ booklet }) => {
   const gradeClean = booklet.grade?.toUpperCase().replace(/\s+/g, '') || 'PEI4';
 
+  const globalSchoolLogo = getGlobalSchoolLogo();
+  const globalIbLogo = getGlobalIbLogo();
+  const schoolLogoUrlToUse = globalSchoolLogo || booklet.schoolLogoUrl;
+  const ibLogoUrlToUse = globalIbLogo || booklet.ibLogoUrl;
+
   return (
     <div className="space-y-6 print:space-y-0">
       {/* ═══════════════════════════════════════════════════════════════════════
@@ -202,7 +209,7 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
             <div className="flex items-center gap-3">
               <div className="w-20 h-20 rounded-full border-2 border-blue-400 p-1 flex items-center justify-center bg-white shadow-sm overflow-hidden">
                 <img
-                  src="/logo-alkawtar.png"
+                  src={schoolLogoUrlToUse ? convertGoogleDriveUrl(schoolLogoUrlToUse) : "/logo-alkawtar.png"}
                   alt="Al-Kawthar"
                   className="w-full h-full object-contain"
                   onError={e => {
@@ -211,9 +218,9 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
                 />
               </div>
               <div className="w-20 h-20 rounded-full border-2 border-blue-400 p-1 flex items-center justify-center bg-white shadow-sm overflow-hidden">
-                {booklet.ibLogoUrl ? (
+                {ibLogoUrlToUse ? (
                   <img
-                    src={convertGoogleDriveUrl(booklet.ibLogoUrl)}
+                    src={convertGoogleDriveUrl(ibLogoUrlToUse)}
                     alt="IB World School"
                     className="w-full h-full object-contain"
                     onError={e => {
