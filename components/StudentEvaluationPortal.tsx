@@ -5,8 +5,7 @@ import {
   Square, Circle, Triangle, Edit3, Calculator, Layers, List, Keyboard
 } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
-import { getEvaluationByAccessCode, getStudentSubmission, submitStudentEvaluation, createOrUpdateEvaluation, getLocalSubmissions } from '../services/onlineEvaluationService';
-import { fetchAllStudents, normalizeMatricule, normalizeGradeLabel } from '../services/studentRosterService';
+import { fetchAllStudents, normalizeMatricule, normalizeGradeLabel, convertGoogleDriveUrl, extractGoogleDriveId } from '../services/studentRosterService';
 import EvaluationPrintView from './EvaluationPrintView';
 import GeometricDrawingModal from './GeometricDrawingModal';
 import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './ScientificCalculatorAndMathBar';
@@ -14,6 +13,7 @@ import { isEnglishSubject } from '../services/criterialQuestionGeneratorService'
 import VirtualTabletKeyboard from './VirtualTabletKeyboard';
 import RichExerciseContent from './RichExerciseContent';
 import { resolveArtworkOrImage, findMatchingArtwork, generateDynamicMuseumArtCard, getSafeArtworkImageUrl } from '../services/artworkService';
+import { getEvaluationByAccessCode, getStudentSubmission, getLocalSubmissions, createOrUpdateEvaluation, submitStudentEvaluation } from '../services/onlineEvaluationService';
 
 interface StudentEvaluationPortalProps {
   initialAccessCode?: string;
@@ -36,13 +36,17 @@ const SafeExerciseImage: React.FC<{
 
   if (!imageUrl) return null;
 
+  // 0. Traiter et convertir les liens Google Drive en image directe
+  const resolvedDriveUrl = convertGoogleDriveUrl(imageUrl);
+  const activeUrl = resolvedDriveUrl || imageUrl;
+
   // 1. Si c'est du SVG brut
-  if (imageUrl.startsWith('<svg')) {
+  if (activeUrl.startsWith('<svg')) {
     return (
       <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center shadow-xs">
         <div
           className="max-h-72 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-72 [&>svg]:max-w-full [&>svg]:mx-auto [&>svg]:rounded-xl"
-          dangerouslySetInnerHTML={{ __html: imageUrl }}
+          dangerouslySetInnerHTML={{ __html: activeUrl }}
         />
         {imageCaption && (
           <p className="text-xs text-slate-700 italic mt-2 font-bold">
@@ -54,11 +58,11 @@ const SafeExerciseImage: React.FC<{
   }
 
   // 2. Si c'est un SVG data URI
-  if (imageUrl.startsWith('data:image/svg+xml')) {
+  if (activeUrl.startsWith('data:image/svg+xml')) {
     return (
       <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center shadow-xs">
         <img
-          src={imageUrl}
+          src={activeUrl}
           alt={imageCaption || 'Illustration vectorielle'}
           className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
         />
@@ -72,7 +76,7 @@ const SafeExerciseImage: React.FC<{
   }
 
   // 3. Vérifier si la source ou la légende correspond à une oeuvre d'art connue du catalogue
-  const resolved = resolveArtworkOrImage(imageUrl, imageCaption);
+  const resolved = resolveArtworkOrImage(activeUrl, imageCaption);
   if (resolved && resolved.artwork) {
     return (
       <div className="my-2.5 p-3.5 bg-slate-900 border border-slate-800 rounded-2xl text-center shadow-md">
@@ -93,11 +97,11 @@ const SafeExerciseImage: React.FC<{
     );
   }
 
-  const isImageSource = imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://') || imageUrl.startsWith('/');
+  const isImageSource = activeUrl.startsWith('data:image/') || activeUrl.startsWith('http://') || activeUrl.startsWith('https://') || activeUrl.startsWith('/');
 
   // 4. Si ce n'est pas une URL d'image valide ou si le chargement a échoué
   if (!isImageSource || loadFailed) {
-    const captionText = imageCaption || (!isImageSource ? imageUrl : '');
+    const captionText = imageCaption || (!isImageSource ? activeUrl : '');
     const artCard = generateDynamicMuseumArtCard({
       title: captionText || "Document d'Étude Visuelle",
       artist: "Document Iconographique Officiel",
@@ -123,7 +127,7 @@ const SafeExerciseImage: React.FC<{
   }
 
   // 5. Source normale avec retry par proxy en cas de blocage CORS/Referer
-  const finalSrc = tryProxy ? `/api/image-proxy?url=${encodeURIComponent(imageUrl)}` : imageUrl;
+  const finalSrc = tryProxy ? `/api/image-proxy?url=${encodeURIComponent(activeUrl)}` : activeUrl;
 
   return (
     <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center">
@@ -131,15 +135,14 @@ const SafeExerciseImage: React.FC<{
         src={finalSrc}
         alt={imageCaption || 'Illustration'}
         referrerPolicy="no-referrer"
-        crossOrigin="anonymous"
         onError={() => {
-          if (!tryProxy && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
+          if (!tryProxy && (activeUrl.startsWith('http://') || activeUrl.startsWith('https://'))) {
             setTryProxy(true);
           } else {
             setLoadFailed(true);
           }
         }}
-        className="max-h-72 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
+        className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
       />
       {imageCaption && (
         <p className="text-xs text-slate-700 italic mt-2 font-bold">

@@ -6,6 +6,7 @@ import { isEnglishSubject } from '../services/criterialQuestionGeneratorService'
 import { stripHtmlTags } from '../services/educationalDiagramService';
 import { formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
 import { resolveArtworkOrImage, generateDynamicMuseumArtCard } from '../services/artworkService';
+import { convertGoogleDriveUrl } from '../services/studentRosterService';
 import RichExerciseContent from './RichExerciseContent';
 
 interface EvaluationPrintViewProps {
@@ -32,15 +33,19 @@ function PrintSafeImage({
   isEn?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const [tryProxy, setTryProxy] = useState(false);
   if (!imageUrl) return null;
 
+  const resolvedDriveUrl = convertGoogleDriveUrl(imageUrl);
+  const activeUrl = resolvedDriveUrl || imageUrl;
+
   // 1. Si SVG brut
-  if (imageUrl.startsWith('<svg')) {
+  if (activeUrl.startsWith('<svg')) {
     return (
       <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
         <div
           className="max-h-56 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-56 [&>svg]:max-w-full [&>svg]:mx-auto"
-          dangerouslySetInnerHTML={{ __html: imageUrl }}
+          dangerouslySetInnerHTML={{ __html: activeUrl }}
         />
         {imageCaption && (
           <p className="text-[10px] text-slate-700 italic mt-1 font-bold">
@@ -52,11 +57,11 @@ function PrintSafeImage({
   }
 
   // 2. Si SVG data URI
-  if (imageUrl.startsWith('data:image/svg+xml')) {
+  if (activeUrl.startsWith('data:image/svg+xml')) {
     return (
       <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
         <img
-          src={imageUrl}
+          src={activeUrl}
           alt={imageCaption || 'Illustration vectorielle'}
           className="max-h-56 max-w-full mx-auto object-contain rounded"
         />
@@ -70,7 +75,7 @@ function PrintSafeImage({
   }
 
   // 3. Résolution d'oeuvres d'art
-  const resolved = resolveArtworkOrImage(imageUrl, imageCaption);
+  const resolved = resolveArtworkOrImage(activeUrl, imageCaption);
   if (resolved && resolved.artwork) {
     return (
       <div className="my-2.5 p-2.5 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
@@ -89,10 +94,10 @@ function PrintSafeImage({
     );
   }
 
-  const isImageSource = imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://') || imageUrl.startsWith('/');
+  const isImageSource = activeUrl.startsWith('data:image/') || activeUrl.startsWith('http://') || activeUrl.startsWith('https://') || activeUrl.startsWith('/');
 
   if (!isImageSource || failed) {
-    const captionText = imageCaption || (!isImageSource ? imageUrl : (isEn ? 'Visual Document' : 'Document visuel'));
+    const captionText = imageCaption || (!isImageSource ? activeUrl : (isEn ? 'Visual Document' : 'Document visuel'));
     const artCard = generateDynamicMuseumArtCard({
       title: stripHtmlTags(captionText) || "Document d'Histoire des Arts",
       artist: "Document Iconographique Officiel",
@@ -117,14 +122,21 @@ function PrintSafeImage({
     );
   }
 
+  const finalSrc = tryProxy ? `/api/image-proxy?url=${encodeURIComponent(activeUrl)}` : activeUrl;
+
   return (
     <div className="my-2.5 p-2 bg-slate-50 border border-slate-300 rounded text-center avoid-break">
       <img
-        src={imageUrl}
+        src={finalSrc}
         alt={imageCaption || (isEn ? 'Task illustration' : 'Illustration exercice')}
         referrerPolicy="no-referrer"
-        crossOrigin="anonymous"
-        onError={() => setFailed(true)}
+        onError={() => {
+          if (!tryProxy && (activeUrl.startsWith('http://') || activeUrl.startsWith('https://'))) {
+            setTryProxy(true);
+          } else {
+            setFailed(true);
+          }
+        }}
         className="max-h-56 max-w-full mx-auto object-contain rounded"
       />
       {imageCaption && (

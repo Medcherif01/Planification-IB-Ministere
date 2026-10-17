@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders, Calculator, Layers, BookOpen } from 'lucide-react';
+import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders, Calculator, Layers, BookOpen, Calendar, Clock } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini, deleteStudentSubmission } from '../services/onlineEvaluationService';
-import { generateCleanStudentCodesForEvaluation, fetchAllStudents } from '../services/studentRosterService';
+import { generateCleanStudentCodesForEvaluation, fetchAllStudents, convertGoogleDriveUrl } from '../services/studentRosterService';
 import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import { SUBJECTS, PEI_GRADES } from '../constants';
 import GradedEvaluationsRecapModal from './GradedEvaluationsRecapModal';
@@ -76,6 +76,26 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [unitSemesterFilter, setUnitSemesterFilter] = useState<string>('');
   const [evalUnitFilter, setEvalUnitFilter] = useState<string>('');
   const [evalSemesterFilter, setEvalSemesterFilter] = useState<string>('');
+  const [unitEvalStatusFilter, setUnitEvalStatusFilter] = useState<'all' | 'generated' | 'pending'>('all');
+  const [evalSortOrder, setEvalSortOrder] = useState<'newest' | 'oldest'>('newest');
+
+  // Formattage soigné de la date de génération en français
+  const formatEvaluationDate = (dateStr?: string): string => {
+    if (!dateStr) return 'Date non renseignée';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return new Intl.DateTimeFormat('fr-FR', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(d);
+    } catch {
+      return dateStr;
+    }
+  };
 
   // Question editing modal
   const [editingEvaluation, setEditingEvaluation] = useState<OnlineEvaluation | null>(null);
@@ -200,6 +220,28 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       return true;
     });
   }, [allUnitPlans, unitSubjectFilter, unitGradeFilter, unitSemesterFilter]);
+
+  // Statistiques des évaluations générées vs non encore générées
+  const unitsStats = useMemo(() => {
+    let withEvals = 0;
+    let withoutEvals = 0;
+    unitsForSelectedSubject.forEach(unit => {
+      const hasEvals = evaluations.some(e => e.unitId === unit.id || (e.unitTitle && e.unitTitle.toLowerCase() === unit.title.toLowerCase()));
+      if (hasEvals) withEvals++;
+      else withoutEvals++;
+    });
+    return { withEvals, withoutEvals };
+  }, [unitsForSelectedSubject, evaluations]);
+
+  // Unités filtrées selon le filtre de statut (toutes, déjà générées, non encore générées)
+  const displayedUnits = useMemo(() => {
+    return unitsForSelectedSubject.filter(unit => {
+      const hasEvals = evaluations.some(e => e.unitId === unit.id || (e.unitTitle && e.unitTitle.toLowerCase() === unit.title.toLowerCase()));
+      if (unitEvalStatusFilter === 'generated') return hasEvals;
+      if (unitEvalStatusFilter === 'pending') return !hasEvals;
+      return true;
+    });
+  }, [unitsForSelectedSubject, evaluations, unitEvalStatusFilter]);
 
   // Mettre à jour les critères sélectionnés par défaut dès que l'unité change
   useEffect(() => {
@@ -1246,9 +1288,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     }
   };
 
-  // Filtrer les évaluations
+  // Filtrer et trier les évaluations générées
   const filteredEvaluations = useMemo(() => {
-    return evaluations.filter(e => {
+    const list = evaluations.filter(e => {
       const q = searchQuery.toLowerCase().trim();
       if (q && !(
         e.title.toLowerCase().includes(q) ||
@@ -1266,7 +1308,13 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       }
       return true;
     });
-  }, [evaluations, searchQuery, evalUnitFilter, evalSemesterFilter]);
+
+    return list.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return evalSortOrder === 'oldest' ? timeA - timeB : timeB - timeA;
+    });
+  }, [evaluations, searchQuery, evalUnitFilter, evalSemesterFilter, evalSortOrder]);
 
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">

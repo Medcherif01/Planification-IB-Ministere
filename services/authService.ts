@@ -33,8 +33,17 @@ export interface ModificationRequest {
 export function getCurrentUser(): AppUser | null {
   try {
     const raw = localStorage.getItem('currentUser');
-    const username = localStorage.getItem('userUsername');
-    if (username === 'Mohamed' || (raw && JSON.parse(raw)?.username === 'Mohamed')) {
+    const username = localStorage.getItem('userUsername') || '';
+    const normUser = username.trim().toLowerCase();
+    let parsedUser = '';
+    try {
+      parsedUser = raw ? (JSON.parse(raw)?.username || '').trim().toLowerCase() : '';
+    } catch {}
+
+    if (
+      normUser === 'mohamed' || normUser === 'alkawthar' ||
+      parsedUser === 'mohamed' || parsedUser === 'alkawthar'
+    ) {
       setCurrentUser(null);
       if (typeof window !== 'undefined') {
         window.location.reload();
@@ -105,6 +114,12 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export async function loginUser(username: string, password: string): Promise<AppUser> {
+  const normUser = (username || '').trim().toLowerCase();
+  // Alkawthar n'a plus d'accès admin ni utilisateur, seul Mohamed2020 est administrateur
+  if (normUser === 'alkawthar' || normUser === 'mohamed') {
+    throw new Error('Identifiants incorrects');
+  }
+
   // Try MongoDB API first
   try {
     const response = await fetch('/api/users?action=login', {
@@ -125,14 +140,12 @@ export async function loginUser(username: string, password: string): Promise<App
     console.warn('[Auth] API non disponible, essai en local:', e.message);
   }
 
-  // Fallback local credentials
+  // Fallback local credentials (Mohamed2020 uniquement comme administrateur)
   const LOCAL_USERS: AppUser[] = [
     { id: 'local-admin', username: 'Mohamed2020', role: 'admin', displayName: 'Mohamed (Administrateur)', subjects: [] },
-    { id: 'local-admin2', username: 'Alkawthar', role: 'admin', displayName: 'Administrateur', subjects: [] },
   ];
   const LOCAL_PASSWORDS: Record<string, string> = {
     'Mohamed2020': '120786Mmed',
-    'Alkawthar': 'Alkawthar@7786',
   };
 
   const user = LOCAL_USERS.find(u => u.username === username);

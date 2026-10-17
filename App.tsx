@@ -17,9 +17,12 @@ import { getCurrentUser, setCurrentUser, type AppUser } from './services/authSer
 // ─── Initialisation synchrone depuis localStorage ───────────────────────────
 function getInitialAuthState(): boolean {
   try {
-    const raw = localStorage.getItem('currentUser');
-    const username = localStorage.getItem('userUsername');
-    if (username === 'Mohamed' || (raw && raw.includes('"username":"Mohamed"'))) {
+    const raw = (localStorage.getItem('currentUser') || '').toLowerCase();
+    const username = (localStorage.getItem('userUsername') || '').trim().toLowerCase();
+    if (
+      username === 'mohamed' || raw.includes('"username":"mohamed"') ||
+      username === 'alkawthar' || raw.includes('"username":"alkawthar"')
+    ) {
       localStorage.removeItem('currentUser');
       localStorage.removeItem('isAuthenticated');
       localStorage.removeItem('userRole');

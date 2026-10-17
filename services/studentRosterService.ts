@@ -17,33 +17,54 @@ export function normalizeGradeLabel(grade: string): string {
 }
 
 /**
- * Convertit un lien Google Drive (partage / affichage) en URL d'image directe intégrable
+ * Extrait l'identifiant unique (file ID) d'un lien Google Drive
+ */
+export function extractGoogleDriveId(url?: string): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  // Supporte tous les formats de liens Google Drive :
+  // - drive.google.com/file/d/ID/view, /file/u/0/d/ID/view
+  // - drive.google.com/open?id=ID
+  // - drive.google.com/uc?id=ID, /uc?export=download&id=ID
+  // - drive.google.com/thumbnail?id=ID
+  // - lh3.googleusercontent.com/d/ID
+  // - docs.google.com/(document|presentation|drawings|spreadsheets)/d/ID
+  const driveRegex = /(?:drive\.google\.com\/(?:file\/(?:u\/\d+\/)?d\/|open\?.*?id=|uc\?.*?id=|thumbnail\?.*?id=)|lh3\.googleusercontent\.com\/d\/|docs\.google\.com\/(?:document|presentation|drawings|spreadsheets)\/d\/)([a-zA-Z0-9_-]{20,})/i;
+  const match = trimmed.match(driveRegex);
+  if (match && match[1]) return match[1];
+
+  const queryMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]{20,})/i);
+  if (queryMatch && queryMatch[1]) return queryMatch[1];
+
+  if (/^[a-zA-Z0-9_-]{25,50}$/.test(trimmed)) return trimmed;
+  return null;
+}
+
+/**
+ * Convertit un lien Google Drive (partage / affichage / fichier) en URL d'image directe intégrable
  */
 export function convertGoogleDriveUrl(url?: string): string {
   if (!url) return '';
   const trimmed = url.trim();
   if (!trimmed) return '';
-  if (trimmed.startsWith('data:image/')) return trimmed;
+  if (trimmed.startsWith('data:image/') || trimmed.startsWith('<svg')) return trimmed;
 
-  // Formats d'URL Google Drive reconnus :
-  // https://drive.google.com/file/d/FILE_ID/view?usp=sharing
-  // https://drive.google.com/file/d/FILE_ID/view
-  // https://drive.google.com/open?id=FILE_ID
-  // https://drive.google.com/uc?id=FILE_ID
-  // https://drive.google.com/thumbnail?id=FILE_ID
-  // https://lh3.googleusercontent.com/d/FILE_ID
-  const driveRegex = /(?:drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?id=|thumbnail\?id=)|lh3\.googleusercontent\.com\/d\/)([a-zA-Z0-9_-]{20,})/i;
-  const match = trimmed.match(driveRegex);
-  if (match && match[1]) {
-    return `https://lh3.googleusercontent.com/d/${match[1]}`;
-  }
-
-  // Si l'utilisateur colle directement l'ID du fichier Google Drive
-  if (/^[a-zA-Z0-9_-]{25,45}$/.test(trimmed)) {
-    return `https://lh3.googleusercontent.com/d/${trimmed}`;
+  const id = extractGoogleDriveId(trimmed);
+  if (id) {
+    // lh3.googleusercontent.com/d/ID est le CDN direct et rapide de Google pour les images
+    return `https://lh3.googleusercontent.com/d/${id}`;
   }
 
   return trimmed;
+}
+
+/**
+ * Retourne l'URL de proxy sécurisée pour les images Google Drive ou externes
+ */
+export function getProxyImageUrl(url?: string): string {
+  if (!url) return '';
+  const converted = convertGoogleDriveUrl(url);
+  return `/api/image-proxy?url=${encodeURIComponent(converted || url)}`;
 }
 
 export function getLocalStudents(grade?: string): ClassStudent[] {

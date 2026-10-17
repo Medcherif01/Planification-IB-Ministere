@@ -18,7 +18,7 @@ async function hashPassword(password: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// In-memory users store fallback
+// In-memory users store fallback (Mohamed2020 uniquement comme administrateur)
 const inMemoryUsers: any[] = [
   {
     id: 'user_admin_mohamed',
@@ -27,17 +27,6 @@ const inMemoryUsers: any[] = [
     passwordHash: 'bb3caa892402611beda12f7c87ee1dcc208b3ca854235f8c5ce2ed77a2d480ec', // 120786Mmed
     role: 'admin',
     displayName: 'Mohamed (Administrateur)',
-    subjects: [],
-    createdAt: new Date().toISOString(),
-    isActive: true,
-  },
-  {
-    id: 'user_admin_alkawthar',
-    _id: 'user_admin_alkawthar',
-    username: 'Alkawthar',
-    passwordHash: '96fa9e1fcb0ae5ddba694f4c285ad4ea0eb38c92b236fa78ef3a72d765355eb6', // Alkawthar@7786
-    role: 'admin',
-    displayName: 'Administrateur',
     subjects: [],
     createdAt: new Date().toISOString(),
     isActive: true,
@@ -76,7 +65,10 @@ async function seedAdminIfNeeded(db: ReturnType<MongoClient['db']>) {
     console.log('[Users] Admin migré de Mohamed vers Mohamed2020');
   }
 
-  const count = await col.countDocuments();
+  // Supprimer tout ancien compte Alkawthar pour ne garder que Mohamed2020
+  await col.deleteMany({ username: { $regex: /^alkawthar$/i } });
+
+  const count = await col.countDocuments({ username: 'Mohamed2020' });
   if (count === 0) {
     const adminHash = await hashPassword('120786Mmed');
     await col.insertOne({
@@ -202,8 +194,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.method === 'POST' && req.query.action === 'login') {
         const { username, password } = req.body;
         if (!username || !password) return res.status(400).json({ error: 'username et password requis' });
+        const cleanUser = String(username).trim().toLowerCase();
+        if (cleanUser === 'alkawthar' || cleanUser === 'mohamed') {
+          return res.status(401).json({ error: 'Identifiants incorrects' });
+        }
         const hash = await hashPassword(password);
-        const user = inMemoryUsers.find(u => u.username?.toLowerCase() === username?.trim().toLowerCase() && (u.passwordHash === hash || password === 'Alkawthar86' || password === 'Alkawthar@7786') && u.isActive !== false);
+        const user = inMemoryUsers.find(u => u.username?.toLowerCase() === cleanUser && u.passwordHash === hash && u.isActive !== false);
         if (!user) return res.status(401).json({ error: 'Identifiants incorrects' });
         return res.status(200).json({
           success: true,
@@ -224,6 +220,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.method === 'POST') {
         const { username, password, displayName, subjects } = req.body;
         if (!username || !password || !displayName) return res.status(400).json({ error: 'username, password et displayName requis' });
+        const cleanUser = String(username).trim().toLowerCase();
+        if (cleanUser === 'alkawthar' || cleanUser === 'mohamed') {
+          return res.status(400).json({ error: 'Nom d\'utilisateur non autorisé' });
+        }
         const hash = await hashPassword(password);
         const id = `user_${Date.now()}`;
         const newUser = { id, _id: id, username, passwordHash: hash, role: 'teacher', displayName, subjects: subjects || [], createdAt: new Date().toISOString(), isActive: true };
@@ -243,8 +243,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!username || !password) {
         return res.status(400).json({ error: 'username et password requis' });
       }
+      const cleanUser = String(username).trim().toLowerCase();
+      if (cleanUser === 'alkawthar' || cleanUser === 'mohamed') {
+        return res.status(401).json({ error: 'Identifiants incorrects' });
+      }
       const hash = await hashPassword(password);
-      const user = await col.findOne({ username, passwordHash: hash, isActive: true });
+      const user = await col.findOne({ username: { $regex: new RegExp(`^${cleanUser}$`, 'i') }, passwordHash: hash, isActive: true });
       if (!user) {
         return res.status(401).json({ error: 'Identifiants incorrects' });
       }
