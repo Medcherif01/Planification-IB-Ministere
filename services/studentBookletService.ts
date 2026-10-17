@@ -474,9 +474,9 @@ export async function importStudentScoresFromOnlineEvaluations(
   (['A', 'B', 'C', 'D'] as const).forEach(crit => {
     const list = criteriaScoresAccumulator[crit];
     if (list.length > 0) {
-      // Dernière note ou moyenne arrondie
-      const avg = Math.round(list.reduce((s, v) => s + v, 0) / list.length);
-      computedCriteria[crit] = Math.min(8, Math.max(1, avg));
+      // Conserver la meilleure note pour ce critère sur le semestre (requis par l'utilisateur)
+      const bestScore = Math.max(...list);
+      computedCriteria[crit] = Math.min(8, Math.max(1, bestScore));
     }
   });
 
