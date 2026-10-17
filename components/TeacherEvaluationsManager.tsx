@@ -1954,61 +1954,89 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {submissions.map(sub => {
-                        const isGraded = sub.status === 'graded';
-                        const totalMax = (selectedEvaluation.assessments || []).reduce((acc, a) => acc + (a.maxPoints || 8), 0);
-                        return (
-                          <tr key={sub.id} className="hover:bg-slate-50/80 transition">
-                            <td className="px-4 py-3 font-bold text-slate-900">{sub.studentName}</td>
-                            <td className="px-4 py-3 font-mono text-slate-600">{sub.studentNumber}</td>
-                            <td className="px-4 py-3 text-slate-500">
-                              {new Date(sub.submittedAt).toLocaleString('fr-FR', {
-                                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                              })}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                isGraded ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                              }`}>
-                                {isGraded ? '✓ Corrigé' : '⏳ En attente'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 font-black text-slate-800">
-                              {isGraded ? `${sub.totalScore ?? 0} / ${totalMax}` : '—'}
-                            </td>
-                            <td className="px-4 py-3 text-right space-x-1.5 whitespace-nowrap">
-                              <button
-                                onClick={() => handleOpenGrading(sub)}
-                                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
-                              >
-                                {isGraded ? 'Modifier correction' : 'Corriger la copie'}
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setPrintEvaluation(selectedEvaluation);
-                                  setPrintSubmission(sub);
-                                }}
-                                className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition"
-                                title="Imprimer la copie corrigée (A4, 1 cm)"
-                              >
-                                <Printer size={15} />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setSubmissionToDelete(sub);
-                                  setAdminDeleteValidated(false);
-                                  setAdminResetMatriculeOnDelete(true);
-                                }}
-                                className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1"
-                                title="Supprimer cette copie d'élève (réouvrira l'accès de l'élève pour recomposer)"
-                              >
-                                <Trash2 size={13} />
-                                <span>Supprimer la copie</span>
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {(() => {
+                        const studentBestScores = new Map<string, number>();
+                        submissions.forEach(s => {
+                          if (s.status === 'graded' && typeof s.totalScore === 'number') {
+                            const key = (s.studentName || s.studentNumber || '').trim().toLowerCase();
+                            const current = studentBestScores.get(key) ?? -1;
+                            if (s.totalScore > current) {
+                              studentBestScores.set(key, s.totalScore);
+                            }
+                          }
+                        });
+
+                        return submissions.map(sub => {
+                          const isGraded = sub.status === 'graded';
+                          const totalMax = (selectedEvaluation.assessments || []).reduce((acc, a) => acc + (a.maxPoints || 8), 0);
+                          const studentKey = (sub.studentName || sub.studentNumber || '').trim().toLowerCase();
+                          const bestScore = studentBestScores.get(studentKey);
+                          const isBest = isGraded && bestScore !== undefined && sub.totalScore === bestScore;
+
+                          return (
+                            <tr key={sub.id} className="hover:bg-slate-50/80 transition">
+                              <td className="px-4 py-3 font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                                <span>{sub.studentName}</span>
+                                {isBest && (
+                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[9px] font-black uppercase tracking-wider" title="Note la plus élevée retenue (Parmi les différents essais)">
+                                    ⭐ Meilleure note
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 font-mono text-slate-600">{sub.studentNumber}</td>
+                              <td className="px-4 py-3 text-slate-500">
+                                {new Date(sub.submittedAt).toLocaleString('fr-FR', {
+                                  day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                                })}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isGraded ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {isGraded ? '✓ Corrigé' : '⏳ En attente'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 font-black text-slate-800">
+                                {isGraded ? `${sub.totalScore ?? 0} / ${totalMax}` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-right space-x-1.5 whitespace-nowrap">
+                                <button
+                                  onClick={() => handleOpenGrading(sub)}
+                                  className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
+                                >
+                                  {isGraded ? 'Modifier correction' : 'Corriger la copie'}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setPrintEvaluation(selectedEvaluation);
+                                    setPrintSubmission(sub);
+                                  }}
+                                  className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                                  title="Imprimer la copie corrigée (A4, 1 cm)"
+                                >
+                                  <Printer size={15} />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (!isAdmin) {
+                                      alert("🔒 Seul l'administrateur (Mohamed2020) est autorisé à supprimer définitivement la copie d'un élève.\n\nEn tant qu'enseignant, vous pouvez donner un autre essai à l'élève (en activant le 2e essai ou en lui assignant un autre matricule). La note la plus élevée sera automatiquement prise en compte.");
+                                      return;
+                                    }
+                                    setSubmissionToDelete(sub);
+                                    setAdminDeleteValidated(false);
+                                    setAdminResetMatriculeOnDelete(true);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1"
+                                  title="Supprimer cette copie d'élève (réservé à l'administrateur)"
+                                >
+                                  <Trash2 size={13} />
+                                  <span>Supprimer la copie</span>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
                     </tbody>
                   </table>
                 </div>
