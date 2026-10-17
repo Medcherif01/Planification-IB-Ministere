@@ -570,6 +570,7 @@ export interface OnlineEvaluation {
   grade: string;
   unitId?: string;
   unitTitle?: string;
+  unitNumber?: number | string; // Numéro d'ordre de l'unité (ex: 1, 2, 3...)
   semester?: 'Semestre 1' | 'Semestre 2' | string;
   teacherName: string;
   teacherUsername?: string;
@@ -676,10 +677,10 @@ export interface StudentSubjectReport {
 }
 
 export interface StudentBooklet {
-  id: string; // e.g. "booklet_PEI4_2025_2026_T1_stu_123"
+  id: string; // e.g. "booklet_PEI4_2026_2027_S1_stu_123"
   grade: string; // e.g. "PEI 4"
-  schoolYear: string; // e.g. "2025/2026"
-  term: string; // e.g. "1er trimestre", "2e trimestre", "3e trimestre"
+  schoolYear: string; // e.g. "2026/2027"
+  term: string; // e.g. "Semestre 1", "Semestre 2"
   studentId: string;
   studentName: string;
   studentNumber: string;

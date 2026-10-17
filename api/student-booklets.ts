@@ -6,10 +6,11 @@ const DB_NAME = 'planpei';
 const COLLECTION = 'student_booklets';
 
 let cachedClient: MongoClient | null = null;
+let mongoDisabled = false;
 const inMemoryBooklets = new Map<string, any>();
 
 async function connectToDatabase(): Promise<MongoClient | null> {
-  if (!MONGO_URL) return null;
+  if (!MONGO_URL || mongoDisabled) return null;
   if (cachedClient) {
     try {
       await cachedClient.db('admin').command({ ping: 1 });
@@ -39,6 +40,7 @@ async function connectToDatabase(): Promise<MongoClient | null> {
     cachedClient = client;
     return client;
   } catch (_) {
+    mongoDisabled = true;
     return null;
   }
 }
@@ -93,7 +95,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(400).json({ error: 'grade et studentId sont requis' });
         }
 
-        const id = booklet.id || `booklet_${booklet.grade}_${booklet.schoolYear || '2025_2026'}_${booklet.term || 'T1'}_${booklet.studentId}`;
+        const id = booklet.id || `booklet_${booklet.grade}_${booklet.schoolYear || '2026_2027'}_${booklet.term || 'Semestre1'}_${booklet.studentId}`;
         const updated = {
           ...booklet,
           id,
@@ -153,7 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'grade et studentId sont requis' });
       }
 
-      const id = booklet.id || `booklet_${booklet.grade.replace(/\s+/g, '')}_${(booklet.schoolYear || '2025_2026').replace(/\//g, '_')}_${(booklet.term || 'T1').replace(/\s+/g, '')}_${booklet.studentId}`;
+      const id = booklet.id || `booklet_${booklet.grade.replace(/\s+/g, '')}_${(booklet.schoolYear || '2026_2027').replace(/\//g, '_')}_${(booklet.term || 'Semestre1').replace(/\s+/g, '')}_${booklet.studentId}`;
       const now = new Date().toISOString();
 
       const docToSave = {

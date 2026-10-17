@@ -33,8 +33,10 @@ const inMemoryUsers: any[] = [
   }
 ];
 
+let mongoDisabled = false;
+
 async function getDB() {
-  if (!MONGO_URL) return null;
+  if (!MONGO_URL || mongoDisabled) return null;
   if (cachedClient) {
     try { await cachedClient.db('admin').command({ ping: 1 }); return cachedClient.db(DB_NAME); }
     catch (_) { try { await cachedClient.close(); } catch (_) {} cachedClient = null; }
@@ -48,6 +50,7 @@ async function getDB() {
     cachedClient = client;
     return client.db(DB_NAME);
   } catch (_) {
+    mongoDisabled = true;
     return null;
   }
 }

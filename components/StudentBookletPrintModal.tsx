@@ -124,8 +124,8 @@ export function generateBookletPrintHtml(
                 <th colspan="2" style="padding: 5px; border: 1px solid #7eaac9;">
                   Descripteurs de niveaux /8
                   <div style="display: flex; justify-content: space-around; font-size: 9px; font-weight: normal; border-top: 1px solid #7eaac9; margin-top: 3px; padding-top: 2px;">
-                    <span>Trimestre 1</span>
-                    <span>Trimestre 2</span>
+                    <span>Semestre 1</span>
+                    <span>Semestre 2</span>
                   </div>
                 </th>
                 <th style="padding: 5px; border: 1px solid #7eaac9; width: 68px; font-size: 9.5px; line-height: 1.1;">Niveau final atteint /8</th>
@@ -210,7 +210,7 @@ export function generateBookletPrintHtml(
                 LIVRET SCOLAIRE ${escapeHtml(gradeClean)}
               </h1>
               <p style="font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.95); margin-top: 4px; margin-bottom: 0;">
-                ${escapeHtml(booklet.term || '1er trimestre')}
+                ${escapeHtml((booklet.term === '1er trimestre' || !booklet.term) ? 'Semestre 1' : (booklet.term === '2e trimestre' || booklet.term === '3e trimestre') ? 'Semestre 2' : booklet.term)}
               </p>
             </div>
           </div>
@@ -228,7 +228,7 @@ export function generateBookletPrintHtml(
           <!-- Année scolaire -->
           <div style="text-align: center; margin: 20px 0;">
             <h2 style="font-size: 17px; font-weight: bold; color: #1e293b; letter-spacing: 0.5px; margin: 0;">
-              Année scolaire : ${escapeHtml(booklet.schoolYear || '2025/2026')}
+              Année scolaire : ${escapeHtml((booklet.schoolYear && booklet.schoolYear !== '2025/2026') ? booklet.schoolYear : '2026/2027')}
             </h2>
           </div>
 
@@ -661,7 +661,7 @@ export const StudentBookletPrintModal: React.FC<StudentBookletPrintModalProps> =
     const gradeClean = currentBooklet.grade?.toUpperCase().replace(/\s+/g, '') || 'PEI4';
     const suggestedTitle = scope === 'all' && booklets.length > 1
       ? `Livrets_PEI_${gradeClean}_Classe_Complete_${booklets.length}_Eleves`
-      : `Livret_PEI_${gradeClean}_${currentBooklet.studentName.replace(/\s+/g, '_')}_${(currentBooklet.term || '1er_trimestre').replace(/\s+/g, '_')}`;
+      : `Livret_PEI_${gradeClean}_${currentBooklet.studentName.replace(/\s+/g, '_')}_${(currentBooklet.term || 'Semestre_1').replace(/\s+/g, '_')}`;
 
     // Mettre à jour temporairement le titre de la page pour le dialogue d'enregistrement PDF
     const originalTitle = document.title;
@@ -1054,7 +1054,9 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
               <h1 className="text-xl sm:text-2xl font-black tracking-wide uppercase text-white drop-shadow-xs">
                 LIVRET SCOLAIRE {gradeClean}
               </h1>
-              <p className="text-sm font-bold text-white/95 mt-1">{booklet.term || '1er trimestre'}</p>
+              <p className="text-sm font-bold text-white/95 mt-1">
+                {(booklet.term === '1er trimestre' || !booklet.term) ? 'Semestre 1' : (booklet.term === '2e trimestre' || booklet.term === '3e trimestre') ? 'Semestre 2' : booklet.term}
+              </p>
             </div>
           </div>
 
@@ -1082,7 +1084,7 @@ export const SingleStudentBookletView: React.FC<{ booklet: StudentBooklet }> = (
           {/* Année scolaire */}
           <div className="text-center my-6">
             <h2 className="text-lg font-bold text-slate-800 tracking-wide">
-              Année scolaire : {booklet.schoolYear || '2025/2026'}
+              Année scolaire : {(booklet.schoolYear && booklet.schoolYear !== '2025/2026') ? booklet.schoolYear : '2026/2027'}
             </h2>
           </div>
 
@@ -1474,8 +1476,8 @@ const SubjectEvaluationBlock: React.FC<{
             <th colSpan={2} className="p-1.5 border border-[#7eaac9]">
               Descripteurs de niveaux /8
               <div className="grid grid-cols-2 text-[10px] font-normal border-t border-[#7eaac9] mt-1 pt-0.5">
-                <span>Trimestre 1</span>
-                <span>Trimestre 2</span>
+                <span>Semestre 1</span>
+                <span>Semestre 2</span>
               </div>
             </th>
             <th className="p-1.5 border border-[#7eaac9] text-[11px] leading-tight w-20">

@@ -6,10 +6,11 @@ const DB_NAME = 'planpei';
 const COLLECTION_NAME = 'ib_criteria';
 
 let cachedClient: MongoClient | null = null;
+let mongoDisabled = false;
 const inMemoryCriteria = new Map<string, any>();
 
 async function connectToDatabase(): Promise<MongoClient | null> {
-  if (!MONGO_URL) return null;
+  if (!MONGO_URL || mongoDisabled) return null;
   if (cachedClient) return cachedClient;
   try {
     const client = new MongoClient(MONGO_URL, {
@@ -25,6 +26,7 @@ async function connectToDatabase(): Promise<MongoClient | null> {
     cachedClient = client;
     return client;
   } catch (_) {
+    mongoDisabled = true;
     return null;
   }
 }

@@ -9,10 +9,11 @@ const CONNECT_TIMEOUT_MS = 5_000;
 const SOCKET_TIMEOUT_MS  = 10_000;
 
 let cachedClient: MongoClient | null = null;
+let mongoDisabled = false;
 const inMemoryExams: any[] = [];
 
 async function connectToDatabase(): Promise<MongoClient | null> {
-  if (!MONGO_URL) return null;
+  if (!MONGO_URL || mongoDisabled) return null;
   if (cachedClient) {
     try {
       await cachedClient.db('admin').command({ ping: 1 });
@@ -42,6 +43,7 @@ async function connectToDatabase(): Promise<MongoClient | null> {
     cachedClient = client;
     return client;
   } catch (_) {
+    mongoDisabled = true;
     return null;
   }
 }

@@ -74,8 +74,8 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
 
   // Selected class, school year, term
   const [selectedGrade, setSelectedGrade] = useState<string>(initialGrade);
-  const [schoolYear, setSchoolYear] = useState<string>('2025/2026');
-  const [term, setTerm] = useState<string>('1er trimestre');
+  const [schoolYear, setSchoolYear] = useState<string>('2026/2027');
+  const [term, setTerm] = useState<string>('Semestre 1');
 
   // Selected subject for teacher contribution
   const [selectedSubject, setSelectedSubject] = useState<string>(() => {
@@ -399,22 +399,48 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
         selectedGrade,
         selectedSubject,
         currentStudent.studentNumber,
-        currentStudent.name
+        currentStudent.name,
+        term
       );
 
       if (res.evalCount === 0) {
         setImportNotice(
-          `Aucune copie notée trouvée pour ${currentStudent.name} dans la matière "${selectedSubject}". Saisie manuelle conservée.`
+          `Aucune copie notée trouvée pour ${currentStudent.name} dans la matière "${selectedSubject}" (${term}). Saisie manuelle conservée.`
         );
         return;
       }
 
-      // Update criteria
+      // Update criteria (Règle IB : meilleure note par critère parmi les unités du semestre)
+      const isSem2 = term.includes('2');
       const newCriteria = { ...currentSubjectReport.criteria };
-      if (res.criteria.A !== undefined) newCriteria.A = { ...newCriteria.A, t1: res.criteria.A, final: res.criteria.A };
-      if (res.criteria.B !== undefined) newCriteria.B = { ...newCriteria.B, t1: res.criteria.B, final: res.criteria.B };
-      if (res.criteria.C !== undefined) newCriteria.C = { ...newCriteria.C, t1: res.criteria.C, final: res.criteria.C };
-      if (res.criteria.D !== undefined) newCriteria.D = { ...newCriteria.D, t1: res.criteria.D, final: res.criteria.D };
+      if (res.criteria.A !== undefined) {
+        newCriteria.A = {
+          ...newCriteria.A,
+          [isSem2 ? 't2' : 't1']: res.criteria.A,
+          final: res.criteria.A,
+        };
+      }
+      if (res.criteria.B !== undefined) {
+        newCriteria.B = {
+          ...newCriteria.B,
+          [isSem2 ? 't2' : 't1']: res.criteria.B,
+          final: res.criteria.B,
+        };
+      }
+      if (res.criteria.C !== undefined) {
+        newCriteria.C = {
+          ...newCriteria.C,
+          [isSem2 ? 't2' : 't1']: res.criteria.C,
+          final: res.criteria.C,
+        };
+      }
+      if (res.criteria.D !== undefined) {
+        newCriteria.D = {
+          ...newCriteria.D,
+          [isSem2 ? 't2' : 't1']: res.criteria.D,
+          final: res.criteria.D,
+        };
+      }
 
       const total = res.seuil32;
       const finalGrade = res.finalGrade;
@@ -443,7 +469,7 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
 
       setBooklets(prev => ({ ...prev, [currentStudent.id]: updatedBooklet }));
       setImportNotice(
-        `✅ Notes importées depuis ${res.evalCount} évaluation(s) électronique(s) ! Seuil /32 : ${total}, Note finale : ${finalGrade}/8.`
+        `✅ Notes ${term} importées depuis ${res.evalCount} évaluation(s) ! Règle IB appliquée : la meilleure note par critère parmi les unités a été accordée. Seuil /32 : ${total}, Note finale : ${finalGrade}/8.`
       );
       setTimeout(() => setImportNotice(''), 6000);
     } catch (e: any) {
@@ -541,22 +567,21 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
                 onChange={e => setSchoolYear(e.target.value)}
                 className="bg-slate-900/40 text-white rounded px-2 py-0.5 outline-none border border-white/20 font-bold"
               >
-                <option value="2025/2026" className="bg-slate-800 text-white">2025/2026</option>
                 <option value="2026/2027" className="bg-slate-800 text-white">2026/2027</option>
+                <option value="2027/2028" className="bg-slate-800 text-white">2027/2028</option>
               </select>
             </div>
 
-            {/* Term */}
+            {/* Semester */}
             <div className="flex items-center gap-1 bg-white/15 px-2.5 py-1 rounded-lg text-xs font-semibold">
-              <span>Trimestre :</span>
+              <span>Semestre :</span>
               <select
                 value={term}
                 onChange={e => setTerm(e.target.value)}
                 className="bg-slate-900/40 text-white rounded px-2 py-0.5 outline-none border border-white/20 font-bold"
               >
-                <option value="1er trimestre" className="bg-slate-800 text-white">1er trimestre</option>
-                <option value="2e trimestre" className="bg-slate-800 text-white">2e trimestre</option>
-                <option value="3e trimestre" className="bg-slate-800 text-white">3e trimestre</option>
+                <option value="Semestre 1" className="bg-slate-800 text-white">Semestre 1</option>
+                <option value="Semestre 2" className="bg-slate-800 text-white">Semestre 2</option>
               </select>
             </div>
 

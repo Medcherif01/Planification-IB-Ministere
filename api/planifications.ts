@@ -58,6 +58,7 @@ async function connectToDatabase(): Promise<MongoClient | null> {
     return client;
   } catch (err: any) {
     console.warn('[MongoDB] Impossible de se connecter à MongoDB Atlas, utilisation du stockage local:', err?.message || err);
+    mongoDisabled = true;
     return null;
   }
 }

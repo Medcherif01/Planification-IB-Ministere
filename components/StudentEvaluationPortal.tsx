@@ -27,10 +27,162 @@ const CRITERION_COLORS: Record<string, { bg: string; border: string; text: strin
   D: { bg: 'bg-rose-50',    border: 'border-rose-300',   text: 'text-rose-800',    badge: 'bg-rose-600',    light: 'bg-rose-100' },
 };
 
+const DocumentZoomModal: React.FC<{
+  src: string;
+  caption?: string;
+  onClose: () => void;
+}> = ({ src, caption, onClose }) => {
+  const [zoom, setZoom] = useState(100);
+  const [filterMode, setFilterMode] = useState<'normal' | 'contrast' | 'sharpen' | 'invert'>('normal');
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const filterStyle =
+    filterMode === 'contrast'
+      ? 'contrast-150 brightness-105'
+      : filterMode === 'sharpen'
+      ? 'contrast-125 saturate-125 brightness-100 drop-shadow-md'
+      : filterMode === 'invert'
+      ? 'invert'
+      : '';
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col select-text"
+      role="dialog"
+      aria-modal="true"
+    >
+      {/* Header controls */}
+      <div className="bg-slate-900 border-b border-slate-800 p-3 flex items-center justify-between gap-3 text-white flex-wrap z-10">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🔍</span>
+          <span className="font-bold text-xs sm:text-sm">Inspection Haute Résolution du Document / Photo</span>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Zoom controls */}
+          <div className="flex items-center bg-slate-800 border border-slate-700 rounded-xl p-1 gap-1">
+            <button
+              type="button"
+              onClick={() => setZoom(z => Math.max(50, z - 25))}
+              className="px-2.5 py-1 hover:bg-slate-700 rounded-lg text-xs font-bold"
+              title="Réduire"
+            >
+              -
+            </button>
+            <span className="px-2 font-mono text-xs font-bold text-purple-300 min-w-[50px] text-center">
+              {zoom}%
+            </span>
+            <button
+              type="button"
+              onClick={() => setZoom(z => Math.min(400, z + 25))}
+              className="px-2.5 py-1 hover:bg-slate-700 rounded-lg text-xs font-bold"
+              title="Agrandir"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoom(100)}
+              className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-[11px] font-bold"
+            >
+              100%
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoom(200)}
+              className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-[11px] font-bold"
+            >
+              200%
+            </button>
+          </div>
+
+          {/* Filter options for blurry documents */}
+          <div className="flex items-center bg-slate-800 border border-slate-700 rounded-xl p-1 gap-1 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setFilterMode('normal')}
+              className={`px-2 py-1 rounded-lg font-bold transition ${filterMode === 'normal' ? 'bg-purple-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
+            >
+              Standard
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode('contrast')}
+              className={`px-2 py-1 rounded-lg font-bold transition ${filterMode === 'contrast' ? 'bg-purple-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
+              title="Améliore la lisibilité des textes et photos pâles"
+            >
+              Contraste +
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode('sharpen')}
+              className={`px-2 py-1 rounded-lg font-bold transition ${filterMode === 'sharpen' ? 'bg-purple-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
+              title="Renforce la netteté des tracés et formules"
+            >
+              Netteté +
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode(m => m === 'invert' ? 'normal' : 'invert')}
+              className={`px-2 py-1 rounded-lg font-bold transition ${filterMode === 'invert' ? 'bg-purple-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
+              title="Inverser les couleurs (négatif)"
+            >
+              Négatif
+            </button>
+          </div>
+
+          {/* Close button */}
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 bg-slate-800 hover:bg-rose-600 rounded-xl text-white transition ml-2"
+            title="Fermer (Échap)"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Image viewer area */}
+      <div className="flex-1 overflow-auto p-4 flex items-center justify-center">
+        {src.startsWith('<svg') ? (
+          <div
+            className={`transition-transform duration-150 ${filterStyle}`}
+            style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'center center' }}
+            dangerouslySetInnerHTML={{ __html: src }}
+          />
+        ) : (
+          <img
+            src={src}
+            alt={caption || 'Document agrandi'}
+            className={`max-w-none transition-transform duration-150 rounded shadow-2xl ${filterStyle}`}
+            style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'center center' }}
+          />
+        )}
+      </div>
+
+      {/* Footer caption */}
+      {caption && (
+        <div className="bg-slate-900 border-t border-slate-800 px-6 py-2.5 text-center text-xs text-slate-200">
+          <p className="font-semibold italic">🖼️ {caption}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SafeExerciseImage: React.FC<{
   imageUrl?: string;
   imageCaption?: string;
-}> = ({ imageUrl, imageCaption }) => {
+  onZoom?: (src: string, caption?: string) => void;
+}> = ({ imageUrl, imageCaption, onZoom }) => {
   const [loadFailed, setLoadFailed] = useState(false);
   const [tryProxy, setTryProxy] = useState(false);
 
@@ -45,14 +197,27 @@ const SafeExerciseImage: React.FC<{
     return (
       <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center shadow-xs">
         <div
-          className="max-h-72 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-72 [&>svg]:max-w-full [&>svg]:mx-auto [&>svg]:rounded-xl"
+          onClick={() => onZoom?.(activeUrl, imageCaption)}
+          className="max-h-72 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-72 [&>svg]:max-w-full [&>svg]:mx-auto [&>svg]:rounded-xl cursor-zoom-in"
+          title="Cliquer pour zoomer ce schéma vectoriel"
           dangerouslySetInnerHTML={{ __html: activeUrl }}
         />
-        {imageCaption && (
-          <p className="text-xs text-slate-700 italic mt-2 font-bold">
-            🖼️ {imageCaption}
-          </p>
-        )}
+        <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+          {imageCaption && (
+            <span className="text-xs text-slate-700 italic font-bold">
+              🖼️ {imageCaption}
+            </span>
+          )}
+          {onZoom && (
+            <button
+              type="button"
+              onClick={() => onZoom(activeUrl, imageCaption)}
+              className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
+            >
+              🔍 Zoomer le document
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -64,13 +229,26 @@ const SafeExerciseImage: React.FC<{
         <img
           src={activeUrl}
           alt={imageCaption || 'Illustration vectorielle'}
-          className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
+          onClick={() => onZoom?.(activeUrl, imageCaption)}
+          className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white cursor-zoom-in"
+          title="Cliquer pour zoomer"
         />
-        {imageCaption && (
-          <p className="text-xs text-slate-700 italic mt-2 font-bold">
-            🖼️ {imageCaption}
-          </p>
-        )}
+        <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+          {imageCaption && (
+            <span className="text-xs text-slate-700 italic font-bold">
+              🖼️ {imageCaption}
+            </span>
+          )}
+          {onZoom && (
+            <button
+              type="button"
+              onClick={() => onZoom(activeUrl, imageCaption)}
+              className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
+            >
+              🔍 Zoomer le document
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -83,7 +261,9 @@ const SafeExerciseImage: React.FC<{
         <img
           src={resolved.imageUrl}
           alt={resolved.imageCaption}
-          className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs"
+          onClick={() => onZoom?.(resolved.imageUrl, resolved.imageCaption)}
+          className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs cursor-zoom-in"
+          title="Cliquer pour agrandir l'oeuvre d'art"
         />
         <div className="mt-2.5 inline-block text-left p-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-slate-200">
           <p className="text-xs text-white font-bold">
@@ -93,6 +273,17 @@ const SafeExerciseImage: React.FC<{
             {resolved.artwork.artist} • {resolved.artwork.medium} • {resolved.artwork.museum}
           </p>
         </div>
+        {onZoom && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => onZoom(resolved.imageUrl, resolved.imageCaption)}
+              className="text-[11px] font-bold text-purple-200 hover:text-white bg-purple-900/60 hover:bg-purple-800 border border-purple-500/40 px-3 py-1 rounded-lg transition inline-flex items-center gap-1"
+            >
+              🔍 Zoomer en haute résolution
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -115,13 +306,26 @@ const SafeExerciseImage: React.FC<{
         <img
           src={artCard.imageUrl}
           alt={artCard.imageCaption}
-          className="max-h-72 max-w-full mx-auto object-contain rounded-xl shadow-xs"
+          onClick={() => onZoom?.(artCard.imageUrl, artCard.imageCaption)}
+          className="max-h-72 max-w-full mx-auto object-contain rounded-xl shadow-xs cursor-zoom-in"
+          title="Cliquer pour agrandir le document"
         />
-        {captionText && (
-          <p className="text-xs text-slate-300 italic mt-2 font-bold">
-            🖼️ {captionText}
-          </p>
-        )}
+        <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+          {captionText && (
+            <span className="text-xs text-slate-300 italic font-bold">
+              🖼️ {captionText}
+            </span>
+          )}
+          {onZoom && (
+            <button
+              type="button"
+              onClick={() => onZoom(artCard.imageUrl, artCard.imageCaption)}
+              className="text-[11px] font-bold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
+            >
+              🔍 Zoomer le document
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -135,6 +339,7 @@ const SafeExerciseImage: React.FC<{
         src={finalSrc}
         alt={imageCaption || 'Illustration'}
         referrerPolicy="no-referrer"
+        onClick={() => onZoom?.(finalSrc, imageCaption)}
         onError={() => {
           if (!tryProxy && (activeUrl.startsWith('http://') || activeUrl.startsWith('https://'))) {
             setTryProxy(true);
@@ -142,13 +347,25 @@ const SafeExerciseImage: React.FC<{
             setLoadFailed(true);
           }
         }}
-        className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white"
+        className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white cursor-zoom-in"
+        title="Cliquer pour zoomer en haute résolution"
       />
-      {imageCaption && (
-        <p className="text-xs text-slate-700 italic mt-2 font-bold">
-          🖼️ {imageCaption}
-        </p>
-      )}
+      <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+        {imageCaption && (
+          <span className="text-xs text-slate-700 italic font-bold">
+            🖼️ {imageCaption}
+          </span>
+        )}
+        {onZoom && (
+          <button
+            type="button"
+            onClick={() => onZoom(finalSrc, imageCaption)}
+            className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
+          >
+            🔍 Zoomer / Agrandir le document
+          </button>
+        )}
+      </div>
     </div>
   );
 };
@@ -342,11 +559,25 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   const [secondsRemaining, setSecondsRemaining] = useState<number>(45 * 60);
   const timerIntervalRef = useRef<any>(null);
 
-  // Print view modal
-  const [showPrintModal, setShowPrintModal] = useState(false);
+  // Zoom écran élève (85% à 150%) pour confort de lecture
+  const [screenZoom, setScreenZoom] = useState<number>(100);
+
+  // Zoom lightbox photo / document
+  const [zoomedDoc, setZoomedDoc] = useState<{ src: string; caption?: string } | null>(null);
 
   // Détection automatique si l'évaluation est en anglais
   const isEn = evaluation ? isEnglishSubject(evaluation.subject) : false;
+
+  // Helper: Obtenir le numéro d'unité de l'évaluation
+  const getEvaluationUnitNumber = (ev: OnlineEvaluation | null): string => {
+    if (!ev) return '1';
+    if (ev.unitNumber !== undefined && ev.unitNumber !== null && String(ev.unitNumber).trim() !== '') {
+      return String(ev.unitNumber);
+    }
+    const match = (ev.unitTitle || ev.title || '').match(/unit[ée]?\s*(\d+)/i);
+    if (match) return match[1];
+    return '1';
+  };
 
   // Sécurité plein écran & surveillance anti-fraude
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -610,15 +841,58 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setTerminatedReason(null);
 
       // Vérifier sur le serveur si une copie existe actuellement pour cet élève
-      // (Si l'enseignant a supprimé la copie de l'élève, prevSub sera null !)
       const prevSub = await getStudentSubmission(evalData.accessCode, cleanNum, evalData.id);
       const isRetakeAuthorized = Boolean(matchedStudentRecord && matchedStudentRecord.allowedRetake);
       const isRecordUsed = Boolean(matchedStudentRecord && matchedStudentRecord.isUsed && !matchedStudentRecord.allowedRetake);
-      const isLocallyLocked = localStorage.getItem(`ib_locked_${evalData.accessCode}_${cleanNum}`) === 'true' ||
-                              localStorage.getItem(`ib_locked_${cleanCode}_${cleanNum}`) === 'true' ||
-                              localStorage.getItem(`ib_locked_${evalData.id}_${cleanNum}`) === 'true';
+      const isLocallyLocked = localStorage.getItem(`ib_locked_${evalData.id}_${cleanNum}`) === 'true';
 
-      // RÈGLE : Si l'élève a déjà composé ou que son matricule a été utilisé :
+      // 4. RÈGLE EXIGÉE : Si un élève a deux critères pour une évaluation et que l'enseignant a choisi un seul critère (ex: Critère A),
+      // l'élève pourra faire l'évaluation avec le même matricule pour le deuxième ou les autres critères de la même unité !
+      const evalCriteriaLetters = (evalData.assessments || []).map(a => a.criterion.toUpperCase());
+      const answeredCriteriaLetters = prevSub?.answers
+        ? Array.from(new Set(prevSub.answers.filter(a => a.studentResponse && a.studentResponse.trim() !== '').map(a => a.criterion.toUpperCase())))
+        : [];
+      const hasUnfinishedCriteria = evalCriteriaLetters.some(crit => !answeredCriteriaLetters.includes(crit));
+
+      // Si l'élève a des critères restants non encore complétés dans cette épreuve de la même unité :
+      if (hasUnfinishedCriteria && prevSub) {
+        setEvaluation(evalData);
+        setStudentName(prevSub.studentName || cleanName);
+        setStudentNumber(prevSub.studentNumber || cleanNum);
+        setIsLockedAlready(false);
+        // Préremplir les réponses des critères déjà effectués
+        if (prevSub.answers) {
+          const prefilledAnswers: Record<string, string> = {};
+          const prefilledDrawings: Record<string, string> = {};
+          prevSub.answers.forEach(ans => {
+            const mainKey = `${ans.criterion}_${ans.exerciseIndex}`;
+            if (ans.studentResponse) prefilledAnswers[mainKey] = ans.studentResponse;
+            if (ans.drawingDataUrl) prefilledDrawings[mainKey] = ans.drawingDataUrl;
+            if (ans.subAnswers) {
+              Object.entries(ans.subAnswers).forEach(([subId, subData]) => {
+                const sIdxMatch = subId.match(/sub_(\d+)/);
+                const sIdx = sIdxMatch ? parseInt(sIdxMatch[1], 10) - 1 : 0;
+                const subKey = `${ans.criterion}_${ans.exerciseIndex}_sub_${sIdx}`;
+                if (subData.response) prefilledAnswers[subKey] = subData.response;
+                if (subData.drawingDataUrl) prefilledDrawings[subKey] = subData.drawingDataUrl;
+              });
+            }
+          });
+          setAnswers(prefilledAnswers);
+          setDrawings(prefilledDrawings);
+        }
+        // Basculer vers le premier critère à composer
+        const firstPendingIdx = evalData.assessments.findIndex(a => !answeredCriteriaLetters.includes(a.criterion.toUpperCase()));
+        if (firstPendingIdx >= 0) {
+          setActiveCriterionIdx(firstPendingIdx);
+        }
+        hasTriggeredViolationRef.current = false;
+        await enterFullscreen();
+        setIsValidating(false);
+        return;
+      }
+
+      // RÈGLE : Si l'élève a déjà composé pour TOUS les critères de cette évaluation :
       // Il ne peut plus refaire l'évaluation, mais il peut VOIR sa copie clôturée ou corrigée !
       if ((prevSub || isRecordUsed || isLocallyLocked) && !isRetakeAuthorized) {
         let targetSub = prevSub;
@@ -1047,14 +1321,24 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       }
     };
 
-    // 2. Bloquer le clic droit (menu contextuel)
+    // 2. Menu contextuel : autoriser la sélection et le copier-coller dans l'évaluation
     const handleContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || (target as any).isContentEditable);
+      const hasSelection = Boolean(window.getSelection()?.toString().trim());
+      if (isInput || hasSelection) {
+        return true; // Autoriser copier/coller dans l'évaluation
+      }
       e.preventDefault();
       return false;
     };
 
-    // 3. Bloquer les raccourcis clavier de navigation accidentelle
+    // 3. Raccourcis clavier : autoriser le copier-coller (Ctrl+C, Ctrl+V, Cmd+C, Cmd+V), bloquer la navigation externe
     const handleKeyDown = (e: KeyboardEvent) => {
+      // 5. RÈGLE EXIGÉE : Les élèves peuvent sélectionner des phrases ou n'importe quel texte dans l'éval et copier-coller
+      if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'x', 'a', 'C', 'V', 'X', 'A'].includes(e.key)) {
+        return; // Ne jamais bloquer le copier-coller !
+      }
       if (
         e.key === 'F11' ||
         e.key === 'F12' ||
@@ -1066,7 +1350,46 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       }
     };
 
-    // 4. Fermeture du navigateur ou de l'onglet -> clôture et envoi automatiques immédiats
+    // 4. Détection stricte du basculement d'écran / changement d'onglet (interdit de basculer l'écran de l'évaluation)
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        const elapsedSinceStart = Date.now() - examStartTimeRef.current;
+        if (
+          (fullscreenEngagedRef.current || elapsedSinceStart > 1000) &&
+          !isLockedAlreadyRef.current &&
+          !isSubmittingRef.current &&
+          !hasTriggeredViolationRef.current
+        ) {
+          hasTriggeredViolationRef.current = true;
+          console.warn('🚨 Basculement d\'écran / changement d\'onglet détecté -> clôture et envoi automatiques.');
+          handleSubmitRef.current?.(
+            true,
+            "Basculement d'écran ou changement d'onglet détecté. Conformément aux consignes de sécurité, votre évaluation a été automatiquement clôturée et votre copie a été transmise à votre enseignant."
+          );
+        }
+      }
+    };
+
+    // 5. Détection de perte de focus de la fenêtre (basculement d'application externe)
+    const handleWindowBlur = () => {
+      const elapsedSinceStart = Date.now() - examStartTimeRef.current;
+      if (
+        fullscreenEngagedRef.current &&
+        elapsedSinceStart > 2000 &&
+        !isLockedAlreadyRef.current &&
+        !isSubmittingRef.current &&
+        !hasTriggeredViolationRef.current
+      ) {
+        hasTriggeredViolationRef.current = true;
+        console.warn('🚨 Perte de focus / basculement d\'application détecté -> clôture et envoi.');
+        handleSubmitRef.current?.(
+          true,
+          "Basculement d'écran ou sortie de l'application d'évaluation détecté. Conformément aux consignes de sécurité, votre copie a été automatiquement clôturée et transmise à votre enseignant."
+        );
+      }
+    };
+
+    // 6. Fermeture du navigateur ou de l'onglet -> clôture et envoi automatiques immédiats
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (isLockedAlreadyRef.current || isSubmittingRef.current || hasTriggeredViolationRef.current) return;
       hasTriggeredViolationRef.current = true;
@@ -1102,6 +1425,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     document.addEventListener('mozfullscreenchange', handleFullscreenChange);
     document.addEventListener('msfullscreenchange', handleFullscreenChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -1113,6 +1438,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
       document.removeEventListener('msfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('beforeunload', handleBeforeUnload);

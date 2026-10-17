@@ -367,6 +367,8 @@ export async function generateCleanStudentCodesForEvaluation(
           code: cleanPrefix,
           studentName: stu.name,
           studentNumber: expectedMat,
+          isUsed: false,
+          allowedRetake: false,
         };
       }
 

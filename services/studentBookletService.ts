@@ -234,17 +234,19 @@ export function matchBookletSubject(subjectName: string): string {
 }
 
 /**
- * Crée un livret d'élève vide et pré-rempli pour la classe et le trimestre
+ * Crée un livret d'élève vide et pré-rempli pour la classe et le semestre
  */
 export function createDefaultBooklet(
   student: ClassStudent,
   grade: string,
-  schoolYear: string = '2025/2026',
-  term: string = '1er trimestre',
+  schoolYear: string = '2026/2027',
+  term: string = 'Semestre 1',
   defaultTeachers: Record<string, string> = {}
 ): StudentBooklet {
   const normGrade = grade.trim();
-  const id = `booklet_${normGrade.replace(/\s+/g, '')}_${schoolYear.replace(/\//g, '_')}_${term.replace(/\s+/g, '')}_${student.id}`;
+  const cleanSchoolYear = schoolYear === '2025/2026' ? '2026/2027' : schoolYear;
+  const cleanTerm = term.includes('2') ? 'Semestre 2' : 'Semestre 1';
+  const id = `booklet_${normGrade.replace(/\s+/g, '')}_${cleanSchoolYear.replace(/\//g, '_')}_${cleanTerm.replace(/\s+/g, '')}_${student.id}`;
 
   const defaultAtl: Record<string, StudentATLSkillRatings> = {};
   const defaultSubjects: Record<string, StudentSubjectReport> = {};
@@ -283,8 +285,8 @@ export function createDefaultBooklet(
   return {
     id,
     grade: normGrade,
-    schoolYear,
-    term,
+    schoolYear: cleanSchoolYear,
+    term: cleanTerm,
     studentId: student.id,
     studentName: student.name,
     studentNumber: student.studentNumber,
@@ -338,37 +340,53 @@ export async function updateStudentInBooklets(
 }
 
 /**
- * Récupère tous les livrets d'une classe pour une année et un trimestre
+ * Récupère tous les livrets d'une classe pour une année et un semestre
  */
 export async function fetchBooklets(
   grade: string,
-  schoolYear: string = '2025/2026',
-  term: string = '1er trimestre'
+  schoolYear: string = '2026/2027',
+  term: string = 'Semestre 1'
 ): Promise<StudentBooklet[]> {
   const normGrade = grade.trim();
+  const cleanSchoolYear = schoolYear === '2025/2026' ? '2026/2027' : schoolYear;
+  const cleanTerm = term.includes('2') ? 'Semestre 2' : 'Semestre 1';
+
   const localStore = loadLocalBooklets();
   const localList = Object.values(localStore).filter(
     b => b.grade?.toLowerCase() === normGrade.toLowerCase() &&
-         b.schoolYear === schoolYear &&
-         b.term === term
-  );
+         (b.schoolYear === cleanSchoolYear || b.schoolYear === '2025/2026') &&
+         (b.term === cleanTerm || (cleanTerm === 'Semestre 1' && b.term === '1er trimestre') || (cleanTerm === 'Semestre 2' && (b.term === '2e trimestre' || b.term === '3e trimestre')))
+  ).map(b => ({
+    ...b,
+    schoolYear: b.schoolYear === '2025/2026' ? '2026/2027' : b.schoolYear,
+    term: b.term === '1er trimestre' ? 'Semestre 1' : (b.term === '2e trimestre' || b.term === '3e trimestre') ? 'Semestre 2' : b.term,
+  }));
 
   try {
-    const url = `/api/student-booklets?grade=${encodeURIComponent(normGrade)}&schoolYear=${encodeURIComponent(schoolYear)}&term=${encodeURIComponent(term)}`;
+    const url = `/api/student-booklets?grade=${encodeURIComponent(normGrade)}&schoolYear=${encodeURIComponent(cleanSchoolYear)}&term=${encodeURIComponent(cleanTerm)}`;
     const res = await fetch(url);
     if (res.ok) {
       const serverList: StudentBooklet[] = await res.json();
       if (Array.isArray(serverList) && serverList.length > 0) {
         // Sync to local
         serverList.forEach(b => {
-          if (b && b.id) localStore[b.id] = b;
+          if (b && b.id) {
+            if (b.schoolYear === '2025/2026') b.schoolYear = '2026/2027';
+            if (b.term === '1er trimestre') b.term = 'Semestre 1';
+            if (b.term === '2e trimestre' || b.term === '3e trimestre') b.term = 'Semestre 2';
+            localStore[b.id] = b;
+          }
         });
         saveLocalBooklets(localStore);
-        return serverList;
+        return serverList.map(b => ({
+          ...b,
+          schoolYear: b.schoolYear === '2025/2026' ? '2026/2027' : b.schoolYear,
+          term: b.term === '1er trimestre' ? 'Semestre 1' : (b.term === '2e trimestre' || b.term === '3e trimestre') ? 'Semestre 2' : b.term,
+        }));
       }
     }
   } catch (err) {
-    console.warn('API livrets indisponible, utilisation du cache local:', err);
+    console.warn('Erreur lecture livrets serveur:', err);
   }
 
   return localList;
@@ -378,8 +396,14 @@ export async function fetchBooklets(
  * Sauvegarde un livret d'élève
  */
 export async function saveBooklet(booklet: StudentBooklet): Promise<StudentBooklet> {
+  const cleanSchoolYear = booklet.schoolYear === '2025/2026' ? '2026/2027' : booklet.schoolYear;
+  const cleanTerm = booklet.term === '1er trimestre' ? 'Semestre 1' : (booklet.term === '2e trimestre' || booklet.term === '3e trimestre') ? 'Semestre 2' : booklet.term;
+
   const updated: StudentBooklet = {
     ...booklet,
+    schoolYear: cleanSchoolYear,
+    term: cleanTerm,
+    photoUrl: convertGoogleDriveUrl(booklet.photoUrl || ''),
     updatedAt: new Date().toISOString(),
   };
 
@@ -408,28 +432,41 @@ export async function saveBooklet(booklet: StudentBooklet): Promise<StudentBookl
 
 /**
  * Importe automatiquement les notes obtenues par un élève lors des évaluations électroniques
+ * RÈGLE IB EXIGÉE : Si un élève a réalisé le même critère dans plusieurs unités
+ * (ex: Critère A dans l'Unité 1 et Critère A dans l'Unité 2), la MEILLEURE note
+ * obtenue pour ce critère est accordée pour ce semestre (uniquement 2 semestres).
  */
 export async function importStudentScoresFromOnlineEvaluations(
   grade: string,
   subject: string,
   studentNumber: string,
-  studentName: string
+  studentName: string,
+  targetSemester: string = 'Semestre 1'
 ): Promise<{
   criteria: { A?: number; B?: number; C?: number; D?: number };
   seuil32: number;
   finalGrade: number;
   extractedComments: string[];
   evalCount: number;
+  unitDetails: { unitTitle: string; unitNumber?: number | string; criteriaScores: Record<string, number> }[];
 }> {
   const allEvals = await getEvaluations();
   const normGrade = grade.trim().toLowerCase();
   const targetSubject = matchBookletSubject(subject);
+  const isSem2 = targetSemester.includes('2');
 
   // Filtrer les évaluations correspondantes
   const matchedEvals = allEvals.filter(ev => {
     const evGrade = (ev.grade || '').trim().toLowerCase();
     const evSub = matchBookletSubject(ev.subject || '');
-    return evGrade === normGrade && evSub === targetSubject;
+    if (evGrade !== normGrade || evSub !== targetSubject) return false;
+
+    const evSem = (ev.semester || '').trim().toLowerCase();
+    if (isSem2) {
+      return evSem.includes('2') || ev.title?.toLowerCase().includes('semestre 2');
+    } else {
+      return !evSem.includes('2') && !ev.title?.toLowerCase().includes('semestre 2');
+    }
   });
 
   const criteriaScoresAccumulator: Record<'A' | 'B' | 'C' | 'D', number[]> = {
@@ -439,6 +476,7 @@ export async function importStudentScoresFromOnlineEvaluations(
     D: [],
   };
   const comments: string[] = [];
+  const unitDetails: { unitTitle: string; unitNumber?: number | string; criteriaScores: Record<string, number> }[] = [];
   let matchingSubmissionsCount = 0;
 
   for (const ev of matchedEvals) {
@@ -452,19 +490,49 @@ export async function importStudentScoresFromOnlineEvaluations(
 
       if (studentSub) {
         matchingSubmissionsCount++;
-        // Extraire notes par critère
-        if (studentSub.criteriaScores) {
+        const currentEvalScores: Record<string, number> = {};
+
+        // Extraire notes par critère (depuis criteriaScores, ou calculé depuis answers)
+        if (studentSub.criteriaScores && Object.keys(studentSub.criteriaScores).length > 0) {
           (['A', 'B', 'C', 'D'] as const).forEach(crit => {
             const sc = studentSub.criteriaScores?.[crit];
             if (typeof sc === 'number' && !isNaN(sc) && sc > 0) {
               criteriaScoresAccumulator[crit].push(sc);
+              currentEvalScores[crit] = sc;
+            }
+          });
+        } else if (studentSub.answers && studentSub.answers.length > 0) {
+          studentSub.answers.forEach(ans => {
+            const crit = (ans.criterion || '').trim().toUpperCase() as 'A' | 'B' | 'C' | 'D';
+            if (['A', 'B', 'C', 'D'].includes(crit) && typeof ans.score === 'number' && ans.score > 0) {
+              currentEvalScores[crit] = Math.max(currentEvalScores[crit] || 0, ans.score);
+            }
+          });
+          (['A', 'B', 'C', 'D'] as const).forEach(crit => {
+            if (currentEvalScores[crit]) {
+              criteriaScoresAccumulator[crit].push(currentEvalScores[crit]);
             }
           });
         }
 
+        if (ev.criterionLetter) {
+          const c = ev.criterionLetter.toUpperCase() as 'A' | 'B' | 'C' | 'D';
+          if (['A', 'B', 'C', 'D'].includes(c) && !currentEvalScores[c] && studentSub.totalScore && studentSub.totalScore > 0) {
+            const sc = Math.min(8, studentSub.totalScore);
+            currentEvalScores[c] = sc;
+            criteriaScoresAccumulator[c].push(sc);
+          }
+        }
+
+        unitDetails.push({
+          unitTitle: ev.unitTitle || ev.title,
+          unitNumber: ev.unitNumber || (ev.title.match(/unit[ée]?\s*(\d+)/i)?.[1] || undefined),
+          criteriaScores: currentEvalScores,
+        });
+
         // Commentaires éventuels
         if (studentSub.overallFeedback && studentSub.overallFeedback.trim()) {
-          comments.push(studentSub.overallFeedback.trim());
+          comments.push(`[${ev.unitTitle || ev.title}] : ${studentSub.overallFeedback.trim()}`);
         }
       }
     } catch {}
@@ -474,7 +542,7 @@ export async function importStudentScoresFromOnlineEvaluations(
   (['A', 'B', 'C', 'D'] as const).forEach(crit => {
     const list = criteriaScoresAccumulator[crit];
     if (list.length > 0) {
-      // Conserver la meilleure note pour ce critère sur le semestre (requis par l'utilisateur)
+      // 🏆 Conserver la MEILLEURE note pour ce critère sur le semestre (Ex: meilleur note entre Unité 1 et Unité 2)
       const bestScore = Math.max(...list);
       computedCriteria[crit] = Math.min(8, Math.max(1, bestScore));
     }
@@ -489,6 +557,7 @@ export async function importStudentScoresFromOnlineEvaluations(
     finalGrade,
     extractedComments: comments,
     evalCount: matchingSubmissionsCount,
+    unitDetails,
   };
 }
 
