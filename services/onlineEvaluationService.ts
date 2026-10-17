@@ -339,7 +339,7 @@ export async function getStudentSubmission(accessCode: string, studentNumber: st
 
   const locals = getLocalSubmissions();
   const found = locals.find(
-    s => (s.accessCode?.trim().toUpperCase() === code || (evaluationId && s.evaluationId === evaluationId)) &&
+    s => (evaluationId ? s.evaluationId === evaluationId : s.accessCode?.trim().toUpperCase() === code) &&
          s.studentNumber?.trim().toLowerCase() === normNum
   );
   return found || null;

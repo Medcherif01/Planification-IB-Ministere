@@ -74,8 +74,8 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
 
   // Selected class, school year, term
   const [selectedGrade, setSelectedGrade] = useState<string>(initialGrade);
-  const [schoolYear, setSchoolYear] = useState<string>('2025/2026');
-  const [term, setTerm] = useState<string>('1er trimestre');
+  const [schoolYear, setSchoolYear] = useState<string>('2026/2027');
+  const [term, setTerm] = useState<string>('Semestre 1');
 
   // Selected subject for teacher contribution
   const [selectedSubject, setSelectedSubject] = useState<string>(() => {
@@ -399,22 +399,43 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
         selectedGrade,
         selectedSubject,
         currentStudent.studentNumber,
-        currentStudent.name
+        currentStudent.name,
+        term
       );
 
       if (res.evalCount === 0) {
         setImportNotice(
-          `Aucune copie notée trouvée pour ${currentStudent.name} dans la matière "${selectedSubject}". Saisie manuelle conservée.`
+          `Aucune copie notée trouvée pour ${currentStudent.name} dans la matière "${selectedSubject}" (${term}). Saisie manuelle conservée.`
         );
         return;
       }
 
-      // Update criteria
+      // Update criteria with best score for this semester
+      const isSem2 = term === 'Semestre 2';
       const newCriteria = { ...currentSubjectReport.criteria };
-      if (res.criteria.A !== undefined) newCriteria.A = { ...newCriteria.A, t1: res.criteria.A, final: res.criteria.A };
-      if (res.criteria.B !== undefined) newCriteria.B = { ...newCriteria.B, t1: res.criteria.B, final: res.criteria.B };
-      if (res.criteria.C !== undefined) newCriteria.C = { ...newCriteria.C, t1: res.criteria.C, final: res.criteria.C };
-      if (res.criteria.D !== undefined) newCriteria.D = { ...newCriteria.D, t1: res.criteria.D, final: res.criteria.D };
+      (['A', 'B', 'C', 'D'] as const).forEach(crit => {
+        if (res.criteria[crit] !== undefined) {
+          const score = res.criteria[crit];
+          const existingCrit = newCriteria[crit];
+          if (isSem2) {
+            const finalScore = Math.max(existingCrit.s1 ?? existingCrit.t1 ?? 0, score || 0) || score;
+            newCriteria[crit] = {
+              ...existingCrit,
+              t2: score,
+              s2: score,
+              final: finalScore,
+            };
+          } else {
+            const finalScore = Math.max(existingCrit.s2 ?? existingCrit.t2 ?? 0, score || 0) || score;
+            newCriteria[crit] = {
+              ...existingCrit,
+              t1: score,
+              s1: score,
+              final: finalScore,
+            };
+          }
+        }
+      });
 
       const total = res.seuil32;
       const finalGrade = res.finalGrade;
@@ -541,22 +562,21 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
                 onChange={e => setSchoolYear(e.target.value)}
                 className="bg-slate-900/40 text-white rounded px-2 py-0.5 outline-none border border-white/20 font-bold"
               >
-                <option value="2025/2026" className="bg-slate-800 text-white">2025/2026</option>
                 <option value="2026/2027" className="bg-slate-800 text-white">2026/2027</option>
+                <option value="2027/2028" className="bg-slate-800 text-white">2027/2028</option>
               </select>
             </div>
 
-            {/* Term */}
+            {/* Term (Semestres uniquement) */}
             <div className="flex items-center gap-1 bg-white/15 px-2.5 py-1 rounded-lg text-xs font-semibold">
-              <span>Trimestre :</span>
+              <span>Semestre :</span>
               <select
                 value={term}
                 onChange={e => setTerm(e.target.value)}
                 className="bg-slate-900/40 text-white rounded px-2 py-0.5 outline-none border border-white/20 font-bold"
               >
-                <option value="1er trimestre" className="bg-slate-800 text-white">1er trimestre</option>
-                <option value="2e trimestre" className="bg-slate-800 text-white">2e trimestre</option>
-                <option value="3e trimestre" className="bg-slate-800 text-white">3e trimestre</option>
+                <option value="Semestre 1" className="bg-slate-800 text-white">Semestre 1</option>
+                <option value="Semestre 2" className="bg-slate-800 text-white">Semestre 2</option>
               </select>
             </div>
 
@@ -905,8 +925,8 @@ export const StudentBookletsManager: React.FC<StudentBookletsManagerProps> = ({
                       <tr className="bg-slate-100 text-slate-800 font-bold text-center border-b border-slate-300">
                         <th className="p-2.5 text-left border-r border-slate-300 w-12">Critère</th>
                         <th className="p-2.5 text-left border-r border-slate-300">Intitulé officiel</th>
-                        <th className="p-2.5 border-r border-slate-300 w-28">Trimestre 1 (/8)</th>
-                        <th className="p-2.5 border-r border-slate-300 w-28">Trimestre 2 (/8)</th>
+                        <th className="p-2.5 border-r border-slate-300 w-28">Semestre 1 (/8)</th>
+                        <th className="p-2.5 border-r border-slate-300 w-28">Semestre 2 (/8)</th>
                         <th className="p-2.5 border-r border-slate-300 w-28">Niveau Final (/8)</th>
                         <th className="p-2.5 border-r border-slate-300 w-28 bg-blue-50/50">Seuil (/32)</th>
                         <th className="p-2.5 w-24 bg-blue-100 text-blue-900">Note Finale (/8)</th>

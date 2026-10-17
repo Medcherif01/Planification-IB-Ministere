@@ -614,9 +614,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       const prevSub = await getStudentSubmission(evalData.accessCode, cleanNum, evalData.id);
       const isRetakeAuthorized = Boolean(matchedStudentRecord && matchedStudentRecord.allowedRetake);
       const isRecordUsed = Boolean(matchedStudentRecord && matchedStudentRecord.isUsed && !matchedStudentRecord.allowedRetake);
-      const isLocallyLocked = localStorage.getItem(`ib_locked_${evalData.accessCode}_${cleanNum}`) === 'true' ||
-                              localStorage.getItem(`ib_locked_${cleanCode}_${cleanNum}`) === 'true' ||
-                              localStorage.getItem(`ib_locked_${evalData.id}_${cleanNum}`) === 'true';
+      const isLocallyLocked = evalData.id
+        ? localStorage.getItem(`ib_locked_${evalData.id}_${cleanNum}`) === 'true'
+        : (localStorage.getItem(`ib_locked_${evalData.accessCode}_${cleanNum}`) === 'true' ||
+           localStorage.getItem(`ib_locked_${cleanCode}_${cleanNum}`) === 'true');
 
       // RÈGLE : Si l'élève a déjà composé ou que son matricule a été utilisé :
       // Il ne peut plus refaire l'évaluation, mais il peut VOIR sa copie clôturée ou corrigée !
@@ -625,7 +626,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         if (!targetSub) {
           const localSubs = getLocalSubmissions();
           targetSub = localSubs.find(
-            s => (s.accessCode?.trim().toUpperCase() === cleanCode || (evalData.id && s.evaluationId === evalData.id)) &&
+            s => (evalData.id ? s.evaluationId === evalData.id : s.accessCode?.trim().toUpperCase() === cleanCode) &&
                  s.studentNumber?.trim().toLowerCase() === enteredMat.toLowerCase()
           ) || null;
         }

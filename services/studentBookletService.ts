@@ -239,8 +239,8 @@ export function matchBookletSubject(subjectName: string): string {
 export function createDefaultBooklet(
   student: ClassStudent,
   grade: string,
-  schoolYear: string = '2025/2026',
-  term: string = '1er trimestre',
+  schoolYear: string = '2026/2027',
+  term: string = 'Semestre 1',
   defaultTeachers: Record<string, string> = {}
 ): StudentBooklet {
   const normGrade = grade.trim();
@@ -413,7 +413,8 @@ export async function importStudentScoresFromOnlineEvaluations(
   grade: string,
   subject: string,
   studentNumber: string,
-  studentName: string
+  studentName: string,
+  semester?: string
 ): Promise<{
   criteria: { A?: number; B?: number; C?: number; D?: number };
   seuil32: number;
@@ -424,12 +425,18 @@ export async function importStudentScoresFromOnlineEvaluations(
   const allEvals = await getEvaluations();
   const normGrade = grade.trim().toLowerCase();
   const targetSubject = matchBookletSubject(subject);
+  const targetSemester = semester ? (semester.toLowerCase().includes('2') ? 'Semestre 2' : 'Semestre 1') : undefined;
 
-  // Filtrer les évaluations correspondantes
+  // Filtrer les évaluations correspondantes à la classe, la matière et au semestre
   const matchedEvals = allEvals.filter(ev => {
     const evGrade = (ev.grade || '').trim().toLowerCase();
     const evSub = matchBookletSubject(ev.subject || '');
-    return evGrade === normGrade && evSub === targetSubject;
+    if (evGrade !== normGrade || evSub !== targetSubject) return false;
+    if (targetSemester && ev.semester) {
+      const evSem = ev.semester.toLowerCase().includes('2') ? 'Semestre 2' : 'Semestre 1';
+      if (evSem !== targetSemester) return false;
+    }
+    return true;
   });
 
   const criteriaScoresAccumulator: Record<'A' | 'B' | 'C' | 'D', number[]> = {

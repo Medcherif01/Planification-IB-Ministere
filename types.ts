@@ -569,6 +569,7 @@ export interface OnlineEvaluation {
   subject: string;
   grade: string;
   unitId?: string;
+  unitNumber?: number | string;
   unitTitle?: string;
   semester?: 'Semestre 1' | 'Semestre 2' | string;
   teacherName: string;

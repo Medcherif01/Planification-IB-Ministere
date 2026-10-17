@@ -86,8 +86,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const sub = inMemorySubmissions.find(s => {
             const matchesNum = s.studentNumber?.trim().toLowerCase() === targetNum;
             if (!matchesNum) return false;
-            if (targetCode && s.accessCode?.trim().toUpperCase() === targetCode) return true;
-            if (targetEvalId && s.evaluationId === targetEvalId) return true;
+            if (targetEvalId) return s.evaluationId === targetEvalId;
+            if (targetCode) return s.accessCode?.trim().toUpperCase() === targetCode;
             return false;
           });
           return res.status(200).json({ submission: sub || null });
@@ -300,12 +300,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const filter: any = {
           studentNumber: { $regex: new RegExp(`^${escapedNum}$`, 'i') },
         };
-        if (targetEvalId && cleanCode) {
-          filter.$or = [{ accessCode: cleanCode }, { evaluationId: targetEvalId }];
+        if (targetEvalId) {
+          filter.evaluationId = targetEvalId;
         } else if (cleanCode) {
           filter.accessCode = cleanCode;
-        } else if (targetEvalId) {
-          filter.evaluationId = targetEvalId;
         }
 
         const sub = await subCol.findOne(filter);
