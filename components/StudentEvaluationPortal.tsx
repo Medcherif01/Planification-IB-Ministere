@@ -1350,41 +1350,26 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       }
     };
 
-    // 4. Détection stricte du basculement d'écran / changement d'onglet (interdit de basculer l'écran de l'évaluation)
+    // 4. Détection stricte et immédiate du basculement d'écran / changement d'onglet (ALT+TAB / application externe)
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        const elapsedSinceStart = Date.now() - examStartTimeRef.current;
-        if (
-          (fullscreenEngagedRef.current || elapsedSinceStart > 1000) &&
-          !isLockedAlreadyRef.current &&
-          !isSubmittingRef.current &&
-          !hasTriggeredViolationRef.current
-        ) {
-          hasTriggeredViolationRef.current = true;
-          console.warn('🚨 Basculement d\'écran / changement d\'onglet détecté -> clôture et envoi automatiques.');
-          handleSubmitRef.current?.(
-            true,
-            "Basculement d'écran ou changement d'onglet détecté. Conformément aux consignes de sécurité, votre évaluation a été automatiquement clôturée et votre copie a été transmise à votre enseignant."
-          );
-        }
+      if (document.hidden && !isLockedAlreadyRef.current && !isSubmittingRef.current && !hasTriggeredViolationRef.current) {
+        hasTriggeredViolationRef.current = true;
+        console.warn('🚨 Basculement d\'écran / changement d\'onglet détecté -> clôture et envoi automatiques immédiats.');
+        handleSubmitRef.current?.(
+          true,
+          "Tentative de basculement d'écran ou de changement d'onglet détectée. Conformément aux consignes de sécurité, votre évaluation a été automatiquement clôturée et votre copie a été transmise à votre enseignant."
+        );
       }
     };
 
-    // 5. Détection de perte de focus de la fenêtre (basculement d'application externe)
+    // 5. Détection immédiate de perte de focus de la fenêtre (ALT+TAB / basculement d'application externe)
     const handleWindowBlur = () => {
-      const elapsedSinceStart = Date.now() - examStartTimeRef.current;
-      if (
-        fullscreenEngagedRef.current &&
-        elapsedSinceStart > 2000 &&
-        !isLockedAlreadyRef.current &&
-        !isSubmittingRef.current &&
-        !hasTriggeredViolationRef.current
-      ) {
+      if (!isLockedAlreadyRef.current && !isSubmittingRef.current && !hasTriggeredViolationRef.current) {
         hasTriggeredViolationRef.current = true;
-        console.warn('🚨 Perte de focus / basculement d\'application détecté -> clôture et envoi.');
+        console.warn('🚨 Perte de focus / ALT+TAB détecté -> clôture et envoi immédiats.');
         handleSubmitRef.current?.(
           true,
-          "Basculement d'écran ou sortie de l'application d'évaluation détecté. Conformément aux consignes de sécurité, votre copie a été automatiquement clôturée et transmise à votre enseignant."
+          "Tentative de basculement d'application (ALT+TAB) ou sortie de l'évaluation détectée. Conformément aux consignes de sécurité, votre copie a été automatiquement clôturée et transmise à votre enseignant."
         );
       }
     };
@@ -2041,7 +2026,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       : [];
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col select-none">
+    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col select-text">
       {/* 🚨 AVERTISSEMENT SÉCURITÉ PLEIN ÉCRAN */}
       {!isFullscreen && isTakingExam && (
         <div className="bg-rose-900 text-white px-4 py-2.5 flex items-center justify-between gap-3 text-xs shadow-md border-b border-rose-700">

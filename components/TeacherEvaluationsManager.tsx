@@ -1710,10 +1710,16 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 const isCopied = copiedCode === ev.accessCode;
                 const isLinkCopied = copiedCode === `link_${ev.accessCode}`;
 
+                const isCompletedByStudents = ev.studentAccessCodes?.some(c => c.isUsed) || false;
+
                 return (
                   <div
                     key={ev.id}
-                    className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs hover:shadow-md transition flex flex-col justify-between space-y-4"
+                    className={`rounded-2xl p-5 border transition flex flex-col justify-between space-y-4 ${
+                      isCompletedByStudents
+                        ? 'bg-emerald-50/80 border-emerald-300 shadow-sm'
+                        : 'bg-white border-slate-200 shadow-xs hover:shadow-md'
+                    }`}
                   >
                     <div>
                       {/* Badge code d'accès */}
@@ -1727,6 +1733,11 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           }`}>
                             {ev.status === 'active' ? '● En cours' : 'Fermée'}
                           </span>
+                          {isCompletedByStudents && (
+                            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-600 text-white flex items-center gap-1 shadow-xs">
+                              ✅ Déjà fait par les élèves
+                            </span>
+                          )}
                         </div>
 
                         <button
