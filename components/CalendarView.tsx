@@ -8,6 +8,7 @@ import {
   SCHOOL_WEEKS_2026_2027,
   SUBJECT_COLORS,
   generateAnnualCalendarWithAI,
+  extractUnitWeeklyChapters,
   CalendarEntry,
   AnnualCalendar,
 } from '../services/geminiService';
@@ -70,31 +71,57 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
   const [filterSubject, setFilterSubject] = useState<string>('');
   const [zoom, setZoom] = useState<'compact' | 'normal' | 'large'>('normal');
 
-  // ── Chargement initial ────────────────────────────────────────────────────
+  // ── Chargement initial & enrichissement automatique des chapitres ──────────
   useEffect(() => {
-    // Charger le calendrier sauvegardé
-    const saved = localStorage.getItem(STORAGE_KEY(grade));
-    if (saved) {
-      try {
-        setCalendar(JSON.parse(saved));
-        setGenState('done');
-      } catch { /* ignore */ }
-    }
-
-    // Charger les plans par matière
-    const loadPlans = async () => {
+    const loadPlansAndCalendar = async () => {
       const bySubject: Record<string, UnitPlan[]> = {};
-      await Promise.all(SUBJECTS.map(async (subj) => {
-        try {
-          const plans = await loadAllPlansForGrade(grade);
-          bySubject[subj] = plans.filter(p => p.subject === subj);
-        } catch {
-          bySubject[subj] = [];
-        }
-      }));
+      try {
+        const allPlans = await loadAllPlansForGrade(grade);
+        SUBJECTS.forEach(subj => {
+          bySubject[subj] = allPlans.filter(p => p.subject === subj);
+        });
+      } catch {
+        SUBJECTS.forEach(subj => { bySubject[subj] = []; });
+      }
       setPlansBySubject(bySubject);
+
+      // Charger le calendrier sauvegardé et l'enrichir avec les chapitres si nécessaire
+      const saved = localStorage.getItem(STORAGE_KEY(grade));
+      if (saved) {
+        try {
+          const parsedCal = JSON.parse(saved) as AnnualCalendar;
+          if (parsedCal && Array.isArray(parsedCal.entries)) {
+            // Enrichir chaque entrée n'ayant pas encore de chapitre précis
+            const enrichedEntries = parsedCal.entries.map(e => ({ ...e }));
+            for (const [subj, plans] of Object.entries(bySubject)) {
+              if (!plans || plans.length === 0) continue;
+              plans.forEach((plan, uIdx) => {
+                const unitNum = uIdx + 1;
+                const unitEntries = enrichedEntries
+                  .filter(e => e.subject === subj && e.unitNumber === unitNum && e.type === 'unit')
+                  .sort((a, b) => a.weekNum - b.weekNum);
+                if (unitEntries.length > 0) {
+                  const weeklyChaps = extractUnitWeeklyChapters(plan, unitEntries.length);
+                  unitEntries.forEach((ue, wIdx) => {
+                    if (!ue.chapter || ue.chapter.trim().length === 0) {
+                      ue.chapter = weeklyChaps[Math.min(wIdx, weeklyChaps.length - 1)];
+                    }
+                    if (!ue.unitTitle || ue.unitTitle.startsWith('Unité ')) {
+                      ue.unitTitle = plan.title || ue.unitTitle;
+                    }
+                  });
+                }
+              });
+            }
+            const updatedCal = { ...parsedCal, entries: enrichedEntries };
+            setCalendar(updatedCal);
+            localStorage.setItem(STORAGE_KEY(grade), JSON.stringify(updatedCal));
+            setGenState('done');
+          }
+        } catch { /* ignore */ }
+      }
     };
-    loadPlans();
+    loadPlansAndCalendar();
   }, [grade]);
 
   // ── Sauvegarde automatique ────────────────────────────────────────────────
@@ -106,9 +133,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
   // ── Génération IA ─────────────────────────────────────────────────────────
   const handleGenerate = async () => {
     setGenState('loading');
-    setGenMsg('Chargement des données...');
+    setGenMsg('Chargement des unités et des chapitres...');
     try {
-      // Charger toutes les unités de la classe
       const allPlans = await loadAllPlansForGrade(grade);
       const bySubject: Record<string, UnitPlan[]> = {};
       SUBJECTS.forEach(s => { bySubject[s] = allPlans.filter(p => p.subject === s); });
@@ -121,12 +147,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
         return;
       }
 
-      // Charger les unités interdisciplinaires
       const rawInter = localStorage.getItem('interdisciplinary_units');
       const allInter: InterdisciplinaryUnit[] = rawInter ? JSON.parse(rawInter) : [];
       const interForGrade = allInter.filter(u => u.grade === grade);
 
-      // Générer avec l'IA
       const result = await generateAnnualCalendarWithAI(
         grade, bySubject, interForGrade,
         (msg) => setGenMsg(msg)
@@ -134,7 +158,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
 
       saveCalendar(result);
       setGenState('done');
-      setGenMsg(`✅ Calendrier généré avec succès — ${result.entries.length} entrées réparties sur 38 semaines.`);
+      setGenMsg(`✅ Calendrier annuel généré avec succès — ${result.entries.length} entrées (unités + chapitres de chaque semaine) sur 38 semaines.`);
     } catch (e: unknown) {
       setGenState('error');
       setGenMsg((e as Error)?.message || 'Erreur lors de la génération.');
@@ -159,7 +183,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
           e.unitNumber === editEntry.unitNumber &&
           e.type === editEntry.type
         ) {
-          return { ...e, weekNum: editWeek };
+          return { ...editEntry, weekNum: editWeek };
         }
         return e;
       }),
@@ -184,11 +208,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
 
   const handleAddEntry = (weekNum: number) => {
     if (!calendar) return;
+    const defaultSubj = filterSubject || SUBJECTS[0];
     const newEntry: CalendarEntry = {
       weekNum,
-      subject: SUBJECTS[0],
+      subject: defaultSubj,
       unitNumber: 1,
-      unitTitle: 'Nouvelle unité',
+      unitTitle: 'Unité 1',
+      chapter: 'Chapitre 1 : Introduction',
       type: 'unit',
     };
     const updated: AnnualCalendar = {
@@ -229,8 +255,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────
 
-  const cellHeight = zoom === 'compact' ? 'min-h-[60px]' : zoom === 'large' ? 'min-h-[140px]' : 'min-h-[100px]';
-  const weekLabelW = zoom === 'compact' ? 'w-20' : 'w-28';
+  const cellHeight = zoom === 'compact' ? 'min-h-[64px]' : zoom === 'large' ? 'min-h-[140px]' : 'min-h-[96px]';
+  const weekLabelW = zoom === 'compact' ? 'w-24' : 'w-32';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-stretch justify-center overflow-hidden">
@@ -243,9 +269,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="text-white font-extrabold text-lg leading-tight">
-              Calendrier annuel — {grade}
+              Calendrier annuel (Unités & Chapitres par semaine) — {grade}
             </h2>
-            <p className="text-teal-100 text-xs">Année scolaire 2026-2027 · 38 semaines</p>
+            <p className="text-teal-100 text-xs">Année scolaire 2026-2027 · 38 semaines · Progression hebdomadaire des unités et chapitres</p>
           </div>
 
           {/* Actions */}
@@ -265,7 +291,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
               onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}
               className="flex items-center gap-1 px-2.5 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded-lg text-xs font-medium transition"
             >
-              {viewMode === 'grid' ? 'Vue liste' : 'Vue grille'}
+              {viewMode === 'grid' ? 'Vue par Unité & Semaine' : 'Vue Grille 38 Semaines'}
             </button>
 
             {/* Edit mode */}
@@ -288,7 +314,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
               {genState === 'loading'
                 ? <><Loader2 size={13} className="animate-spin" /> Génération…</>
                 : genState === 'done'
-                ? <><RefreshCw size={13} /> Regénérer</>
+                ? <><RefreshCw size={13} /> Regénérer (Unités & Chapitres)</>
                 : <><Sparkles size={13} /> Générer IA</>
               }
             </button>
@@ -329,7 +355,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
         {calendar && (
           <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex-shrink-0 overflow-x-auto">
             <div className="flex items-center gap-3 flex-wrap min-w-max">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Légende :</span>
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Matière :</span>
 
               {/* Bouton "Toutes" */}
               <button
@@ -340,7 +366,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                     : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
                 }`}
               >
-                Toutes
+                Toutes les matières
               </button>
 
               {presentSubjects.map(subj => {
@@ -361,7 +387,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                     title={subj}
                   >
                     <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                    {getSubjectAbbr(subj)}
+                    {subj}
                   </button>
                 );
               })}
@@ -369,14 +395,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
               {/* Légende type */}
               <span className="ml-2 text-xs text-slate-400">|</span>
               <span className="flex items-center gap-1 text-xs text-slate-500">
-                <span className="inline-block w-4 h-3 rounded-sm bg-slate-200 border border-slate-300" /> Unité
+                <span className="inline-block w-4 h-3 rounded-sm bg-slate-200 border border-slate-300" /> Unité + Chapitre de la semaine
               </span>
               <span className="flex items-center gap-1 text-xs text-slate-500">
-                <span className="inline-block w-4 h-3 rounded-sm border-2 border-red-400 bg-red-50" /> Éval.
-              </span>
-
-              <span className="ml-2 text-xs text-slate-400 italic">
-                {calendar.entries.length} entrées · Généré le {new Date(calendar.generatedAt).toLocaleDateString('fr-FR')}
+                <span className="inline-block w-4 h-3 rounded-sm border-2 border-red-400 bg-red-50" /> Éval. sommative
               </span>
             </div>
           </div>
@@ -386,8 +408,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
         {editMode && (
           <div className="px-6 py-2 bg-amber-50 border-b border-amber-200 flex-shrink-0 flex items-center gap-3 text-xs text-amber-800">
             <Edit3 size={13} className="flex-shrink-0 text-amber-600" />
-            <strong>Mode édition activé</strong> — cliquez sur une entrée pour la modifier ou la déplacer.
-            {editMode && !calendar && <span className="text-amber-600">Générez d'abord un calendrier.</span>}
+            <strong>Mode édition activé</strong> — cliquez sur une semaine/unité pour modifier l'unité, le chapitre de la semaine ou la déplacer.
           </div>
         )}
 
@@ -403,9 +424,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
               <div>
                 <h3 className="text-xl font-bold text-slate-700 mb-2">Aucun calendrier généré</h3>
                 <p className="text-slate-500 max-w-md text-sm">
-                  Cliquez sur <strong>Générer IA</strong> pour distribuer automatiquement toutes les unités
-                  de {grade} sur les 38 semaines de l'année 2026-2027, avec les évaluations et les
-                  unités interdisciplinaires en parallèle.
+                  Cliquez sur <strong>Générer IA</strong> pour distribuer automatiquement chaque unité
+                  et ses chapitres de chaque semaine sur les 38 semaines de l'année scolaire 2026-2027.
                 </p>
               </div>
               <button
@@ -413,7 +433,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                 className="flex items-center gap-2 px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-semibold text-sm transition shadow-lg"
               >
                 <Sparkles size={16} />
-                Générer le calendrier avec l'IA
+                Générer le calendrier annuel (Unités & Chapitres)
               </button>
             </div>
           )}
@@ -423,14 +443,14 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
             <div className="flex flex-col items-center justify-center h-full gap-4">
               <Loader2 size={40} className="animate-spin text-teal-600" />
               <p className="text-slate-600 font-medium">{genMsg}</p>
-              <p className="text-slate-400 text-sm">Cela peut prendre 30 à 60 secondes…</p>
+              <p className="text-slate-400 text-sm">Répartition des unités et des chapitres sur les 38 semaines…</p>
             </div>
           )}
 
-          {/* ─── GRILLE ────────────────────────────────────────────────────── */}
+          {/* ─── GRILLE HEBDOMADAIRE (AVEC UNITÉ + CHAPITRE DE CHAQUE SEMAINE) ─── */}
           {calendar && genState !== 'loading' && viewMode === 'grid' && (
             <div className="p-4">
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {SCHOOL_WEEKS_2026_2027.map(week => {
                   const entries = getEntriesForWeek(week.num);
                   const isVacation = [16, 17].includes(week.num); // Noël
@@ -440,58 +460,81 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                   return (
                     <div
                       key={week.num}
-                      className={`flex gap-2 rounded-xl border ${isVacation ? 'border-slate-300 opacity-70' : 'border-slate-200'} ${bg} overflow-hidden hover:shadow-sm transition`}
+                      className={`flex gap-2 rounded-xl border ${isVacation ? 'border-slate-300 opacity-75' : 'border-slate-200'} ${bg} overflow-hidden hover:shadow-sm transition`}
                     >
                       {/* Numéro de semaine */}
-                      <div className={`${weekLabelW} flex-shrink-0 flex flex-col items-center justify-center p-2 bg-slate-50 border-r border-slate-200`}>
-                        <span className="text-slate-800 font-black text-sm">S{week.num}</span>
-                        <span className="text-slate-400 text-[10px] text-center leading-tight">{week.dates}</span>
+                      <div className={`${weekLabelW} flex-shrink-0 flex flex-col items-center justify-center p-2.5 bg-slate-50 border-r border-slate-200`}>
+                        <span className="text-slate-800 font-black text-sm">Semaine {week.num}</span>
+                        <span className="text-slate-500 text-[10px] text-center leading-tight mt-0.5 font-medium">{week.dates}</span>
                         {(isVacation || isFerie) && (
-                          <span className="mt-1 text-[9px] font-semibold text-slate-400 bg-slate-200 rounded px-1">Vacances</span>
+                          <span className="mt-1 text-[9px] font-semibold text-slate-500 bg-slate-200 rounded px-1.5 py-0.5">Période allégée / Vacances</span>
                         )}
                       </div>
 
-                      {/* Entrées */}
-                      <div className={`flex-1 ${cellHeight} flex flex-wrap gap-1.5 p-2 content-start`}>
+                      {/* Entrées (Unités + Chapitres de la semaine) */}
+                      <div className={`flex-1 ${cellHeight} grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 p-2.5 content-start`}>
                         {entries.length === 0 && !editMode && (
-                          <span className="text-slate-300 text-xs italic self-center">—</span>
+                          <span className="text-slate-300 text-xs italic self-center col-span-full">—</span>
                         )}
                         {entries.map((entry, i) => {
                           const color = getSubjectColor(entry.subject);
                           const isAssessment = entry.type === 'assessment';
                           return (
-                            <button
+                            <div
                               key={i}
                               onClick={() => handleEntryClick(entry)}
-                              title={`${entry.subject} — Unité ${entry.unitNumber}: ${entry.unitTitle}${isAssessment ? ` — Critère ${entry.assessmentCriterion}` : ''}`}
-                              className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold transition group
-                                ${editMode ? 'cursor-pointer hover:scale-105 hover:shadow-md active:scale-95' : 'cursor-default'}
-                                ${isAssessment ? 'border-2' : 'border'}`}
+                              title={`${entry.subject} — Unité ${entry.unitNumber} : ${entry.unitTitle}${entry.chapter ? `\nChapitre : ${entry.chapter}` : ''}${isAssessment ? `\nÉvaluation Critère ${entry.assessmentCriterion}` : ''}`}
+                              className={`flex flex-col justify-between p-2.5 rounded-xl text-left transition group relative
+                                ${editMode ? 'cursor-pointer hover:scale-[1.01] hover:shadow-md' : 'cursor-default'}
+                                ${isAssessment ? 'border-2 shadow-2xs' : 'border'}`}
                               style={{
-                                backgroundColor: isAssessment ? '#fff' : lighten(color, 0.75),
+                                backgroundColor: isAssessment ? '#fff' : lighten(color, 0.86),
                                 borderColor: color,
-                                color: isAssessment ? color : darken(color),
+                                color: darken(color),
                               }}
                             >
-                              {/* Dot */}
-                              <span
-                                className="w-2 h-2 rounded-full flex-shrink-0"
-                                style={{ backgroundColor: color }}
-                              />
-                              {/* Label */}
-                              <span className="truncate max-w-[120px]">
-                                {getSubjectAbbr(entry.subject)} U{entry.unitNumber}
-                                {isAssessment && <span className="ml-0.5 font-bold">★{entry.assessmentCriterion}</span>}
-                              </span>
+                              {/* Ligne 1 : Matière + Numéro d'Unité */}
+                              <div className="flex items-center justify-between gap-1.5 mb-1">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span
+                                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                    style={{ backgroundColor: color }}
+                                  />
+                                  <span className="text-[10px] font-black uppercase tracking-wide truncate" style={{ color }}>
+                                    {entry.subject}
+                                  </span>
+                                </div>
+                                <span
+                                  className="text-[10px] font-black px-1.5 py-0.5 rounded text-white flex-shrink-0"
+                                  style={{ backgroundColor: color }}
+                                >
+                                  {isAssessment ? `★ Éval. Crit. ${entry.assessmentCriterion || 'A'}` : `Unité ${entry.unitNumber}`}
+                                </span>
+                              </div>
+
+                              {/* Ligne 2 : Titre de l'unité */}
+                              <div className="text-xs font-extrabold text-slate-900 leading-snug line-clamp-1">
+                                {entry.unitTitle || `Unité ${entry.unitNumber}`}
+                              </div>
+
+                              {/* Ligne 3 : Chapitre de la semaine */}
+                              {entry.chapter && (
+                                <div className="mt-1 pt-1 border-t border-black/10 text-[11px] font-semibold text-slate-700 flex items-start gap-1 leading-snug">
+                                  <BookOpen size={11} className="flex-shrink-0 mt-0.5" style={{ color }} />
+                                  <span className="line-clamp-2">{entry.chapter}</span>
+                                </div>
+                              )}
+
                               {/* Delete button in edit mode */}
                               {editMode && (
-                                <span
-                                  className="ml-1 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 text-xs font-bold"
+                                <button
+                                  type="button"
+                                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center text-[10px] font-bold shadow"
                                   onClick={(ev) => { ev.stopPropagation(); handleDeleteEntry(entry); }}
                                   title="Supprimer cette entrée"
-                                >✕</span>
+                                >✕</button>
                               )}
-                            </button>
+                            </div>
                           );
                         })}
 
@@ -499,9 +542,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                         {editMode && (
                           <button
                             onClick={() => handleAddEntry(week.num)}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold border border-dashed border-slate-300 text-slate-400 hover:border-teal-400 hover:text-teal-600 transition"
+                            className="flex items-center justify-center gap-1 p-2 rounded-xl text-xs font-semibold border-2 border-dashed border-slate-300 text-slate-400 hover:border-teal-400 hover:text-teal-600 transition min-h-[60px]"
                           >
-                            + Ajouter
+                            + Ajouter une entrée
                           </button>
                         )}
                       </div>
@@ -512,67 +555,98 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
             </div>
           )}
 
-          {/* ─── VUE LISTE ─────────────────────────────────────────────────── */}
+          {/* ─── VUE PAR UNITÉ & PROGRESSION HEBDOMADAIRE DES CHAPITRES ───────── */}
           {calendar && genState !== 'loading' && viewMode === 'list' && (
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-5">
               {presentSubjects
                 .filter(s => filterSubject === '' || s === filterSubject)
                 .map(subject => {
                   const color = getSubjectColor(subject);
                   const subjectEntries = calendar.entries.filter(e => e.subject === subject);
-                  // Grouper par numéro d'unité
                   const unitNums: number[] = Array.from(new Set<number>(subjectEntries.map(e => Number(e.unitNumber)))).sort((a: number, b: number) => a - b);
 
                   return (
                     <div
                       key={subject}
-                      className="rounded-xl border overflow-hidden shadow-sm"
+                      className="rounded-2xl border-2 overflow-hidden shadow-sm bg-white"
                       style={{ borderColor: color }}
                     >
                       {/* Header matière */}
-                      <div className="px-4 py-2 flex items-center gap-2" style={{ backgroundColor: lighten(color, 0.85) }}>
-                        <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                        <span className="font-bold text-sm" style={{ color: darken(color) }}>{subject}</span>
-                        <span className="ml-auto text-xs text-slate-500">{subjectEntries.length} entrées</span>
+                      <div className="px-5 py-3 flex items-center gap-2.5" style={{ backgroundColor: lighten(color, 0.85) }}>
+                        <span className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                        <span className="font-black text-base" style={{ color: darken(color) }}>{subject}</span>
+                        <span className="ml-auto text-xs font-bold px-2.5 py-1 rounded-full bg-white/80 text-slate-700">
+                          {unitNums.length} unité(s) · {subjectEntries.filter(e => e.type === 'unit').length} semaines planifiées
+                        </span>
                       </div>
 
-                      {/* Unités */}
-                      <div className="divide-y divide-slate-100">
+                      {/* Unités et leurs chapitres par semaine */}
+                      <div className="divide-y divide-slate-200">
                         {unitNums.map(unitNum => {
                           const unitEntries = subjectEntries.filter(e => e.unitNumber === unitNum);
-                          const unitEntry = unitEntries.find(e => e.type === 'unit');
+                          const unitWeekEntries = unitEntries.filter(e => e.type === 'unit').sort((a, b) => a.weekNum - b.weekNum);
                           const assessEntries = unitEntries.filter(e => e.type === 'assessment');
-                          const unitWeeks = unitEntries.filter(e => e.type === 'unit').map(e => e.weekNum).sort((a, b) => a - b);
-                          const minWeek = unitWeeks[0] || 0;
-                          const maxWeek = unitWeeks[unitWeeks.length - 1] || 0;
+                          const minWeek = unitWeekEntries[0]?.weekNum || 0;
+                          const maxWeek = unitWeekEntries[unitWeekEntries.length - 1]?.weekNum || 0;
+                          const unitTitle = unitWeekEntries[0]?.unitTitle || unitEntries[0]?.unitTitle || `Unité ${unitNum}`;
 
                           return (
-                            <div key={unitNum} className="px-4 py-2.5 bg-white flex items-start gap-3">
-                              <div
-                                className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-black flex-shrink-0"
-                                style={{ backgroundColor: color }}
-                              >
-                                U{unitNum}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-slate-800 truncate">
-                                  {unitEntry?.unitTitle || `Unité ${unitNum}`}
-                                </p>
-                                <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                                  <span className="text-xs text-slate-500">
-                                    Sem. {minWeek}{maxWeek !== minWeek ? `–${maxWeek}` : ''} · {maxWeek - minWeek + 1} sem.
-                                  </span>
-                                  {unitWeeks.map(w => (
-                                    <span key={w} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: lighten(color, 0.75), color: darken(color) }}>
-                                      S{w}
-                                    </span>
-                                  ))}
+                            <div key={unitNum} className="p-4 bg-white space-y-3">
+                              <div className="flex items-center justify-between flex-wrap gap-2">
+                                <div className="flex items-center gap-3">
+                                  <div
+                                    className="px-3 py-1.5 rounded-xl text-white text-xs font-black flex-shrink-0 shadow-2xs"
+                                    style={{ backgroundColor: color }}
+                                  >
+                                    Unité {unitNum}
+                                  </div>
+                                  <div>
+                                    <h4 className="text-sm font-extrabold text-slate-900">
+                                      {unitTitle}
+                                    </h4>
+                                    <p className="text-xs text-slate-500">
+                                      Semaine {minWeek} à Semaine {maxWeek} ({unitWeekEntries.length} semaine{unitWeekEntries.length > 1 ? 's' : ''})
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   {assessEntries.map((ae, ai) => (
-                                    <span key={ai} className="text-[10px] px-1.5 py-0.5 rounded-full font-bold border text-red-700 bg-red-50 border-red-200">
-                                      Éval. Crit.{ae.assessmentCriterion} S{ae.weekNum}
+                                    <span key={ai} className="text-xs px-2.5 py-1 rounded-lg font-bold border text-red-700 bg-red-50 border-red-200">
+                                      ★ Éval. Critère {ae.assessmentCriterion} (Semaine {ae.weekNum})
                                     </span>
                                   ))}
                                 </div>
+                              </div>
+
+                              {/* Détail des chapitres semaine par semaine */}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 pl-2">
+                                {unitWeekEntries.map(we => {
+                                  const weekInfo = SCHOOL_WEEKS_2026_2027.find(w => w.num === we.weekNum);
+                                  return (
+                                    <div
+                                      key={we.weekNum}
+                                      onClick={() => handleEntryClick(we)}
+                                      className={`p-2.5 rounded-xl border text-xs transition ${
+                                        editMode ? 'cursor-pointer hover:shadow-md' : ''
+                                      }`}
+                                      style={{
+                                        backgroundColor: lighten(color, 0.92),
+                                        borderColor: lighten(color, 0.6),
+                                      }}
+                                    >
+                                      <div className="flex items-center justify-between font-bold text-slate-800 mb-1">
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] text-white font-black" style={{ backgroundColor: color }}>
+                                          Semaine {we.weekNum}
+                                        </span>
+                                        <span className="text-[10px] text-slate-500">{weekInfo?.dates}</span>
+                                      </div>
+                                      <div className="text-[11px] font-semibold text-slate-800 leading-snug">
+                                        {we.chapter || `Progression — ${unitTitle}`}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
                           );
@@ -591,7 +665,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
             <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
               <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
                 <Edit3 size={16} className="text-teal-600" />
-                Modifier l'entrée
+                Modifier l'unité et le chapitre de la semaine
               </h3>
 
               <div className="space-y-4">
@@ -619,13 +693,25 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                   />
                 </div>
 
-                {/* Titre */}
+                {/* Titre de l'unité */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1">Titre de l'unité</label>
                   <input
                     type="text"
                     value={editEntry.unitTitle}
                     onChange={e => setEditEntry({ ...editEntry, unitTitle: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                  />
+                </div>
+
+                {/* Chapitre de la semaine */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Chapitre / Leçon de la semaine</label>
+                  <input
+                    type="text"
+                    value={editEntry.chapter || ''}
+                    onChange={e => setEditEntry({ ...editEntry, chapter: e.target.value })}
+                    placeholder="Ex: Chap. 1 : Nombres entiers — Leçon 1"
                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
                   />
                 </div>
@@ -638,8 +724,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ grade, onClose }) => {
                     onChange={e => setEditEntry({ ...editEntry, type: e.target.value as 'unit' | 'assessment' })}
                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
                   >
-                    <option value="unit">Unité</option>
-                    <option value="assessment">Évaluation</option>
+                    <option value="unit">Unité & Chapitre</option>
+                    <option value="assessment">Évaluation sommative</option>
                   </select>
                 </div>
 

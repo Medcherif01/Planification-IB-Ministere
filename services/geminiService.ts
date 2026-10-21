@@ -1,5 +1,6 @@
 import { UnitPlan, AssessmentData, UnitGroupingPreference } from "../types";
 import { getCriteriaSync, buildCriteriaSummaryForPrompt, getStandardIBCriterion, normalizeCriterionLetter, extractCriteriaLetters, formatCriterionFullName, createFallbackAssessmentForCriterion, syncAssessmentsWithTargetCriteria } from './ibCriteriaService';
+import { mergeAndDeduplicateChaptersText, parseChaptersAndLessons } from '../components/ChaptersLessonsViewer';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Proxy API helper — tous les appels Gemini passent par /api/generate (Vercel
@@ -2906,7 +2907,15 @@ export const distributeChaptersIntoExistingUnits = async (
   existingUnits: UnitPlan[],
   subject: string,
   gradeLevel: string
-): Promise<{ unitId: string; unitTitle: string; chapters: string; lessons?: string[] }[]> => {
+): Promise<{
+  unitId: string;
+  unitTitle: string;
+  chapters: string;
+  lessons?: string[];
+  addedChaptersCount?: number;
+  addedLessonsCount?: number;
+  skippedDuplicatesCount?: number;
+}[]> => {
   if (!existingUnits || existingUnits.length === 0) {
     throw new Error("Aucune unité existante trouvée pour cette matière et classe.");
   }
@@ -2915,35 +2924,38 @@ export const distributeChaptersIntoExistingUnits = async (
     id: u.id,
     index: i + 1,
     title: u.title,
+    statementOfInquiry: u.statementOfInquiry || '',
     keyConcept: u.keyConcept || '',
     relatedConcepts: u.relatedConcepts || [],
+    globalContext: u.globalContext || '',
     currentChapters: u.chapters || '',
   }));
 
   const prompt = `Tu es un coordonnateur pédagogique expert du PEI (Programme d'Éducation Intermédiaire de l'IB).
-Voici la liste des unités DÉJÀ EXISTANTES pour la matière "${subject}" (${gradeLevel}) :
+Voici la liste des unités DÉJÀ EXISTANTES pour la matière "${subject}" (${gradeLevel}), avec leurs chapitres et leçons déjà enregistrés :
 ${JSON.stringify(unitsList, null, 2)}
 
-Voici l'ensemble des nouveaux chapitres et leçons fournis par l'enseignant :
+Voici le nouveau sommaire de chapitres et leçons fourni par l'enseignant (qui peut provenir d'un second ou troisième manuel scolaire) :
 ---
 ${syllabusText}
 ---
 
-MISSION STRICTE :
-Tu dois placer et répartir harmonieusement et logiquement l'ENSEMBLE de ces chapitres et de leurs leçons dans les ${existingUnits.length} unités qui conviennent le mieux selon leurs titres et thèmes.
-RÈGLES IMPÉRATIVES :
-1. Tu ne dois PAS inventer de nouvelles unités. Utilise UNIQUEMENT les ${existingUnits.length} unités fournies avec leurs identifiants "id" exacts.
-2. Tous les chapitres et leçons saisis par l'enseignant doivent être placés dans l'unité la plus pertinente.
-3. Pour chaque unité, formate le texte "chapters" de façon claire et élégante (ex: "Chapitre 1 : ...
-- Leçon 1 : ...
-- Leçon 2 : ...").
-4. Si possible, fournis également la liste structurée des leçons dans "lessons".
+MISSION STRICTE (ANTI-DOUBLONS & COMPATIBILITÉ PAR UNITÉ) :
+L'enseignant utilise parfois plusieurs sommaires de différents livres. Tu dois traiter cette mise à jour SANS JAMAIS RÉPÉTER un chapitre ou une leçon déjà présent(e) dans l'unité :
+1. Analyse chaque chapitre et chaque leçon du nouveau sommaire et vérifie avec quelle unité existante il/elle est PÉDAGOGIQUEMENT COMPATIBLE (selon le titre de l'unité, le concept clé, les concepts connexes et l'énoncé de recherche).
+2. Si un chapitre ou une leçon existe DÉJÀ dans cette unité (même formulé légèrement différemment dans un autre livre), NE LE RÉPÈTE PAS (fusionne uniquement les nouvelles leçons non présentes dans le chapitre existant).
+3. Si un chapitre ou une leçon N'EXISTE PAS ENCORE dans l'unité, AJOUTE-LE UNIQUEMENT à condition qu'il soit compatible avec le thème et les concepts de cette unité. S'il n'est pas compatible avec une unité donnée, ne l'ajoute pas dans cette unité.
+4. Conserve les chapitres et leçons pertinents déjà présents dans chaque unité sans aucune répétition.
+5. Formate le texte "chapters" de chaque unité de façon claire et hiérarchisée :
+Chapitre 1 : [Titre du chapitre]
+- Leçon 1 : [Titre de la leçon]
+- Leçon 2 : [Titre de la leçon]
 
 Réponds UNIQUEMENT en JSON avec la structure exacte suivante :
 [
   {
     "unitId": "<id exact de l'unité>",
-    "chapters": "<chapitres et leçons assignés à cette unité>",
+    "chapters": "<chapitres et leçons complets de l'unité sans aucun doublon>",
     "lessons": ["<leçon 1>", "<leçon 2>"]
   }
 ]
@@ -2951,21 +2963,32 @@ Réponds UNIQUEMENT en JSON avec la structure exacte suivante :
 
   const raw = await callGeminiViaProxy(
     prompt,
-    "Tu es un expert coordonnateur pédagogique IB PEI qui analyse et distribue rigoureusement les chapitres dans les unités existantes sans rien tronquer. Réponds en JSON valide uniquement.",
-    { responseMimeType: 'application/json', temperature: 0.3 }
+    "Tu es un expert coordonnateur pédagogique IB PEI qui fusionne les sommaires de différents manuels dans les unités compatibles sans jamais répéter un chapitre ni une leçon. Réponds en JSON valide uniquement.",
+    { responseMimeType: 'application/json', temperature: 0.25 }
   );
 
   const cleaned = cleanJsonText(raw);
   const parsed = JSON.parse(cleaned);
   const list: any[] = Array.isArray(parsed) ? parsed : (parsed.assignments || parsed.units || []);
 
-  return list.map(item => {
-    const matchedUnit = existingUnits.find(u => u.id === item.unitId) || existingUnits[0];
+  return existingUnits.map(unit => {
+    const aiItem = list.find(item => item.unitId === unit.id);
+    const incomingText = aiItem?.chapters || '';
+
+    // Fusion et déduplication stricte entre les chapitres existants de l'unité et les chapitres compatibles proposés par l'IA
+    const mergedResult = mergeAndDeduplicateChaptersText(
+      unit.chapters || '',
+      incomingText
+    );
+
     return {
-      unitId: matchedUnit.id,
-      unitTitle: matchedUnit.title,
-      chapters: item.chapters || '',
-      lessons: Array.isArray(item.lessons) ? item.lessons : undefined,
+      unitId: unit.id,
+      unitTitle: unit.title,
+      chapters: mergedResult.chaptersText || unit.chapters || '',
+      lessons: mergedResult.lessonsList.length > 0 ? mergedResult.lessonsList : unit.lessons,
+      addedChaptersCount: mergedResult.addedChaptersCount,
+      addedLessonsCount: mergedResult.addedLessonsCount,
+      skippedDuplicatesCount: mergedResult.skippedDuplicatesCount,
     };
   });
 };
@@ -5710,6 +5733,7 @@ export interface CalendarEntry {
   subject: string;
   unitNumber: number;
   unitTitle: string;
+  chapter?: string; // Chapitre(s) et/ou leçon(s) travaillés durant cette semaine
   type: 'unit' | 'assessment';
   assessmentCriterion?: string; // "A", "B", etc.
   color?: string;
@@ -5776,10 +5800,64 @@ export const SUBJECT_COLORS: Record<string, string> = {
   'SEA': '#f97316',
 };
 
+/**
+ * Extrait la progression hebdomadaire des chapitres et leçons d'une unité
+ * afin d'attribuer précisément un chapitre/leçon à chaque semaine de l'unité.
+ */
+export function extractUnitWeeklyChapters(plan: UnitPlan, totalWeeksForUnit: number): string[] {
+  const parsedChapters = parseChaptersAndLessons(plan.chapters, plan.lessons, plan.sessions, plan.content);
+  if (parsedChapters.length === 0) {
+    const rawLines = (plan.chapters || plan.content || '')
+      .split(/\n+/)
+      .map(l => l.trim())
+      .filter(Boolean);
+    if (rawLines.length === 0) {
+      return Array.from({ length: Math.max(1, totalWeeksForUnit) }, (_, i) => `Chapitre ${i + 1} — ${plan.title}`);
+    }
+    return Array.from({ length: Math.max(1, totalWeeksForUnit) }, (_, wIdx) => {
+      const itemIdx = Math.min(Math.floor((wIdx * rawLines.length) / Math.max(1, totalWeeksForUnit)), rawLines.length - 1);
+      return rawLines[itemIdx];
+    });
+  }
+
+  // Construire des segments pédagogiques combinant Chapitre + Leçon(s)
+  const segments: string[] = [];
+  parsedChapters.forEach((chap, cIdx) => {
+    const chapPrefix = `Chap. ${cIdx + 1} : ${chap.title}`;
+    if (chap.lessons.length === 0) {
+      segments.push(chapPrefix);
+    } else if (parsedChapters.length >= totalWeeksForUnit) {
+      const lessonTitles = chap.lessons.map(l => l.title).slice(0, 2).join(' · ');
+      segments.push(`${chapPrefix} (${lessonTitles})`);
+    } else {
+      chap.lessons.forEach((les, lIdx) => {
+        segments.push(`${chapPrefix} — Leçon ${lIdx + 1} : ${les.title}`);
+      });
+    }
+  });
+
+  if (segments.length === 0) {
+    return Array.from({ length: Math.max(1, totalWeeksForUnit) }, () => `Chapitre 1 : ${plan.title}`);
+  }
+
+  return Array.from({ length: Math.max(1, totalWeeksForUnit) }, (_, wIdx) => {
+    if (segments.length <= totalWeeksForUnit) {
+      const segIdx = Math.min(Math.floor((wIdx * segments.length) / Math.max(1, totalWeeksForUnit)), segments.length - 1);
+      return segments[segIdx];
+    } else {
+      // Regrouper plusieurs segments si l'unité a plus de leçons que de semaines
+      const startIdx = Math.floor((wIdx * segments.length) / totalWeeksForUnit);
+      const endIdx = Math.max(startIdx + 1, Math.floor(((wIdx + 1) * segments.length) / totalWeeksForUnit));
+      const slice = segments.slice(startIdx, endIdx);
+      return slice[0] || segments[segments.length - 1];
+    }
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GÉNÉRATION IA DU CALENDRIER ANNUEL
-// Distribue intelligemment les unités de toutes les matières sur 38 semaines
-// Tient compte des unités interdisciplinaires pour synchroniser les matières
+// Distribue intelligemment les unités ET leurs chapitres de toutes les matières
+// sur les 38 semaines de l'année scolaire
 // ─────────────────────────────────────────────────────────────────────────────
 export const generateAnnualCalendarWithAI = async (
   grade: string,
@@ -5787,125 +5865,250 @@ export const generateAnnualCalendarWithAI = async (
   interdisciplinaryUnits: InterdisciplinaryUnit[],
   onProgress?: (msg: string) => void
 ): Promise<AnnualCalendar> => {
-  onProgress?.('Analyse des unités et préparation du calendrier...');
+  onProgress?.('Analyse des unités, des chapitres et préparation du calendrier annuel...');
 
-  // Construire le résumé des unités pour le prompt
   const subjectSummaries: string[] = [];
   const allSubjectsWithPlans: string[] = [];
 
   for (const [subject, plans] of Object.entries(plansBySubject)) {
     if (plans.length === 0) continue;
     allSubjectsWithPlans.push(subject);
-    const plansList = plans.map((p, i) =>
-      `  Unité ${i+1}: "${p.title}" (${p.duration || '?'}) — Critères: ${(p.objectives||[]).join(',')} — Concept: ${p.keyConcept||'?'}`
-    ).join('\n');
+    const plansList = plans.map((p, i) => {
+      const parsedChaps = parseChaptersAndLessons(p.chapters, p.lessons, p.sessions, p.content);
+      const chapsSummary = parsedChaps.length > 0
+        ? parsedChaps.map((c, cIdx) => `Chap. ${cIdx + 1}: ${c.title}${c.lessons.length > 0 ? ` [${c.lessons.map(l => l.title).join(', ')}]` : ''}`).join(' | ')
+        : (p.chapters || 'Progression de l\'unité').replace(/\n+/g, ' | ').slice(0, 220);
+      return `  Unité ${i + 1}: "${p.title}" (${p.duration || '6-8 semaines'}) — Critères: ${extractCriteriaLetters(p.objectives || []).join(', ') || 'A, C'} — Chapitres: ${chapsSummary}`;
+    }).join('\n');
     subjectSummaries.push(`${subject} (${plans.length} unités):\n${plansList}`);
   }
 
-  // Résumé des unités interdisciplinaires pour synchronisation
   const interSummary = interdisciplinaryUnits.map(u =>
-    `"${u.title}" — Disciplines: ${u.disciplines?.join(' + ')} — S'appuie sur: ${u.statementOfInquiry?.slice(0,80)||'?'}`
+    `"${u.title}" — Disciplines: ${u.disciplines?.join(' + ')} — S'appuie sur: ${u.statementOfInquiry?.slice(0, 80) || '?'}`
   ).join('\n');
 
-  const prompt = `Tu es expert en planification IB PEI. Distribue les unités ci-dessous sur 38 semaines (semaines 1 à 38) de l'année scolaire 2026-2027 pour la classe ${grade}.
+  const prompt = `Tu es expert en planification IB PEI. Distribue les unités et leurs chapitres ci-dessous sur les 38 semaines (semaines 1 à 38) de l'année scolaire 2026-2027 pour la classe ${grade}.
 
-MATIÈRES ET UNITÉS À PLANIFIER:
+MATIÈRES, UNITÉS ET CHAPITRES À PLANIFIER :
 ${subjectSummaries.join('\n\n')}
 
-UNITÉS INTERDISCIPLINAIRES À SYNCHRONISER (matières doivent être en parallèle):
+UNITÉS INTERDISCIPLINAIRES À SYNCHRONISER (matières doivent être en parallèle) :
 ${interSummary || 'Aucune'}
 
-RÈGLES IMPORTANTES:
-1. Distribue équitablement chaque unité sur plusieurs semaines consécutives selon sa durée
-2. Pour chaque unité interdisciplinaire, les matières concernées DOIVENT être planifiées en parallèle (mêmes semaines)
-3. Place les évaluations sommatives (assessment) 1-2 semaines avant la fin de l'unité
-4. Semaines 16-17 (Déc.) et 12-13 (Nov.) sont souvent des vacances — allège si possible
-5. Utilise TOUTES les 38 semaines
+RÈGLES IMPÉRATIVES :
+1. Pour CHAQUE matière, répartis toutes ses unités de manière continue sur les 38 semaines de l'année scolaire.
+2. Pour CHAQUE semaine d'une unité, mentionne obligatoirement :
+   - "unitNumber" : le numéro de l'unité (1, 2, 3...)
+   - "unitTitle" : le titre exact de l'unité
+   - "chapter" : le chapitre précis (et/ou la leçon) de cette unité étudié durant cette semaine (ex: "Chap. 1 : Nombres entiers — Opérations").
+3. Place les évaluations sommatives ("type": "assessment") à la fin de chaque unité avec le critère évalué ("assessmentCriterion": "A", "B", "C" ou "D").
+4. Pour chaque unité interdisciplinaire, synchronise les matières concernées sur les mêmes semaines.
 
-Génère UNIQUEMENT un objet JSON valide:
+Génère UNIQUEMENT un objet JSON valide au format :
 {
   "entries": [
-    {"weekNum": 1, "subject": "NOM_EXACT_MATIERE", "unitNumber": 1, "unitTitle": "Titre de l'unité", "type": "unit"},
-    {"weekNum": 2, "subject": "NOM_EXACT_MATIERE", "unitNumber": 1, "unitTitle": "Titre de l'unité", "type": "unit"},
-    {"weekNum": 5, "subject": "NOM_EXACT_MATIERE", "unitNumber": 1, "unitTitle": "Titre", "type": "assessment", "assessmentCriterion": "A"},
-    ...
+    {"weekNum": 1, "subject": "NOM_EXACT_MATIERE", "unitNumber": 1, "unitTitle": "Titre de l'unité", "chapter": "Chap. 1 : Titre du chapitre", "type": "unit"},
+    {"weekNum": 6, "subject": "NOM_EXACT_MATIERE", "unitNumber": 1, "unitTitle": "Titre de l'unité", "chapter": "Bilan et évaluation sommative", "type": "assessment", "assessmentCriterion": "A"}
   ]
 }
 
-Génère TOUTES les entrées pour TOUTES les matières sur les 38 semaines. Chaque semaine peut contenir plusieurs entrées (une par matière). Les noms de matières doivent correspondre EXACTEMENT à: ${allSubjectsWithPlans.join(', ')}`;
+Les noms de matières doivent correspondre EXACTEMENT à : ${allSubjectsWithPlans.join(', ')}`;
 
   let entries: CalendarEntry[] = [];
 
   try {
-    onProgress?.('Génération IA du calendrier en cours...');
-    const raw = await callGeminiViaProxy(prompt, undefined, { temperature: 0.5, maxOutputTokens: 4000 });
+    onProgress?.('Génération IA du calendrier annuel (unités & chapitres par semaine)...');
+    const raw = await callGeminiViaProxy(prompt, undefined, { temperature: 0.4, maxOutputTokens: 6000 });
 
-    // Parse JSON
     let s = raw.trim();
     const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (fence) s = fence[1].trim();
     const first = s.indexOf('{');
     if (first !== -1) {
-      let depth = 0; let end = -1;
+      let depth = 0;
+      let end = -1;
       for (let i = first; i < s.length; i++) {
-        if (s[i] === '{') depth++; else if (s[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+        if (s[i] === '{') depth++;
+        else if (s[i] === '}') {
+          depth--;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
       }
       if (end !== -1) s = s.slice(first, end + 1);
     }
     s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
     s = s.replace(/,\s*([\]}])/g, '$1');
     const parsed = JSON.parse(s) as { entries: CalendarEntry[] };
-    entries = parsed.entries || [];
+    entries = Array.isArray(parsed.entries) ? parsed.entries : [];
   } catch (e) {
-    console.error('Erreur génération calendrier IA:', e);
-    // Fallback: distribution automatique simple
-    onProgress?.('Génération automatique (fallback)...');
-    entries = generateCalendarFallback(grade, plansBySubject);
+    console.warn('Fallback génération calendrier structuré (unités + chapitres):', e);
+    entries = [];
   }
 
-  onProgress?.('Calendrier généré avec succès !');
+  // Vérification et enrichissement systématique : chaque matière ayant des unités DOIT couvrir l'année scolaire
+  // avec le titre de l'unité ET le chapitre précis de chaque semaine
+  const enrichedEntries = ensureCompleteCalendarWithChapters(entries, plansBySubject);
+
+  onProgress?.('Calendrier annuel avec unités et chapitres hebdomadaires généré avec succès !');
   return {
     grade,
     generatedAt: new Date().toISOString(),
-    entries,
+    entries: enrichedEntries,
   };
 };
 
-// Fallback: distribution automatique simple sans IA
-function generateCalendarFallback(
-  grade: string,
+/**
+ * Garantit que toutes les matières et toutes leurs unités sont planifiées sur les 38 semaines
+ * et que chaque semaine mentionne explicitement l'unité ET le chapitre correspondant.
+ */
+function ensureCompleteCalendarWithChapters(
+  aiEntries: CalendarEntry[],
   plansBySubject: Record<string, UnitPlan[]>
 ): CalendarEntry[] {
-  const entries: CalendarEntry[] = [];
+  const finalEntries: CalendarEntry[] = [];
   const TOTAL_WEEKS = 38;
-  const subjects = Object.entries(plansBySubject).filter(([,plans]) => plans.length > 0);
+  const subjectsWithPlans = Object.entries(plansBySubject).filter(([, plans]) => plans.length > 0);
 
-  for (const [subject, plans] of subjects) {
-    if (plans.length === 0) continue;
-    const weeksPerUnit = Math.max(2, Math.floor(TOTAL_WEEKS / plans.length));
-    let currentWeek = 1;
+  for (const [subject, plans] of subjectsWithPlans) {
+    const subjAiUnitEntries = aiEntries.filter(e => e.subject === subject && e.type === 'unit');
+    const coveredWeeks = new Set(subjAiUnitEntries.map(e => e.weekNum));
 
-    plans.forEach((plan, idx) => {
-      const endWeek = Math.min(currentWeek + weeksPerUnit - 1, TOTAL_WEEKS);
-      for (let w = currentWeek; w <= endWeek; w++) {
-        if (w <= TOTAL_WEEKS) {
-          entries.push({ weekNum: w, subject, unitNumber: idx + 1, unitTitle: plan.title || `Unité ${idx + 1}`, type: 'unit' });
+    // Si l'IA a généré une couverture complète (>= 24 semaines couvertes sur 38), on enrichit chaque entrée avec le chapitre exact si manquant
+    if (coveredWeeks.size >= 24) {
+      const subjAllAiEntries = aiEntries.filter(e => e.subject === subject);
+
+      // Grouper les semaines par unité pour assigner les chapitres manquants
+      plans.forEach((plan, uIdx) => {
+        const unitNum = uIdx + 1;
+        const unitWeeksEntries = subjAllAiEntries
+          .filter(e => e.unitNumber === unitNum && e.type === 'unit')
+          .sort((a, b) => a.weekNum - b.weekNum);
+
+        const weeklyChaps = extractUnitWeeklyChapters(plan, Math.max(1, unitWeeksEntries.length));
+
+        unitWeeksEntries.forEach((entry, wIdx) => {
+          finalEntries.push({
+            ...entry,
+            unitNumber: unitNum,
+            unitTitle: plan.title || entry.unitTitle || `Unité ${unitNum}`,
+            chapter: entry.chapter && entry.chapter.trim().length > 3
+              ? entry.chapter.trim()
+              : weeklyChaps[Math.min(wIdx, weeklyChaps.length - 1)],
+          });
+        });
+
+        const unitAssessEntries = subjAllAiEntries.filter(e => e.unitNumber === unitNum && e.type === 'assessment');
+        if (unitAssessEntries.length > 0) {
+          unitAssessEntries.forEach(ae => {
+            const cleanCrit = normalizeCriterionLetter(ae.assessmentCriterion || 'A') || 'A';
+            finalEntries.push({
+              ...ae,
+              unitNumber: unitNum,
+              unitTitle: plan.title || ae.unitTitle || `Unité ${unitNum}`,
+              assessmentCriterion: cleanCrit,
+              chapter: ae.chapter || `Évaluation sommative — Critère ${cleanCrit}`,
+            });
+          });
+        } else if (unitWeeksEntries.length > 0) {
+          const lastWeek = unitWeeksEntries[unitWeeksEntries.length - 1].weekNum;
+          const criteria = extractCriteriaLetters(plan.objectives || []);
+          (criteria.length > 0 ? criteria : ['A']).forEach(crit => {
+            finalEntries.push({
+              weekNum: lastWeek,
+              subject,
+              unitNumber: unitNum,
+              unitTitle: plan.title || `Unité ${unitNum}`,
+              chapter: `Évaluation sommative — Critère ${crit}`,
+              type: 'assessment',
+              assessmentCriterion: crit,
+            });
+          });
         }
-      }
-      // Assessment in last week of unit
-      const assWeek = Math.min(endWeek, TOTAL_WEEKS);
-      (plan.objectives || ['A']).forEach((crit: string) => {
-        entries.push({ weekNum: assWeek, subject, unitNumber: idx + 1, unitTitle: plan.title || `Unité ${idx + 1}`, type: 'assessment', assessmentCriterion: crit });
       });
-      currentWeek = endWeek + 1;
-      if (currentWeek > TOTAL_WEEKS) currentWeek = TOTAL_WEEKS;
-    });
+    } else {
+      // Distribution complète et précise sur les 38 semaines avec les chapitres de chaque semaine
+      const fallbackSubjEntries = generateSubjectCalendarWithChapters(subject, plans, TOTAL_WEEKS);
+      finalEntries.push(...fallbackSubjEntries);
+    }
   }
+
+  return finalEntries.sort((a, b) => a.weekNum - b.weekNum || a.subject.localeCompare(b.subject));
+}
+
+function generateSubjectCalendarWithChapters(
+  subject: string,
+  plans: UnitPlan[],
+  totalWeeks = 38
+): CalendarEntry[] {
+  const entries: CalendarEntry[] = [];
+  if (plans.length === 0) return entries;
+
+  // Calculer le poids (en semaines) de chaque unité selon sa durée ou son nombre de chapitres
+  const weights = plans.map(p => {
+    const durMatch = String(p.duration || '').match(/(\d+)/);
+    if (durMatch) {
+      const val = parseInt(durMatch[1], 10);
+      if (val >= 2 && val <= 15) return val;
+      if (val > 15) return Math.max(3, Math.round(val / 3)); // heures -> semaines approx
+    }
+    const chaps = parseChaptersAndLessons(p.chapters, p.lessons, p.sessions, p.content);
+    return Math.max(3, chaps.length * 2);
+  });
+
+  const totalWeight = weights.reduce((a, b) => a + b, 0) || plans.length;
+  let currentWeek = 1;
+
+  plans.forEach((plan, idx) => {
+    const isLast = idx === plans.length - 1;
+    const allocatedWeeks = isLast
+      ? Math.max(1, totalWeeks - currentWeek + 1)
+      : Math.max(2, Math.round((weights[idx] / totalWeight) * totalWeeks));
+
+    const endWeek = isLast ? totalWeeks : Math.min(totalWeeks - (plans.length - 1 - idx), currentWeek + allocatedWeeks - 1);
+    const numWeeks = Math.max(1, endWeek - currentWeek + 1);
+    const weeklyChapters = extractUnitWeeklyChapters(plan, numWeeks);
+
+    for (let w = currentWeek; w <= endWeek; w++) {
+      const weekOffset = w - currentWeek;
+      const chapForWeek = weeklyChapters[Math.min(weekOffset, weeklyChapters.length - 1)];
+      entries.push({
+        weekNum: w,
+        subject,
+        unitNumber: idx + 1,
+        unitTitle: plan.title || `Unité ${idx + 1}`,
+        chapter: chapForWeek,
+        type: 'unit',
+      });
+    }
+
+    // Placer les évaluations sommatives sur la dernière semaine de l'unité
+    const assWeek = Math.min(endWeek, totalWeeks);
+    const criteria = extractCriteriaLetters(plan.objectives || []);
+    (criteria.length > 0 ? criteria : ['A']).forEach((crit: string) => {
+      entries.push({
+        weekNum: assWeek,
+        subject,
+        unitNumber: idx + 1,
+        unitTitle: plan.title || `Unité ${idx + 1}`,
+        chapter: `Évaluation sommative — Critère ${crit}`,
+        type: 'assessment',
+        assessmentCriterion: crit,
+      });
+    });
+
+    currentWeek = endWeek + 1;
+    if (currentWeek > totalWeeks) currentWeek = totalWeeks;
+  });
+
   return entries;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // structureChaptersWithAI — Développe et structure du texte brut en chapitres & leçons
+// SANS répétition de chapitres ni de leçons
 // ─────────────────────────────────────────────────────────────────────────────
 export const structureChaptersWithAI = async (
   rawContent: string,
@@ -5916,7 +6119,8 @@ export const structureChaptersWithAI = async (
   try {
     const prompt = isLanguageAcquisition(subject) ? `
 You are an IB MYP Language Acquisition (English) expert for the subject "${subject}" (Year: ${gradeLevel}).
-Task: Organise and structure the following content into several distinct chapters, each with 2 to 4 specific lessons. EVERYTHING must be written in ENGLISH.
+Task: Organise, deduplicate and structure the following content into distinct chapters, each with 2 to 4 specific lessons. EVERYTHING must be written in ENGLISH.
+IMPORTANT: If the input comes from multiple book summaries, NEVER repeat the same chapter or lesson twice. Only keep chapters and lessons compatible with the unit "${unitTitle || 'Learning unit'}".
 
 Unit title: "${unitTitle || 'Learning unit'}"
 Raw text or notions:
@@ -5928,18 +6132,13 @@ MANDATORY OUTPUT FORMAT (PLAIN TEXT ONLY, no code block markdown, no comments):
 Chapter 1: [Representative title of chapter 1]
 - Lesson 1: [Precise title of lesson 1]
 - Lesson 2: [Precise title of lesson 2]
-- Lesson 3: [Precise title of lesson 3]
 Chapter 2: [Representative title of chapter 2]
 - Lesson 1: [Precise title of lesson 1]
 - Lesson 2: [Precise title of lesson 2]
-
-Rules:
-1. Create at least 2 chapters (ideally 2 to 3 chapters per unit).
-2. Each chapter MUST contain at least 2 lessons in the format "- Lesson X: ...".
-3. Be precise, concrete and adapted to the year level.
 ` : `
 Tu es un expert pédagogique du Programme d'Éducation Intermédiaire (PEI) de l'IB pour la matière "${subject}" (Niveau: ${gradeLevel}).
-Tâche : Organise et structure le contenu suivant en plusieurs chapitres distincts, avec pour chaque chapitre 2 à 4 leçons spécifiques.
+Tâche : Organise, fusionne et structure le contenu suivant en plusieurs chapitres distincts, avec pour chaque chapitre ses leçons spécifiques.
+RÈGLE ANTI-DOUBLONS STRICTE : Si le texte provient de plusieurs sommaires de livres différents, NE RÉPÈTE JAMAIS deux fois le même chapitre ni la même leçon. Ne conserve et n'ajoute que les chapitres et leçons compatibles avec l'unité "${unitTitle || "Unité d'apprentissage"}".
 
 Titre de l'unité : "${unitTitle || "Unité d'apprentissage"}"
 Texte ou notions brutes :
@@ -5951,60 +6150,19 @@ FORMAT OBLIGATOIRE DE SORTIE (TEXTE BRUT UNIQUEMENT, aucun markdown de bloc de c
 Chapitre 1 : [Titre représentatif du chapitre 1]
 - Leçon 1 : [Titre précis de la leçon 1]
 - Leçon 2 : [Titre précis de la leçon 2]
-- Leçon 3 : [Titre précis de la leçon 3]
 Chapitre 2 : [Titre représentatif du chapitre 2]
 - Leçon 1 : [Titre précis de la leçon 1]
 - Leçon 2 : [Titre précis de la leçon 2]
-- Leçon 3 : [Titre précis de la leçon 3]
-
-Règles :
-1. Crée au minimum 2 chapitres (idéalement 2 à 3 chapitres par unité).
-2. Chaque chapitre DOIT contenir au minimum 2 leçons au format "- Leçon X : ...".
-3. Sois précis, concret et adapté au niveau scolaire.
 `;
 
-    const raw = await callGeminiViaProxy(prompt, undefined, { temperature: 0.3, maxOutputTokens: 1500 });
+    const raw = await callGeminiViaProxy(prompt, undefined, { temperature: 0.25, maxOutputTokens: 1500 });
     const cleaned = raw.replace(/```(?:markdown|text)?/gi, '').replace(/```/g, '').trim();
-    return cleaned;
+    const deduped = mergeAndDeduplicateChaptersText('', cleaned);
+    return deduped.chaptersText || cleaned;
   } catch (e) {
     console.error('Erreur structureChaptersWithAI:', e);
-    // Fallback heuristique local sans crash
-    const lines = (rawContent || '').split(/\n|[.;]/).map(s => s.trim()).filter(Boolean);
-    if (isLanguageAcquisition(subject)) {
-      if (lines.length >= 4) {
-        const half = Math.ceil(lines.length / 2);
-        return [
-          `Chapter 1: Core notions`,
-          ...lines.slice(0, half).map((l, i) => `- Lesson ${i + 1}: ${l}`),
-          `Chapter 2: Deepening and applications`,
-          ...lines.slice(half).map((l, i) => `- Lesson ${i + 1}: ${l}`)
-        ].join('\n');
-      }
-      return [
-        `Chapter 1: Introduction and foundations`,
-        `- Lesson 1: Discovering the notions`,
-        `- Lesson 2: Analysis and methodology`,
-        `Chapter 2: Application and assessment`,
-        `- Lesson 1: Practical tasks and production`,
-        `- Lesson 2: Synthesis and consolidation`
-      ].join('\n');
-    }
-    if (lines.length >= 4) {
-      const half = Math.ceil(lines.length / 2);
-      return [
-        `Chapitre 1 : Notions fondamentales`,
-        ...lines.slice(0, half).map((l, i) => `- Leçon ${i + 1} : ${l}`),
-        `Chapitre 2 : Approfondissement et applications`,
-        ...lines.slice(half).map((l, i) => `- Leçon ${i + 1} : ${l}`)
-      ].join('\n');
-    }
-    return [
-      `Chapitre 1 : Introduction et fondements`,
-      `- Leçon 1 : Découverte des notions`,
-      `- Leçon 2 : Analyse et méthodologie`,
-      `Chapitre 2 : Application et évaluation`,
-      `- Leçon 1 : Travaux pratiques et réalisation`,
-      `- Leçon 2 : Synthèse et consolidation`
-    ].join('\n');
+    const dedupedFallback = mergeAndDeduplicateChaptersText('', rawContent || '');
+    if (dedupedFallback.chaptersText) return dedupedFallback.chaptersText;
+    return rawContent || '';
   }
 };

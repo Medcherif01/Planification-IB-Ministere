@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Award, CheckCircle, Clock, FileText, LogOut, Printer, Send, ShieldCheck, User, AlertCircle,
   ChevronRight, Save, Image as ImageIcon, Check, Lock, AlertTriangle, Palette, Compass, Ruler,
-  Square, Circle, Triangle, Edit3, Calculator, Layers, List, Keyboard
+  Square, Circle, Triangle, Edit3, Calculator, Layers, List, Keyboard, X
 } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { fetchAllStudents, normalizeMatricule, normalizeGradeLabel, convertGoogleDriveUrl, extractGoogleDriveId } from '../services/studentRosterService';
@@ -539,6 +539,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   const [drawings, setDrawings] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
+  const [showPrintModal, setShowPrintModal] = useState(false);
   const [lastAutoSave, setLastAutoSave] = useState<string | null>(null);
 
   // Geometric & Art drawing modal state
@@ -663,7 +664,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   };
 
   // ⏱️ Gestion du chronomètre réel résistant à la mise en veille de l'ordinateur/tablette
-  // RÈGLE : Si l'ordinateur se met en veille, l'évaluation NE se clôture PAS, mais le temps réel écoulé reste décompté !
+  // RÈGLE : Si l'ordinateur ou la tablette se met en veille, l'évaluation NE se clôture PAS, mais le temps reste actif !
   useEffect(() => {
     if (!evaluation || isLockedAlready || existingSubmission) return;
 
@@ -675,7 +676,16 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     const now = Date.now();
 
     if (savedEndTime && !isNaN(parseInt(savedEndTime, 10))) {
-      targetEndTime = parseInt(savedEndTime, 10);
+      const parsedEnd = parseInt(savedEndTime, 10);
+      // Si un ancien timer expiré trainait dans le navigateur alors que l'accès est déverrouillé, réinitialiser le temps
+      if (parsedEnd <= now) {
+        targetEndTime = now + initialDurationSec * 1000;
+        try {
+          localStorage.setItem(timerEndKey, targetEndTime.toString());
+        } catch {}
+      } else {
+        targetEndTime = parsedEnd;
+      }
     } else {
       targetEndTime = now + initialDurationSec * 1000;
       try {
@@ -691,10 +701,16 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     const initialRem = calcRemainingSeconds();
     setSecondsRemaining(initialRem);
 
-    if (initialRem <= 0) {
-      handleSubmitEvaluation(true, "Temps total imparti écoulé.");
-      return;
-    }
+    // Maintien de l'écran actif (Wake Lock API) sur tablette/ordinateur si supporté
+    let wakeLockSentinel: any = null;
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch {}
+    };
+    requestWakeLock();
 
     // Intervalle régulier d'actualisation de la pendule
     timerIntervalRef.current = setInterval(() => {
@@ -702,30 +718,38 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setSecondsRemaining(left);
       if (left <= 0) {
         clearInterval(timerIntervalRef.current);
-        handleSubmitEvaluation(true, "Temps imparti de l'évaluation écoulé.");
+        handleSubmitRef.current?.(true, "Temps imparti de l'évaluation écoulé.");
       }
     }, 1000);
 
     // ÉCOUTEUR VEILLE / SORTIE DE VEILLE :
-    // Lorsque l'ordinateur se réveille de veille (visibilitychange / focus),
-    // l'épreuve RESTE OUVERTE (ne se clôture pas), et le temps réel est recalculé avec exactitude.
+    // Lorsque l'ordinateur ou la tablette se met en veille puis se réveille (visibilitychange / focus / pageshow),
+    // l'évaluation RESTE OUVERTE (ne se clôture pas), le brouillon est préservé et le temps réel reste actif.
     const handleSleepWakeSync = () => {
       const left = calcRemainingSeconds();
       setSecondsRemaining(left);
-      autoSaveDraftAnswers(answers, drawings);
+      autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
+      if (document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
       if (left <= 0) {
         if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-        handleSubmitEvaluation(true, "Temps imparti de l'évaluation écoulé.");
+        handleSubmitRef.current?.(true, "Temps imparti de l'évaluation écoulé.");
       }
     };
 
     document.addEventListener('visibilitychange', handleSleepWakeSync);
     window.addEventListener('focus', handleSleepWakeSync);
+    window.addEventListener('pageshow', handleSleepWakeSync);
 
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       document.removeEventListener('visibilitychange', handleSleepWakeSync);
       window.removeEventListener('focus', handleSleepWakeSync);
+      window.removeEventListener('pageshow', handleSleepWakeSync);
+      if (wakeLockSentinel && typeof wakeLockSentinel.release === 'function') {
+        wakeLockSentinel.release().catch(() => {});
+      }
     };
   }, [evaluation?.id, isLockedAlready, Boolean(existingSubmission)]);
 
@@ -1282,15 +1306,17 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     handleResponseChange(activeTextareaKey, updated);
   };
 
-  // ── Surveillance stricte : Plein écran obligatoire & Fermeture du navigateur ──
+  // ── Protection contre la mise en veille & Sauvegarde continue (SANS clôture automatique) ──
+  // RÈGLE : Si l'ordinateur ou la tablette de l'élève tombe en veille, sort du plein écran ou perd le focus,
+  // l'évaluation NE DOIT JAMAIS se clôturer automatiquement ni afficher d'écran blanc.
+  // Le temps reste actif et les réponses sont sauvegardées automatiquement en brouillon.
   useEffect(() => {
     if (!isTakingExam) return;
 
     examStartTimeRef.current = Date.now();
     hasTriggeredViolationRef.current = false;
 
-    // 1. Détection de statut plein écran :
-    // SI L'ÉLÈVE SORT DU PLEIN ÉCRAN -> CLÔTURE & ENVOI AUTOMATIQUES IMMÉDIATS
+    // 1. Suivi de l'état plein écran (sans jamais clôturer l'évaluation si la tablette/PC quitte le plein écran ou passe en veille)
     const handleFullscreenChange = () => {
       const activeFs = Boolean(
         document.fullscreenElement ||
@@ -1299,26 +1325,11 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         (document as any).msFullscreenElement
       );
       setIsFullscreen(activeFs);
-
       if (activeFs) {
         fullscreenEngagedRef.current = true;
-      } else {
-        // SORTIE DU PLEIN ÉCRAN DÉTECTÉE -> Clôture et envoi automatiques immédiats
-        const elapsedSinceStart = Date.now() - examStartTimeRef.current;
-        if (
-          (fullscreenEngagedRef.current || elapsedSinceStart > 1000) &&
-          !isLockedAlreadyRef.current &&
-          !isSubmittingRef.current &&
-          !hasTriggeredViolationRef.current
-        ) {
-          hasTriggeredViolationRef.current = true;
-          console.warn('🚨 Sortie du mode plein écran détectée -> clôture et envoi automatiques de l\'évaluation.');
-          handleSubmitRef.current?.(
-            true,
-            "Sortie du mode plein écran détectée. Conformément aux consignes de sécurité, votre évaluation a été automatiquement clôturée et votre copie a été transmise à votre enseignant."
-          );
-        }
       }
+      // Sauvegarder le brouillon par sécurité lors d'une transition d'écran
+      autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
     };
 
     // 2. Menu contextuel : autoriser la sélection et le copier-coller dans l'évaluation
@@ -1333,15 +1344,12 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       return false;
     };
 
-    // 3. Raccourcis clavier : autoriser le copier-coller (Ctrl+C, Ctrl+V, Cmd+C, Cmd+V), bloquer la navigation externe
+    // 3. Raccourcis clavier : autoriser le copier-coller (Ctrl+C, Ctrl+V, Cmd+C, Cmd+V), éviter le rechargement accidentel
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 5. RÈGLE EXIGÉE : Les élèves peuvent sélectionner des phrases ou n'importe quel texte dans l'éval et copier-coller
       if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'x', 'a', 'C', 'V', 'X', 'A'].includes(e.key)) {
         return; // Ne jamais bloquer le copier-coller !
       }
       if (
-        e.key === 'F11' ||
-        e.key === 'F12' ||
         (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) ||
         (e.ctrlKey && (e.key === 'r' || e.key === 'R'))
       ) {
@@ -1350,61 +1358,29 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       }
     };
 
-    // 4. Détection stricte et immédiate du basculement d'écran / changement d'onglet (ALT+TAB / application externe)
+    // 4. Mise en veille / Changement de visibilité : sauvegarder le brouillon SANS clôturer l'examen
     const handleVisibilityChange = () => {
-      if (document.hidden && !isLockedAlreadyRef.current && !isSubmittingRef.current && !hasTriggeredViolationRef.current) {
-        hasTriggeredViolationRef.current = true;
-        console.warn('🚨 Basculement d\'écran / changement d\'onglet détecté -> clôture et envoi automatiques immédiats.');
-        handleSubmitRef.current?.(
-          true,
-          "Tentative de basculement d'écran ou de changement d'onglet détectée. Conformément aux consignes de sécurité, votre évaluation a été automatiquement clôturée et votre copie a été transmise à votre enseignant."
-        );
-      }
+      autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
     };
 
-    // 5. Détection immédiate de perte de focus de la fenêtre (ALT+TAB / basculement d'application externe)
+    // 5. Perte de focus / Mise en veille : sauvegarder le brouillon SANS clôturer l'examen
     const handleWindowBlur = () => {
-      if (!isLockedAlreadyRef.current && !isSubmittingRef.current && !hasTriggeredViolationRef.current) {
-        hasTriggeredViolationRef.current = true;
-        console.warn('🚨 Perte de focus / ALT+TAB détecté -> clôture et envoi immédiats.');
-        handleSubmitRef.current?.(
-          true,
-          "Tentative de basculement d'application (ALT+TAB) ou sortie de l'évaluation détectée. Conformément aux consignes de sécurité, votre copie a été automatiquement clôturée et transmise à votre enseignant."
-        );
-      }
+      autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
     };
 
-    // 6. Fermeture du navigateur ou de l'onglet -> clôture et envoi automatiques immédiats
+    // 6. Fermeture accidentelle d'onglet : sauvegarder le brouillon localement sans verrouiller l'examen
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (isLockedAlreadyRef.current || isSubmittingRef.current || hasTriggeredViolationRef.current) return;
-      hasTriggeredViolationRef.current = true;
-      sendBeaconOrKeepaliveSubmission();
-      handleSubmitRef.current?.(
-        true,
-        "Fermeture du navigateur détectée. Votre évaluation a été automatiquement clôturée et votre copie a été soumise."
-      );
+      if (isLockedAlreadyRef.current || isSubmittingRef.current) return;
+      autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
       e.preventDefault();
-      e.returnValue = "L'évaluation est en cours. La fermeture du navigateur clôturera et soumettra automatiquement votre copie.";
+      e.returnValue = "Votre évaluation est en cours. Vos réponses sont sauvegardées en brouillon.";
       return e.returnValue;
     };
 
     const handlePageHide = () => {
       if (isLockedAlreadyRef.current || isSubmittingRef.current) return;
-      sendBeaconOrKeepaliveSubmission();
+      autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
     };
-
-    // Vérifier l'état plein écran initial après court délai d'amorce
-    const timer = setTimeout(() => {
-      const isCurrentlyFs = Boolean(
-        document.fullscreenElement ||
-        (document as any).webkitFullscreenElement ||
-        (document as any).mozFullScreenElement ||
-        (document as any).msFullscreenElement
-      );
-      if (isCurrentlyFs) {
-        fullscreenEngagedRef.current = true;
-      }
-    }, 2000);
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
@@ -1418,7 +1394,6 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     window.addEventListener('pagehide', handlePageHide);
 
     return () => {
-      clearTimeout(timer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
@@ -2018,30 +1993,31 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     return Boolean((answers[k] && answers[k].trim().length > 0) || drawings[k]);
   };
 
+  const safeAssessments = Array.isArray(evaluation.assessments) ? evaluation.assessments : [];
   const criteriaToRender =
     effectiveDisplayMode === 'full_page'
-      ? evaluation.assessments.map((c, idx) => ({ crit: c, critIdx: idx }))
-      : evaluation.assessments[activeCriterionIdx]
-      ? [{ crit: evaluation.assessments[activeCriterionIdx], critIdx: activeCriterionIdx }]
-      : [];
+      ? safeAssessments.map((c, idx) => ({ crit: c, critIdx: idx }))
+      : safeAssessments[activeCriterionIdx]
+      ? [{ crit: safeAssessments[activeCriterionIdx], critIdx: activeCriterionIdx }]
+      : safeAssessments.map((c, idx) => ({ crit: c, critIdx: idx }));
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col select-text">
-      {/* 🚨 AVERTISSEMENT SÉCURITÉ PLEIN ÉCRAN */}
+      {/* 🛡️ BANNIÈRE MODE CONFORT & PROTECTION MISE EN VEILLE */}
       {!isFullscreen && isTakingExam && (
-        <div className="bg-rose-900 text-white px-4 py-2.5 flex items-center justify-between gap-3 text-xs shadow-md border-b border-rose-700">
+        <div className="bg-indigo-900 text-white px-4 py-2 flex items-center justify-between gap-3 text-xs shadow-sm border-b border-indigo-700">
           <div className="flex items-center gap-2">
-            <ShieldCheck size={16} className="text-amber-300 flex-shrink-0" />
+            <ShieldCheck size={16} className="text-emerald-300 flex-shrink-0" />
             <span>
-              <strong>Plein écran obligatoire :</strong> La sortie du plein écran ou la fermeture de la fenêtre entraînera la <strong>clôture et la soumission automatiques</strong> de votre copie.
+              <strong>Sauvegarde continue active :</strong> Si votre ordinateur ou tablette se met en veille, l'évaluation <strong>ne se clôture pas</strong> (vos réponses sont préservées et le temps reste actif).
             </span>
           </div>
           <button
             type="button"
             onClick={enterFullscreen}
-            className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-rose-950 font-black rounded-xl text-xs transition shadow-md flex-shrink-0"
+            className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-indigo-950 font-black rounded-xl text-xs transition shadow-sm flex-shrink-0"
           >
-            Activer le plein écran
+            Mode plein écran
           </button>
         </div>
       )}

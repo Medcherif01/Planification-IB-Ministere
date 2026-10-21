@@ -149,12 +149,121 @@ function prepareLines(text: string): string[] {
 }
 
 /**
- * Analyse intelligente du texte des chapitres et des leçons pour construire une hiérarchie structurée.
- * Reconnaît explicitement :
- * Chap 1 / Chapitre 1 / Ch. 1 / Thème 1 / Partie 1
- * - leçon 1 / -leçon 1 / - Leçon 1 : Titre / - Séance 1 ...
- * Chap 2
- * Chap 3
+ * Normalise un titre de chapitre ou de leçon pour détecter les doublons
+ * même s'ils proviennent de différents manuels scolaires.
+ */
+export function normalizeTopicKey(rawTitle: string): string {
+  if (!rawTitle) return '';
+  return rawTitle
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // enlever les accents
+    .replace(/^(?:[-*•–—]?\s*)?(?:chapitre|chap|chapter|ch|theme|module|partie|section|unite|lecon|lesson|lec|seance|session|activite)\s*[\d\w.\-_]*\s*[:\-–—.]?\s*/i, '')
+    .replace(/^(?:les|la|le|l'|des|du|de la|de l'|de|d'|un|une|et|ou|dans|sur|pour|avec|par|introduction a|initiation a|etude de|notions de)\s+/gi, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Vérifie si deux intitulés de chapitres ou de leçons désignent le même sujet
+ * (ex: issus de deux sommaires de manuels différents).
+ */
+export function areTopicsSimilar(titleA: string, titleB: string): boolean {
+  const keyA = normalizeTopicKey(titleA);
+  const keyB = normalizeTopicKey(titleB);
+  if (!keyA || !keyB) return false;
+  if (keyA === keyB) return true;
+
+  // Inclusion directe si la chaîne est suffisamment descriptive
+  if (keyA.length >= 6 && keyB.length >= 6) {
+    if (keyA.includes(keyB) || keyB.includes(keyA)) return true;
+  }
+
+  // Comparaison par mots-clés significatifs (> 3 lettres)
+  const stopWords = new Set(['dans', 'pour', 'avec', 'sans', 'entre', 'sous', 'vers', 'chez', 'plus', 'moins', 'tout', 'tous', 'toute', 'toutes', 'cette', 'sont', 'etre', 'avoir', 'faire', 'comme', 'ainsi', 'donc', 'mais', 'chapitre', 'lecon', 'seance', 'partie', 'theme', 'cours', 'etude', 'notion', 'notions']);
+  const wordsA = keyA.split(' ').filter(w => w.length > 3 && !stopWords.has(w));
+  const wordsB = keyB.split(' ').filter(w => w.length > 3 && !stopWords.has(w));
+
+  if (wordsA.length === 0 || wordsB.length === 0) return false;
+
+  const matches = wordsA.filter(w =>
+    wordsB.some(wb => wb === w || (w.length >= 5 && wb.length >= 5 && (w.startsWith(wb.slice(0, 5)) || wb.startsWith(w.slice(0, 5)))))
+  );
+
+  const minLen = Math.min(wordsA.length, wordsB.length);
+  const maxLen = Math.max(wordsA.length, wordsB.length);
+
+  if (minLen === 1 && maxLen === 1) {
+    return matches.length === 1;
+  }
+  return matches.length >= Math.max(1, Math.ceil(minLen * 0.75)) && matches.length / maxLen >= 0.5;
+}
+
+/**
+ * Déduplique une liste de ChapterItem en fusionnant les chapitres similaires
+ * et en supprimant les leçons répétées, puis renumérote proprement.
+ */
+export function deduplicateChapterItems(items: ChapterItem[]): ChapterItem[] {
+  const mergedChapters: ChapterItem[] = [];
+
+  for (const chap of items) {
+    const cleanChapTitle = chap.title
+      .replace(/^(?:[-*•–—]?\s*)?(?:chapitre|chap|chapter|ch\b|thème|theme|module|partie|section)\s*[\d\w.\-_]*\s*[:\-–—.]?\s*/i, '')
+      .trim() || chap.title.trim();
+
+    // Chercher si ce chapitre existe déjà dans mergedChapters
+    const existingChap = mergedChapters.find(c => areTopicsSimilar(c.title, cleanChapTitle));
+
+    const targetChap = existingChap || {
+      ...chap,
+      title: cleanChapTitle,
+      lessons: [],
+      colorIndex: mergedChapters.length % COLOR_THEMES.length,
+    };
+
+    if (!existingChap) {
+      mergedChapters.push(targetChap);
+    }
+
+    // Ajouter uniquement les leçons qui n'existent pas encore dans ce chapitre (ni à l'identique dans un autre chapitre)
+    for (const les of chap.lessons) {
+      const cleanLesTitle = les.title
+        .replace(/^[-*•–—]\s*/, '')
+        .replace(/^(?:leçon|lecon|lesson|lec\b|séance|seance|session|activité|activite)\s*[\d\w.\-_]*\s*[:\-–—.]?\s*/i, '')
+        .trim() || les.title.trim();
+
+      if (!cleanLesTitle) continue;
+
+      const alreadyInTarget = targetChap.lessons.some(existingLes =>
+        areTopicsSimilar(existingLes.title, cleanLesTitle)
+      );
+
+      if (!alreadyInTarget) {
+        targetChap.lessons.push({
+          ...les,
+          title: cleanLesTitle,
+          number: `${targetChap.lessons.length + 1}`,
+        });
+      }
+    }
+  }
+
+  // Renuméroter proprement les chapitres et leurs leçons
+  return mergedChapters.map((chap, idx) => ({
+    ...chap,
+    number: `${idx + 1}`,
+    colorIndex: idx % COLOR_THEMES.length,
+    lessons: chap.lessons.map((les, lIdx) => ({
+      ...les,
+      number: `${lIdx + 1}`,
+    })),
+  }));
+}
+
+/**
+ * Analyse intelligente du texte des chapitres et des leçons pour construire une hiérarchie structurée
+ * SANS doublons de chapitres ni de leçons.
  */
 export function parseChaptersAndLessons(
   chaptersText?: string,
@@ -166,11 +275,9 @@ export function parseChaptersAndLessons(
   const textToParse = (chaptersText || '').trim();
 
   // Regex pour détecter les chapitres (avec ou sans ponctuation, tiret ou point)
-  // Ex: "Chap 1", "Chapitre 1 : Les nombres", "Ch 2", "Thème 1", "Partie 3"
   const chapterExplicitRegex = /^(?:[-*•–—]?\s*)?(?:chapitre|chap|chapter|ch\b|thème|theme|module|partie|section|unité|unite|grand\s+[ivx\d]+)\s*([\d\w\.\-_]*)\s*[:\-\–\—\.]?\s*(.*)$/i;
 
   // Regex pour les leçons explicites
-  // Ex: "-leçon 1", "- leçon 1 : ...", "Leçon 1", "Séance 2 : ...", "Lesson 3"
   const lessonExplicitRegex = /^(?:[-*•–—]?\s*)?(?:leçon|lecon|lesson|lec\b|séance|seance|session|sous-chapitre|sous\s+chapitre|activité|activite)\s*([\d\w\.\-_]*)\s*[:\-\–\—\.]?\s*(.*)$/i;
 
   // Regex pour toute ligne commençant par un tiret ou une puce
@@ -193,7 +300,6 @@ export function parseChaptersAndLessons(
       const isExplicitChapter = !!chapterMatch && !isExplicitLesson;
 
       if (isExplicitChapter) {
-        // Nouveau chapitre
         const chapNum = chapterMatch[1] ? chapterMatch[1].trim() : `${result.length + 1}`;
         let chapTitle = chapterMatch[2] ? chapterMatch[2].trim() : '';
         if (!chapTitle) {
@@ -211,12 +317,10 @@ export function parseChaptersAndLessons(
         colorCounter++;
         result.push(currentChapter);
       } else if (isExplicitLesson) {
-        // Ligne de leçon explicite
         const lesNum = lessonMatch?.[1] ? lessonMatch[1].trim() : (currentChapter ? `${currentChapter.lessons.length + 1}` : `${i + 1}`);
         let lesTitle = lessonMatch?.[2] ? lessonMatch[2].trim() : cleanLine;
         if (!lesTitle) lesTitle = cleanLine;
 
-        // Si aucun chapitre n'a encore été créé, en initialiser un premier
         if (!currentChapter) {
           currentChapter = {
             id: `chap_${result.length}_${Date.now()}`,
@@ -237,8 +341,6 @@ export function parseChaptersAndLessons(
           raw: line,
         });
       } else if (isDash) {
-        // Ligne commençant par un tiret sans le mot "leçon"
-        // Si nous avons un chapitre en cours, c'est une leçon / notion sous ce chapitre
         if (!currentChapter) {
           currentChapter = {
             id: `chap_${result.length}_${Date.now()}`,
@@ -259,7 +361,6 @@ export function parseChaptersAndLessons(
           });
         }
       } else {
-        // Ligne sans tiret et non explicite : ex "Chap 2" ou titre de chapitre autonome
         const numMatch = line.match(/^(\d+)[\.\-\)]\s*(.*)$/);
         const chapNum = numMatch ? numMatch[1] : `${result.length + 1}`;
         const chapTitle = numMatch ? (numMatch[2] || line) : line;
@@ -281,12 +382,11 @@ export function parseChaptersAndLessons(
   // ── ENRICHISSEMENT INTELLIGENT DES LEÇONS SI ABSENTES OU INCOMPLÈTES ──
   const totalExtractedLessons = result.reduce((acc, c) => acc + c.lessons.length, 0);
 
-  // 1. Si des séances (sessionsList) existent et qu'il n'y a pas ou trop peu de leçons extraites
   if (Array.isArray(sessionsList) && sessionsList.length > 0 && totalExtractedLessons === 0) {
     if (result.length <= 1) {
       const targetChap = result[0] || {
         id: `chap_sessions_${Date.now()}`,
-        title: 'Chapitre 1 : Planification des séances',
+        title: 'Planification des séances',
         number: '1',
         raw: 'Séances',
         lessons: [],
@@ -305,7 +405,6 @@ export function parseChaptersAndLessons(
         });
       });
     } else {
-      // Distribuer les séances entre les différents chapitres
       const perChap = Math.ceil(sessionsList.length / result.length);
       sessionsList.forEach((s, idx) => {
         const chapIdx = Math.min(Math.floor(idx / perChap), result.length - 1);
@@ -320,12 +419,10 @@ export function parseChaptersAndLessons(
         });
       });
     }
-  }
-  // 2. Si lessonsList existe et totalExtractedLessons === 0
-  else if (Array.isArray(lessonsList) && lessonsList.length > 0 && totalExtractedLessons === 0) {
+  } else if (Array.isArray(lessonsList) && lessonsList.length > 0 && totalExtractedLessons === 0) {
     const targetChap = result[0] || {
       id: `chap_lessons_${Date.now()}`,
-      title: 'Chapitre 1 : Notions & Progression',
+      title: 'Notions & Progression',
       number: '1',
       raw: 'Programme',
       lessons: [],
@@ -342,13 +439,11 @@ export function parseChaptersAndLessons(
         });
       }
     });
-  }
-  // 3. Si aucun chapitre ni leçon, tenter contentText
-  else if (result.length === 0 && contentText && contentText.trim()) {
+  } else if (result.length === 0 && contentText && contentText.trim()) {
     const lines = prepareLines(contentText);
     const chap: ChapterItem = {
       id: `chap_content_${Date.now()}`,
-      title: 'Chapitre 1 : Notions & Progression',
+      title: 'Notions & Progression',
       number: '1',
       raw: 'Contenu',
       lessons: [],
@@ -363,10 +458,7 @@ export function parseChaptersAndLessons(
       });
     });
     result.push(chap);
-  }
-  // 4. Si nous avons un seul chapitre et AUCUNE leçon, et que le texte brut est un paragraphe narratif
-  else if (result.length === 1 && result[0].lessons.length === 0 && textToParse) {
-    // Découper le paragraphe en phrases significatives pour constituer des leçons d'apprentissage
+  } else if (result.length === 1 && result[0].lessons.length === 0 && textToParse) {
     const sentences = textToParse
       .split(/(?<=[.!?])\s+/)
       .map(s => s.trim().replace(/^[-*•–—]\s*/, ''))
@@ -381,7 +473,6 @@ export function parseChaptersAndLessons(
         });
       });
     } else {
-      // Découper sur virgules ou conjonctions majeures
       const clauses = textToParse
         .split(/(?:,|\bet\b|\bpour\b)\s+/)
         .map(c => c.trim())
@@ -399,7 +490,126 @@ export function parseChaptersAndLessons(
     }
   }
 
-  return result;
+  // Déduplication systématique des chapitres et des leçons
+  return deduplicateChapterItems(result);
+}
+
+/**
+ * Fusionne les chapitres existants d'une unité avec de nouveaux chapitres issus d'un ou plusieurs manuels :
+ * - Ne répète JAMAIS un chapitre ou une leçon déjà présent(e)
+ * - Ajoute les nouveaux chapitres compatibles et fusionne les nouvelles leçons dans les chapitres existants
+ */
+export function mergeAndDeduplicateChaptersText(
+  existingChaptersText: string,
+  incomingChaptersText: string
+): {
+  chaptersText: string;
+  lessonsList: string[];
+  addedChaptersCount: number;
+  addedLessonsCount: number;
+  skippedDuplicatesCount: number;
+} {
+  const existingItems = parseChaptersAndLessons(existingChaptersText);
+  const incomingItems = parseChaptersAndLessons(incomingChaptersText);
+
+  let addedChaptersCount = 0;
+  let addedLessonsCount = 0;
+  let skippedDuplicatesCount = 0;
+
+  const merged: ChapterItem[] = existingItems.map(c => ({
+    ...c,
+    lessons: [...c.lessons],
+  }));
+
+  for (const incChap of incomingItems) {
+    const cleanIncChapTitle = incChap.title
+      .replace(/^(?:[-*•–—]?\s*)?(?:chapitre|chap|chapter|ch\b|thème|theme|module|partie|section)\s*[\d\w.\-_]*\s*[:\-–—.]?\s*/i, '')
+      .trim() || incChap.title.trim();
+
+    const matchedChap = merged.find(exChap => areTopicsSimilar(exChap.title, cleanIncChapTitle));
+
+    if (matchedChap) {
+      // Le chapitre existe déjà : on ne le répète pas, on vérifie ses leçons
+      skippedDuplicatesCount++;
+      for (const incLes of incChap.lessons) {
+        const cleanLesTitle = incLes.title
+          .replace(/^[-*•–—]\s*/, '')
+          .replace(/^(?:leçon|lecon|lesson|lec\b|séance|seance|session|activité|activite)\s*[\d\w.\-_]*\s*[:\-–—.]?\s*/i, '')
+          .trim() || incLes.title.trim();
+        if (!cleanLesTitle) continue;
+
+        const alreadyHasLesson = merged.some(c =>
+          c.lessons.some(l => areTopicsSimilar(l.title, cleanLesTitle))
+        );
+
+        if (alreadyHasLesson) {
+          skippedDuplicatesCount++;
+        } else {
+          matchedChap.lessons.push({
+            ...incLes,
+            title: cleanLesTitle,
+            number: `${matchedChap.lessons.length + 1}`,
+          });
+          addedLessonsCount++;
+        }
+      }
+    } else {
+      // Nouveau chapitre non présent : filtrer ses leçons pour éviter de répéter une leçon déjà présente dans un autre chapitre de l'unité
+      const uniqueNewLessons: LessonItem[] = [];
+      for (const incLes of incChap.lessons) {
+        const cleanLesTitle = incLes.title
+          .replace(/^[-*•–—]\s*/, '')
+          .replace(/^(?:leçon|lecon|lesson|lec\b|séance|seance|session|activité|activite)\s*[\d\w.\-_]*\s*[:\-–—.]?\s*/i, '')
+          .trim() || incLes.title.trim();
+        if (!cleanLesTitle) continue;
+
+        const alreadyInUnit = merged.some(c =>
+          c.lessons.some(l => areTopicsSimilar(l.title, cleanLesTitle))
+        ) || uniqueNewLessons.some(l => areTopicsSimilar(l.title, cleanLesTitle));
+
+        if (alreadyInUnit) {
+          skippedDuplicatesCount++;
+        } else {
+          uniqueNewLessons.push({
+            ...incLes,
+            title: cleanLesTitle,
+            number: `${uniqueNewLessons.length + 1}`,
+          });
+          addedLessonsCount++;
+        }
+      }
+
+      merged.push({
+        ...incChap,
+        title: cleanIncChapTitle,
+        number: `${merged.length + 1}`,
+        colorIndex: merged.length % COLOR_THEMES.length,
+        lessons: uniqueNewLessons,
+      });
+      addedChaptersCount++;
+    }
+  }
+
+  const finalChapters = deduplicateChapterItems(merged);
+  const formattedLines: string[] = [];
+  const flatLessons: string[] = [];
+
+  finalChapters.forEach((chap, cIdx) => {
+    formattedLines.push(`Chapitre ${cIdx + 1} : ${chap.title}`);
+    chap.lessons.forEach((les, lIdx) => {
+      const lessonLine = `Leçon ${lIdx + 1} : ${les.title}`;
+      formattedLines.push(`- ${lessonLine}`);
+      flatLessons.push(lessonLine);
+    });
+  });
+
+  return {
+    chaptersText: formattedLines.join('\n'),
+    lessonsList: flatLessons,
+    addedChaptersCount,
+    addedLessonsCount,
+    skippedDuplicatesCount,
+  };
 }
 
 /**

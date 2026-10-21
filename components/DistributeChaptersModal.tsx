@@ -32,6 +32,9 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
     unitTitle: string;
     chapters: string;
     lessons?: string[];
+    addedChaptersCount?: number;
+    addedLessonsCount?: number;
+    skippedDuplicatesCount?: number;
   }[] | null>(null);
 
   if (!isOpen) return null;
@@ -44,7 +47,7 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
 
   const handleRunDistribution = async () => {
     if (!allChaptersText.trim()) {
-      alert("Veuillez saisir ou coller la liste de tous vos chapitres et leçons.");
+      alert("Veuillez saisir ou coller la liste de vos chapitres et leçons.");
       return;
     }
     if (targetUnits.length === 0) {
@@ -73,10 +76,18 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
     if (!previewAssignments || previewAssignments.length === 0) return;
 
     let updatedCount = 0;
+    let totalNewChaps = 0;
+    let totalNewLessons = 0;
+    let totalSkipped = 0;
+
     previewAssignments.forEach(assign => {
       const existing = targetUnits.find(u => u.id === assign.unitId);
       if (existing) {
-        // Met à jour UNIQUEMENT les chapitres et les leçons, sans toucher aux autres champs pédagogiques
+        totalNewChaps += assign.addedChaptersCount || 0;
+        totalNewLessons += assign.addedLessonsCount || 0;
+        totalSkipped += assign.skippedDuplicatesCount || 0;
+
+        // Met à jour UNIQUEMENT les chapitres et les leçons, sans répétition ni altération des autres champs pédagogiques
         const updated: UnitPlan = {
           ...existing,
           chapters: assign.chapters,
@@ -87,7 +98,13 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
       }
     });
 
-    alert(`✅ Succès ! ${updatedCount} unité(s) ont été mises à jour avec leurs chapitres et leçons assignés, sans modifier les titres, concepts, énoncés ou évaluations existantes.`);
+    alert(
+      `✅ Mise à jour terminée avec succès sur ${updatedCount} unité(s) !\n\n` +
+      `• +${totalNewChaps} nouveau(x) chapitre(s) compatible(s) ajouté(s)\n` +
+      `• +${totalNewLessons} nouvelle(s) leçon(s) compatible(s) ajoutée(s)\n` +
+      `• ${totalSkipped} doublon(s) ignoré(s) (aucune répétition)\n\n` +
+      `Les titres, concepts, énoncés et évaluations existantes sont 100% préservés.`
+    );
     onClose();
   };
 
@@ -103,10 +120,10 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
             </div>
             <div>
               <h3 className="text-lg font-black tracking-tight">
-                Mettre à jour les Chapitres & Leçons
+                Mettre à jour les Chapitres & Leçons (Multi-Manuels Sans Doublons)
               </h3>
               <p className="text-blue-100 text-xs">
-                Ajoutez tous vos chapitres et leçons : l'IA les place intelligemment dans les unités existantes sans altérer leur contenu
+                Fusionne plusieurs sommaires de livres différents sans répéter les chapitres/leçons existants et ajoute uniquement ceux compatibles avec chaque unité
               </p>
             </div>
           </div>
@@ -162,8 +179,8 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
                 <strong>{targetUnits.length} unité(s) existante(s)</strong> détectée(s) pour {subject} ({grade}).
               </span>
             </div>
-            <span className="text-[11px] font-semibold text-slate-500">
-              Les unités et leur contenu restent 100% préservés
+            <span className="text-[11px] font-semibold text-emerald-700">
+              ✓ Zéro répétition · Compatibilité vérifiée par unité
             </span>
           </div>
 
@@ -172,10 +189,10 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
             <div className="space-y-2">
               <label className="block text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
                 <BookOpen size={14} className="text-blue-600" />
-                Collez ou saisissez tous les chapitres et leçons de la matière :
+                Collez le sommaire (chapitres et leçons d'un ou plusieurs livres) :
               </label>
               <p className="text-[11px] text-slate-500">
-                Vous pouvez copier l'ensemble de votre programme annuel ou la table des matières avec chapitres et leçons. L'IA analysera chaque élément et le distribuera dans l'unité correspondante.
+                Vous pouvez coller un nouveau sommaire provenant d'un autre manuel scolaire : les chapitres ou leçons déjà présents ne seront <strong>jamais répétés</strong>, et seuls les nouveaux chapitres/leçons <strong>compatibles avec chaque unité</strong> seront ajoutés.
               </p>
               <textarea
                 value={allChaptersText}
@@ -193,7 +210,7 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
               <div className="flex items-center justify-between">
                 <h4 className="font-bold text-xs text-slate-800 uppercase flex items-center gap-1.5">
                   <CheckCircle2 size={16} className="text-emerald-600" />
-                  Répartition intelligente proposée ({previewAssignments.length} unités) :
+                  Fusion sans doublons & Compatibilité vérifiée ({previewAssignments.length} unités) :
                 </h4>
                 <button
                   type="button"
@@ -207,13 +224,30 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
               <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                 {previewAssignments.map((assign, idx) => (
                   <div key={assign.unitId} className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                       <span className="font-bold text-xs text-indigo-950">
                         {assign.unitTitle}
                       </span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-                        Unité {idx + 1}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {(assign.addedChaptersCount || 0) > 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                            +{assign.addedChaptersCount} chap. ajouté(s)
+                          </span>
+                        )}
+                        {(assign.addedLessonsCount || 0) > 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-teal-100 text-teal-800">
+                            +{assign.addedLessonsCount} leçon(s) ajoutée(s)
+                          </span>
+                        )}
+                        {(assign.skippedDuplicatesCount || 0) > 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800">
+                            {assign.skippedDuplicatesCount} doublon(s) évité(s)
+                          </span>
+                        )}
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                          Unité {idx + 1}
+                        </span>
+                      </div>
                     </div>
                     <div className="bg-white p-2.5 rounded-xl border border-slate-200 text-xs text-slate-700 whitespace-pre-wrap font-mono leading-relaxed max-h-28 overflow-y-auto">
                       {assign.chapters}
@@ -228,7 +262,7 @@ export const DistributeChaptersModal: React.FC<DistributeChaptersModalProps> = (
           <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-2xl text-xs text-blue-900 leading-relaxed flex items-start gap-2.5">
             <CheckCircle2 size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
             <div>
-              <strong>Garantie de non-altération du contenu :</strong> Les titres des unités, concepts clés, contextes mondiaux, énoncés de recherche, critères d'évaluation et compétences ATL restent rigoureusement intacts. Seuls les champs <em>Chapitres</em> et <em>Leçons</em> sont mis à jour et ordonnés.
+              <strong>Protection anti-répétition & compatibilité :</strong> Si vous utilisez plusieurs sommaires de livres différents, les chapitres et leçons déjà présents ne sont jamais répétés. Seuls les nouveaux chapitres/leçons compatibles avec le thème de l'unité sont ajoutés.
             </div>
           </div>
         </div>

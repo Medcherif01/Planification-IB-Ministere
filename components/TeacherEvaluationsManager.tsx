@@ -69,8 +69,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [customSemester, setCustomSemester] = useState<'Semestre 1' | 'Semestre 2'>('Semestre 1');
   const [showRecapModal, setShowRecapModal] = useState(false);
 
-  // Navigation tabs : Unités de la matière (sélection & indépendance) VS Évaluations générées
-  const [managerTab, setManagerTab] = useState<'units' | 'evaluations'>('units');
+  // Navigation & Filtres : uniquement les évaluations déjà lancées, avec focus sur celles faites par les élèves
+  const [managerTab, setManagerTab] = useState<'units' | 'evaluations'>('evaluations');
+  const [evalCompletionFilter, setEvalCompletionFilter] = useState<'all' | 'completed' | 'waiting'>('all');
+  const [allSubmissionsMap, setAllSubmissionsMap] = useState<Record<string, StudentSubmission[]>>({});
   const [unitSubjectFilter, setUnitSubjectFilter] = useState<string>(currentSubject || '');
   const [unitGradeFilter, setUnitGradeFilter] = useState<string>(currentGrade || '');
   const [unitSemesterFilter, setUnitSemesterFilter] = useState<string>('');
@@ -149,7 +151,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [showPrintCodesModal, setShowPrintCodesModal] = useState(false);
   const [isSavingCodes, setIsSavingCodes] = useState(false);
 
-  // Charger les évaluations
+  // Charger les évaluations déjà lancées ainsi que toutes les copies d'élèves associées
   const loadEvaluationsList = async () => {
     setLoading(true);
     try {
@@ -158,6 +160,23 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         grade: currentGrade,
       });
       setEvaluations(list);
+
+      // Charger en parallèle les copies soumises pour chaque évaluation lancée afin d'afficher un résumé immédiat
+      const entries = await Promise.all(
+        list.map(async (ev) => {
+          try {
+            const subs = await getSubmissionsForEvaluation(ev.id);
+            return [ev.id, subs] as const;
+          } catch {
+            return [ev.id, [] as StudentSubmission[]] as const;
+          }
+        })
+      );
+      const map: Record<string, StudentSubmission[]> = {};
+      entries.forEach(([id, subs]) => {
+        map[id] = subs;
+      });
+      setAllSubmissionsMap(map);
     } catch (err) {
       console.error('Erreur chargement évaluations:', err);
     } finally {
@@ -168,25 +187,6 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   useEffect(() => {
     loadEvaluationsList();
   }, [currentSubject, currentGrade]);
-
-  // Si un unit plan est passé à l'ouverture, pré-remplir la création
-  useEffect(() => {
-    if (currentUnitPlan) {
-      setSelectedPlanForCreate(currentUnitPlan);
-      setCustomTitle(`Évaluation sommative — ${currentUnitPlan.title}`);
-      if (currentUnitPlan.semester) {
-        setCustomSemester(((currentUnitPlan.semester as any) === 'Semestre 2') ? 'Semestre 2' : 'Semestre 1');
-      }
-      if (currentUnitPlan.subject) setUnitSubjectFilter(currentUnitPlan.subject);
-      if (currentUnitPlan.gradeLevel) setUnitGradeFilter(currentUnitPlan.gradeLevel);
-      if (currentUnitPlan.assessments && currentUnitPlan.assessments.length > 0) {
-        setSelectedCriteriaForCreate(currentUnitPlan.assessments.map(a => a.criterion));
-      } else {
-        setSelectedCriteriaForCreate(['A', 'B', 'C', 'D']);
-      }
-      setShowCreateModal(true);
-    }
-  }, [currentUnitPlan]);
 
   // Lancer l'évaluation pour une unité spécifique (garantie d'indépendance)
   const handleLaunchForUnit = (unit: UnitPlan) => {
@@ -266,6 +266,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     try {
       const subs = await getSubmissionsForEvaluation(evaluation.id);
       setSubmissions(subs);
+      setAllSubmissionsMap(prev => ({ ...prev, [evaluation.id]: subs }));
     } catch (err) {
       console.error('Erreur chargement soumissions:', err);
     } finally {
@@ -719,7 +720,13 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         setEvaluations(prev => prev.map(e => (e.id === updatedEval.id ? updatedEval : e)));
       }
 
-      setSubmissions(prev => prev.filter(s => s.id !== submissionToDelete.id));
+      setSubmissions(prev => {
+        const next = prev.filter(s => s.id !== submissionToDelete.id);
+        if (targetEvalId) {
+          setAllSubmissionsMap(m => ({ ...m, [targetEvalId]: next }));
+        }
+        return next;
+      });
       if (activeSubmission?.id === submissionToDelete.id) {
         setActiveSubmission(null);
       }
@@ -1278,7 +1285,13 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       });
 
       setActiveSubmission(graded);
-      setSubmissions(prev => prev.map(s => s.id === graded.id ? graded : s));
+      setSubmissions(prev => {
+        const next = prev.map(s => s.id === graded.id ? graded : s);
+        if (selectedEvaluation?.id) {
+          setAllSubmissionsMap(m => ({ ...m, [selectedEvaluation.id]: next }));
+        }
+        return next;
+      });
       setSaveGradeSuccess(true);
       setTimeout(() => setSaveGradeSuccess(false), 3000);
     } catch (err: any) {
@@ -1288,7 +1301,46 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     }
   };
 
-  // Filtrer et trier les évaluations générées
+  // Déterminer si une évaluation a déjà été faite par au moins un élève (copies remises ou matricules utilisés)
+  const isEvaluationDoneByStudents = (ev: OnlineEvaluation): boolean => {
+    const subsCount = (allSubmissionsMap[ev.id] || []).length;
+    const usedCodesCount = (ev.studentAccessCodes || []).filter(c => c.isUsed).length;
+    return subsCount > 0 || usedCodesCount > 0;
+  };
+
+  // Statistiques globales sur les évaluations lancées et les copies d'élèves
+  const globalEvalStats = useMemo(() => {
+    let completedEvalsCount = 0;
+    let waitingEvalsCount = 0;
+    let totalCopiesCount = 0;
+    let gradedCopiesCount = 0;
+    let pendingCopiesCount = 0;
+
+    evaluations.forEach(ev => {
+      const subs = allSubmissionsMap[ev.id] || [];
+      const usedCodesCount = (ev.studentAccessCodes || []).filter(c => c.isUsed).length;
+      const isDone = subs.length > 0 || usedCodesCount > 0;
+      if (isDone) completedEvalsCount++;
+      else waitingEvalsCount++;
+
+      totalCopiesCount += subs.length;
+      subs.forEach(s => {
+        if (s.status === 'graded') gradedCopiesCount++;
+        else pendingCopiesCount++;
+      });
+    });
+
+    return {
+      totalLaunched: evaluations.length,
+      completedEvalsCount,
+      waitingEvalsCount,
+      totalCopiesCount,
+      gradedCopiesCount,
+      pendingCopiesCount,
+    };
+  }, [evaluations, allSubmissionsMap]);
+
+  // Filtrer et trier les évaluations déjà lancées
   const filteredEvaluations = useMemo(() => {
     const list = evaluations.filter(e => {
       const q = searchQuery.toLowerCase().trim();
@@ -1296,7 +1348,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         e.title.toLowerCase().includes(q) ||
         e.accessCode.toLowerCase().includes(q) ||
         e.subject.toLowerCase().includes(q) ||
-        e.grade.toLowerCase().includes(q)
+        e.grade.toLowerCase().includes(q) ||
+        (e.unitTitle && e.unitTitle.toLowerCase().includes(q))
       )) {
         return false;
       }
@@ -1306,52 +1359,63 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       if (evalSemesterFilter && (e as any).semester !== evalSemesterFilter) {
         return false;
       }
+      const isDone = isEvaluationDoneByStudents(e);
+      if (evalCompletionFilter === 'completed' && !isDone) return false;
+      if (evalCompletionFilter === 'waiting' && isDone) return false;
       return true;
     });
 
     return list.sort((a, b) => {
+      // Mettre en premier les évaluations ayant des copies d'élèves quand on affiche tout
+      const subsA = (allSubmissionsMap[a.id] || []).length;
+      const subsB = (allSubmissionsMap[b.id] || []).length;
+      const doneA = isEvaluationDoneByStudents(a) ? 1 : 0;
+      const doneB = isEvaluationDoneByStudents(b) ? 1 : 0;
+      if (doneA !== doneB) return doneB - doneA;
+      if (subsA !== subsB) return subsB - subsA;
+
       const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return evalSortOrder === 'oldest' ? timeA - timeB : timeB - timeA;
     });
-  }, [evaluations, searchQuery, evalUnitFilter, evalSemesterFilter, evalSortOrder]);
+  }, [evaluations, searchQuery, evalUnitFilter, evalSemesterFilter, evalCompletionFilter, evalSortOrder, allSubmissionsMap]);
 
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden my-auto border border-slate-200">
 
         {/* ── TOP HEADER ── */}
-        <header className="bg-gradient-to-r from-purple-700 via-indigo-700 to-violet-800 text-white p-5 flex items-center justify-between gap-4 flex-shrink-0">
+        <header className="bg-gradient-to-r from-purple-800 via-indigo-800 to-emerald-800 text-white p-5 flex items-center justify-between gap-4 flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 bg-white/20 rounded-2xl flex items-center justify-center font-black text-xl shadow-inner">
               💻
             </div>
             <div>
               <h2 className="text-lg font-black tracking-tight">
-                Évaluations Critériées Électroniques
+                Évaluations Électroniques Déjà Lancées & Copies des Élèves
               </h2>
-              <p className="text-purple-200 text-xs">
-                Gestion des évaluations en ligne · Codes d'accès élèves · Correction assistée par IA & A4 Print
+              <p className="text-purple-100 text-xs">
+                Suivi des évaluations passées par les élèves · Correction rapide assistée par IA · Impression A4
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
+              onClick={loadEvaluationsList}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl transition border border-white/20"
+              title="Actualiser la liste des évaluations lancées et des copies reçues"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">Actualiser</span>
+            </button>
+            <button
               onClick={() => setShowRecapModal(true)}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-black rounded-xl shadow-lg transition"
               title="Afficher le tableau récapitulatif des notes corrigées par élève, matière, critères et semestre"
             >
               📊 Tableau Récap des Notes
-            </button>
-            <button
-              onClick={() => {
-                setSelectedPlanForCreate(currentUnitPlan || allUnitPlans[0] || null);
-                setShowCreateModal(true);
-              }}
-              className="flex items-center gap-1.5 px-4 py-2 bg-yellow-400 hover:bg-yellow-300 text-yellow-950 text-xs font-black rounded-xl shadow-lg transition"
-            >
-              <Plus size={16} /> Lancer une évaluation
             </button>
             <button
               onClick={onClose}
@@ -1362,606 +1426,146 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           </div>
         </header>
 
-        {/* ── SOUS-HEADER NAVIGATION ONGLETS : UNITÉS VS ÉVALUATIONS ── */}
-        <div className="bg-slate-100 border-b border-slate-200 px-5 py-2.5 flex items-center justify-between gap-3 flex-wrap flex-shrink-0">
-          <div className="flex items-center gap-2">
+        {/* ── BARRE D'ONGLETS RAPIDES : TOUTES LES LANCÉES VS DÉJÀ FAITES PAR LES ÉLÈVES ── */}
+        <div className="bg-slate-100 border-b border-slate-200 px-5 py-3 flex items-center justify-between gap-3 flex-wrap flex-shrink-0">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => setManagerTab('units')}
+              onClick={() => setEvalCompletionFilter('all')}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition ${
-                managerTab === 'units'
-                  ? 'bg-purple-700 text-white shadow-md'
-                  : 'bg-white text-slate-700 hover:bg-slate-200/80 border border-slate-300'
-              }`}
-            >
-              <Layers size={15} />
-              <span>Unités de la matière & Lancer l'évaluation</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                managerTab === 'units' ? 'bg-purple-900 text-purple-100' : 'bg-slate-100 text-slate-700'
-              }`}>
-                {unitsForSelectedSubject.length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setManagerTab('evaluations')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition ${
-                managerTab === 'evaluations'
-                  ? 'bg-purple-700 text-white shadow-md'
+                evalCompletionFilter === 'all'
+                  ? 'bg-indigo-700 text-white shadow-md'
                   : 'bg-white text-slate-700 hover:bg-slate-200/80 border border-slate-300'
               }`}
             >
               <FileText size={15} />
-              <span>Évaluations générées & Copies</span>
+              <span>Toutes les évaluations lancées</span>
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                managerTab === 'evaluations' ? 'bg-purple-900 text-purple-100' : 'bg-slate-100 text-slate-700'
+                evalCompletionFilter === 'all' ? 'bg-indigo-900 text-indigo-100' : 'bg-slate-100 text-slate-700'
               }`}>
-                {evaluations.length}
+                {globalEvalStats.totalLaunched}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setEvalCompletionFilter('completed')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition ${
+                evalCompletionFilter === 'completed'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300'
+              }`}
+            >
+              <CheckCircle size={15} />
+              <span>✅ Déjà faites par les élèves (Copies reçues)</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                evalCompletionFilter === 'completed' ? 'bg-emerald-800 text-white' : 'bg-emerald-200 text-emerald-900'
+              }`}>
+                {globalEvalStats.completedEvalsCount}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setEvalCompletionFilter('waiting')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+                evalCompletionFilter === 'waiting'
+                  ? 'bg-amber-600 text-white shadow-md'
+                  : 'bg-white text-slate-600 hover:bg-slate-200/80 border border-slate-300'
+              }`}
+            >
+              <Clock size={14} />
+              <span>En attente de copies</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                evalCompletionFilter === 'waiting' ? 'bg-amber-800 text-white' : 'bg-slate-100 text-slate-600'
+              }`}>
+                {globalEvalStats.waitingEvalsCount}
               </span>
             </button>
           </div>
 
-          <div className="text-xs text-slate-600 font-semibold flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Chaque unité est strictement indépendante</span>
+          {/* Résumé synthétique des copies */}
+          <div className="flex items-center gap-2 text-xs font-bold">
+            <span className="px-3 py-1 rounded-xl bg-emerald-100 text-emerald-900 border border-emerald-300">
+              📥 {globalEvalStats.totalCopiesCount} copie(s) remise(s)
+            </span>
+            {globalEvalStats.pendingCopiesCount > 0 && (
+              <span className="px-3 py-1 rounded-xl bg-amber-100 text-amber-900 border border-amber-300">
+                ⏳ {globalEvalStats.pendingCopiesCount} à corriger
+              </span>
+            )}
+            <span className="px-3 py-1 rounded-xl bg-purple-100 text-purple-900 border border-purple-300">
+              ✓ {globalEvalStats.gradedCopiesCount} corrigée(s)
+            </span>
           </div>
         </div>
 
         {/* ── BODY DE GESTION ── */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-
-          {/* ═══════════════════════════════════════════════════════════════════
-              ONGLET 1 : LISTE DES UNITÉS DE LA MATIÈRE (INDÉPENDANCE GARANTIE)
-              ═══════════════════════════════════════════════════════════════════ */}
-          {managerTab === 'units' && (
-            <div className="space-y-6">
-              {/* Bannière Explicative Indépendance IB */}
-              <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3.5 shadow-xs">
-                <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white font-bold flex items-center justify-center text-lg flex-shrink-0 shadow-sm">
-                  🛡️
-                </div>
-                <div className="flex-1 space-y-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="text-sm font-black text-indigo-950">
-                      Unités de cours & Évaluations Indépendantes
-                    </h4>
-                    <span className="text-[11px] font-bold bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
-                      Règle d'Indépendance IB
-                    </span>
-                  </div>
-                  <p className="text-xs text-indigo-900/85 leading-relaxed">
-                    Chaque unité est <strong>totalement indépendante</strong> de l'autre : l'énoncé de recherche, les critères (A, B, C, D), les contextes et les questions d'évaluation électronique appartiennent <strong>exclusivement à l'unité choisie</strong> sans interférence. Sélectionnez ci-dessous l'unité pour laquelle vous souhaitez générer une épreuve électronique.
-                  </p>
-                </div>
-              </div>
-
-              {/* Filtres de sélection (Matière, Classe, Semestre) */}
-              <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Sélecteur Matière */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="font-bold text-slate-600">Matière :</span>
-                    <select
-                      value={unitSubjectFilter}
-                      onChange={e => setUnitSubjectFilter(e.target.value)}
-                      className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-purple-400 outline-none"
-                    >
-                      <option value="">Toutes les matières</option>
-                      {availableSubjects.map(s => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Sélecteur Classe / Niveau */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="font-bold text-slate-600">Classe :</span>
-                    <select
-                      value={unitGradeFilter}
-                      onChange={e => setUnitGradeFilter(e.target.value)}
-                      className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-purple-400 outline-none"
-                    >
-                      <option value="">Toutes les classes</option>
-                      {PEI_GRADES.map(g => (
-                        <option key={g} value={g}>{g}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Sélecteur Semestre */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="font-bold text-slate-600">Semestre :</span>
-                    <select
-                      value={unitSemesterFilter}
-                      onChange={e => setUnitSemesterFilter(e.target.value)}
-                      className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-purple-400 outline-none"
-                    >
-                      <option value="">Tous les semestres</option>
-                      <option value="Semestre 1">Semestre 1</option>
-                      <option value="Semestre 2">Semestre 2</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="text-xs font-semibold text-slate-500">
-                  <strong className="text-purple-700">{unitsForSelectedSubject.length}</strong> unité(s) disponible(s)
-                </div>
-              </div>
-
-              {/* Grille des unités indépendantes */}
-              {unitsForSelectedSubject.length === 0 ? (
-                <div className="p-12 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50">
-                  <Layers size={40} className="mx-auto text-slate-300 mb-2" />
-                  <h4 className="font-bold text-slate-700 text-sm">Aucune unité trouvée pour ces critères</h4>
-                  <p className="text-slate-400 text-xs mt-1 max-w-md mx-auto">
-                    Sélectionnez une autre matière ou classe ci-dessus pour afficher la liste de vos unités de cours.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {unitsForSelectedSubject.map((unit, uIdx) => {
-                    const evalsForThisUnit = evaluations.filter(e => e.unitId === unit.id || (e.unitTitle && e.unitTitle.toLowerCase() === unit.title.toLowerCase()));
-                    const unitSem = unit.semester || (unit.title.toLowerCase().includes('semestre 2') ? 'Semestre 2' : 'Semestre 1');
-
-                    return (
-                      <div
-                        key={unit.id || uIdx}
-                        className="bg-white rounded-3xl p-5 border border-slate-200 hover:border-purple-300 shadow-xs hover:shadow-lg transition flex flex-col justify-between space-y-4 relative group"
-                      >
-                        <div className="space-y-3">
-                          {/* Top row */}
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono text-xs font-black px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-800">
-                                Unité {uIdx + 1}
-                              </span>
-                              <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg ${
-                                unitSem === 'Semestre 2' ? 'bg-violet-100 text-violet-800' : 'bg-blue-100 text-blue-800'
-                              }`}>
-                                {unitSem}
-                              </span>
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1" title="Chaque unité est indépendante">
-                                🔒 Indépendante
-                              </span>
-                            </div>
-                            <span className="text-xs font-bold text-slate-400">
-                              {unit.gradeLevel || currentGrade}
-                            </span>
-                          </div>
-
-                          {/* Title */}
-                          <h3 className="font-extrabold text-slate-900 text-sm group-hover:text-purple-700 transition leading-snug">
-                            {unit.title}
-                          </h3>
-
-                          {/* Inquiry statement */}
-                          {unit.statementOfInquiry && (
-                            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-xs text-slate-700 italic leading-relaxed">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase not-italic block mb-0.5">
-                                Énoncé de recherche
-                              </span>
-                              « {unit.statementOfInquiry} »
-                            </div>
-                          )}
-
-                          {/* Concepts */}
-                          <div className="flex flex-wrap gap-1.5 text-xs">
-                            {unit.keyConcept && (
-                              <span className="text-[11px] font-semibold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200/60">
-                                Concept clé : <strong>{unit.keyConcept}</strong>
-                              </span>
-                            )}
-                            {unit.relatedConcepts && unit.relatedConcepts.length > 0 && (
-                              <span className="text-[11px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md border border-purple-200/60">
-                                Connexes : <strong>{unit.relatedConcepts.join(', ')}</strong>
-                              </span>
-                            )}
-                          </div>
-
-                          {/* IB Criteria */}
-                          <div className="space-y-1">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                              Critères évalués dans cette unité :
-                            </span>
-                            <div className="flex flex-wrap gap-1.5">
-                              {unit.assessments && unit.assessments.length > 0 ? (
-                                unit.assessments.map(a => {
-                                  const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
-                                  return (
-                                    <span
-                                      key={a.criterion}
-                                      className={`text-[10px] font-black px-2.5 py-0.5 rounded-md border ${col.light} ${col.text} ${col.border}`}
-                                    >
-                                      Critère {a.criterion} {a.maxPoints ? `(/${a.maxPoints})` : '(/8)'}
-                                    </span>
-                                  );
-                                })
-                              ) : (
-                                <span className="text-[11px] text-slate-400 italic">
-                                  Critères A, B, C, D (Générés à la demande)
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Chapters excerpt */}
-                          {unit.chapters && (
-                            <div className="text-[11px] text-slate-600 bg-amber-50/70 border border-amber-200/70 rounded-xl p-2 line-clamp-2">
-                              <span className="font-bold text-amber-900">Chapitres : </span>{unit.chapters}
-                            </div>
-                          )}
-
-                          {/* Evaluations already generated status */}
-                          {evalsForThisUnit.length > 0 ? (
-                            <div className="flex items-center justify-between text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-xl font-bold">
-                              <span className="flex items-center gap-1.5">
-                                <CheckCircle size={14} className="text-emerald-600" />
-                                {evalsForThisUnit.length} éval(s) déjà créée(s)
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEvalUnitFilter(unit.id);
-                                  setManagerTab('evaluations');
-                                }}
-                                className="text-purple-700 hover:text-purple-900 underline text-xs font-black"
-                              >
-                                Voir copies →
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="text-xs text-slate-400 bg-slate-50 border border-dashed border-slate-200 px-3 py-1.5 rounded-xl text-center">
-                              Aucune évaluation en ligne encore pour cette unité
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Action button: Launch generation for THIS unit */}
-                        <button
-                          type="button"
-                          onClick={() => handleLaunchForUnit(unit)}
-                          className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-2xl font-black text-xs shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 transform active:scale-[0.99]"
-                          title={`Générer et lancer l'évaluation électronique exclusivement pour l'unité : ${unit.title}`}
-                        >
-                          <Sparkles size={16} className="text-amber-300" />
-                          <span>⚡ Lancer l'évaluation de cette unité</span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ═══════════════════════════════════════════════════════════════════
-              ONGLET 2 : LISTE DES ÉVALUATIONS ÉLECTRONIQUES GÉNÉRÉES
-              ═══════════════════════════════════════════════════════════════════ */}
-          {managerTab === 'evaluations' && (
-            <div className="space-y-6">
-              {/* Recherche & Filtres avancés */}
-              <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
-                <div className="relative w-full md:w-80">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="Rechercher par titre, code ou matière…"
-                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-purple-400 font-medium"
-                  />
-                  <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-                  {/* Filtre par Unité */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="font-bold text-slate-600">Unité :</span>
-                    <select
-                      value={evalUnitFilter}
-                      onChange={e => setEvalUnitFilter(e.target.value)}
-                      className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400 max-w-[200px]"
-                    >
-                      <option value="">Toutes les unités</option>
-                      {unitsForSelectedSubject.map(u => (
-                        <option key={u.id} value={u.id}>
-                          {u.title}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Filtre par Semestre */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="font-bold text-slate-600">Semestre :</span>
-                    <select
-                      value={evalSemesterFilter}
-                      onChange={e => setEvalSemesterFilter(e.target.value)}
-                      className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400"
-                    >
-                      <option value="">Tous les semestres</option>
-                      <option value="Semestre 1">Semestre 1</option>
-                      <option value="Semestre 2">Semestre 2</option>
-                    </select>
-                  </div>
-
-                  <div className="text-xs text-slate-500 font-semibold ml-auto">
-                    <span className="font-bold text-purple-700">{filteredEvaluations.length}</span> évaluation(s)
-                  </div>
-                </div>
-              </div>
-
-          {/* Liste des évaluations publiées */}
-          {loading ? (
-            <div className="p-12 text-center text-slate-400">
-              <Loader2 size={32} className="animate-spin mx-auto mb-2 text-purple-600" />
-              <p className="text-sm font-semibold">Chargement des évaluations…</p>
-            </div>
-          ) : filteredEvaluations.length === 0 ? (
-            <div className="p-12 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50">
-              <FileText size={40} className="mx-auto text-slate-300 mb-2" />
-              <h4 className="font-bold text-slate-700 text-sm">Aucune évaluation en ligne pour le moment</h4>
-              <p className="text-slate-400 text-xs mt-1 max-w-md mx-auto">
-                Cliquez sur <strong>"Lancer une évaluation"</strong> pour publier une évaluation critériée et générer un code d'accès que vous pourrez distribuer à vos élèves.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredEvaluations.map(ev => {
-                const totalPoints = (ev.assessments || []).reduce((acc, a) => acc + (a.maxPoints || 8), 0);
-                const isCopied = copiedCode === ev.accessCode;
-                const isLinkCopied = copiedCode === `link_${ev.accessCode}`;
-
-                const isCompletedByStudents = ev.studentAccessCodes?.some(c => c.isUsed) || false;
-
-                return (
-                  <div
-                    key={ev.id}
-                    className={`rounded-2xl p-5 border transition flex flex-col justify-between space-y-4 ${
-                      isCompletedByStudents
-                        ? 'bg-emerald-50/80 border-emerald-300 shadow-sm'
-                        : 'bg-white border-slate-200 shadow-xs hover:shadow-md'
-                    }`}
-                  >
-                    <div>
-                      {/* Badge code d'accès */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-black px-2.5 py-1 rounded-lg bg-purple-100 text-purple-800 tracking-wider">
-                            {ev.accessCode}
-                          </span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            ev.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
-                          }`}>
-                            {ev.status === 'active' ? '● En cours' : 'Fermée'}
-                          </span>
-                          {isCompletedByStudents && (
-                            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-600 text-white flex items-center gap-1 shadow-xs">
-                              ✅ Déjà fait par les élèves
-                            </span>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={(e) => handleDeleteEvaluation(ev.id, e)}
-                          className="text-slate-400 hover:text-rose-600 p-1 transition"
-                          title="Supprimer cette évaluation"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-
-                      <h3 className="font-bold text-sm text-slate-900 line-clamp-2">{ev.title}</h3>
-                      <p className="text-xs text-slate-500 mt-1">
-                        {ev.subject} · {ev.grade} · {ev.assessments?.length || 0} critère(s) ({totalPoints} pts)
-                      </p>
-
-                       {/* Critères badges */}
-                      <div className="flex gap-1.5 mt-3 flex-wrap">
-                        {ev.assessments.map(a => {
-                          const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
-                          return (
-                            <span
-                              key={a.criterion}
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${col.light} ${col.text}`}
-                            >
-                              Critère {a.criterion} ({a.exercises?.length || 0} Q · /{a.maxPoints || 8})
-                            </span>
-                          );
-                        })}
-                      </div>
-
-                      {/* Aperçu direct des questions existantes sur la carte */}
-                      <div className="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-1.5 max-h-36 overflow-y-auto">
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase">
-                          <span>Questions existantes ({ev.assessments.reduce((sum, a) => sum + (a.exercises?.length || 0), 0)})</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
-                              setEditingCriterionIdx(0);
-                            }}
-                            className="text-indigo-600 hover:underline font-extrabold"
-                          >
-                            Modifier / + IA →
-                          </button>
-                        </div>
-                        {ev.assessments.map(a =>
-                          (a.exercises || []).map((ex, qIdx) => (
-                            <div key={`${a.criterion}_${qIdx}`} className="text-[11px] text-slate-700 truncate flex items-center gap-1.5">
-                              <span className="font-bold text-indigo-700 flex-shrink-0">[{a.criterion}.{qIdx + 1}]</span>
-                              <span className="truncate font-medium">{ex.title || ex.content}</span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="pt-3 border-t border-slate-100 space-y-2">
-                      {/* BOUTON 1 : Version Élève & Organisation / Mise en Page en direct */}
-                      <button
-                        onClick={() => setStudentPreviewEvaluation(JSON.parse(JSON.stringify(ev)))}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-extrabold transition shadow-xs"
-                        title="Voir l'évaluation exactement comme elle apparaît chez l'élève et modifier l'organisation ou la mise en page"
-                      >
-                        <Sliders size={14} />
-                        <span>👁️ Voir Version Élève & Mise en Page</span>
-                      </button>
-
-                      {/* BOUTON 2 : Voir & Modifier l'évaluation existante et ses questions (avec IA par question) */}
-                      <button
-                        onClick={() => {
-                          setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
-                          setEditingCriterionIdx(0);
-                        }}
-                        className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition shadow-xs"
-                        title="Ouvrir l'évaluation existante avec toutes ses questions pour les modifier, changer leur nature, en ajouter ou générer chaque question par IA"
-                      >
-                        <Edit3 size={14} />
-                        <span>Voir & Modifier les Questions (IA)</span>
-                      </button>
-
-                      {/* Encadré Code d'Accès Unique de la classe + Lien Classroom / Tablettes / PC */}
-                      <div className="bg-purple-50/80 border border-purple-200 rounded-xl p-2.5 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-purple-800 uppercase">
-                            🔑 Code Unique Classe :
-                          </span>
-                          <span className="font-mono font-black text-xs text-purple-950 bg-white px-2 py-0.5 rounded border border-purple-300">
-                            {ev.accessCode}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-1.5 text-xs">
-                          <button
-                            onClick={() => handleCopyStudentLink(ev.accessCode)}
-                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold transition text-[11px]"
-                            title="Copier le lien unique à coller sur Classroom, les tablettes ou les ordinateurs des élèves"
-                          >
-                            {isLinkCopied ? <Check size={12} /> : <ExternalLink size={12} />}
-                            <span>{isLinkCopied ? 'Lien copié !' : 'Copier Lien Classe'}</span>
-                          </button>
-                          <button
-                            onClick={() => handleCopyClassroomPost(ev)}
-                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-white hover:bg-purple-100 text-purple-800 border border-purple-300 rounded-lg font-bold transition text-[11px]"
-                            title="Copier le message complet prêt à publier sur Google Classroom (avec lien et code)"
-                          >
-                            {copiedCode === `classroom_${ev.accessCode}` ? <Check size={12} className="text-green-600" /> : <Copy size={12} />}
-                            <span>{copiedCode === `classroom_${ev.accessCode}` ? 'Copié !' : 'Publier Classroom'}</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Boutons actions principales */}
-                      <div className="flex flex-col gap-2 pt-1">
-                        {/* 🎓 GESTION DES MATRICULES ÉLÈVES POUR AVOIR ACCÈS */}
-                        {(() => {
-                          const codes = ev.studentAccessCodes || [];
-                          const totalCodes = codes.length;
-                          const usedCodes = codes.filter(c => c.isUsed).length;
-                          const retakeCodes = codes.filter(c => c.isUsed && c.allowedRetake).length;
-
-                          return (
-                            <button
-                              onClick={() => setManagingCodesEval(ev)}
-                              className="w-full flex items-center justify-between px-3 py-2 bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 text-indigo-950 rounded-xl text-xs font-bold transition border border-indigo-200 shadow-2xs"
-                              title="Définir et modifier le Matricule de chaque élève pour lui autoriser l'accès à cette évaluation"
-                            >
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <Users size={14} className="text-indigo-600 flex-shrink-0" />
-                                <span className="truncate">
-                                  Matricules des élèves ({totalCodes})
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                {retakeCodes > 0 && (
-                                  <span className="text-[10px] px-1.5 py-0.2 bg-amber-100 text-amber-800 rounded font-black border border-amber-300">
-                                    {retakeCodes} réouvert(s)
-                                  </span>
-                                )}
-                                <span className={`text-[10px] px-2 py-0.5 rounded-lg font-black ${
-                                  usedCodes > 0 ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-700 border border-indigo-200'
-                                }`}>
-                                  {usedCodes} / {totalCodes} ont composé
-                                </span>
-                              </div>
-                            </button>
-                          );
-                        })()}
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            onClick={() => handleOpenSubmissions(ev)}
-                            className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow transition"
-                            title="Consulter et corriger les copies remises par les élèves"
-                          >
-                            <Eye size={14} /> Copies d'élèves
-                          </button>
-                          <button
-                            onClick={() => {
-                              setPrintEvaluation(ev);
-                              setPrintSubmission(null);
-                            }}
-                            className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow transition"
-                            title="Ouvrir et imprimer une version vierge (A4, 1 cm) sans les réponses pour les élèves"
-                          >
-                            <Printer size={14} /> Sujet vierge (A4)
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/60">
 
           {/* ═════════════════════════════════════════════════════════════════
-              SECTION : COPIES D'ÉLÈVES POUR L'ÉVALUATION SÉLECTIONNÉE
+              SECTION PRIORITAIRE : COPIES D'ÉLÈVES POUR L'ÉVALUATION OUVERTE
               ═════════════════════════════════════════════════════════════════ */}
           {selectedEvaluation && (
-            <div className="mt-8 pt-6 border-t-2 border-slate-200 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
-                    Copies remises en ligne
-                  </span>
-                  <h3 className="text-base font-black text-slate-800 mt-1">
-                    {selectedEvaluation.title} — {submissions.length} copie(s)
-                  </h3>
+            <div className="bg-white rounded-3xl p-5 border-2 border-emerald-500 shadow-lg space-y-4 animate-fadeIn">
+              <div className="flex items-center justify-between gap-3 flex-wrap border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-black text-lg shadow-sm">
+                    📝
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-300">
+                        Copies des élèves — Code {selectedEvaluation.accessCode}
+                      </span>
+                      <span className="text-xs font-bold text-slate-500">
+                        {selectedEvaluation.subject} · {selectedEvaluation.grade}
+                      </span>
+                    </div>
+                    <h3 className="text-base font-black text-slate-900 mt-0.5">
+                      {selectedEvaluation.title} ({submissions.length} copie{submissions.length > 1 ? 's' : ''} remise{submissions.length > 1 ? 's' : ''})
+                    </h3>
+                  </div>
                 </div>
 
-                <button
-                  onClick={() => setSelectedEvaluation(null)}
-                  className="text-xs text-slate-400 hover:text-slate-600 p-1"
-                >
-                  Masquer les copies
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleOpenSubmissions(selectedEvaluation)}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                  >
+                    <RefreshCw size={13} className={loadingSubmissions ? 'animate-spin' : ''} />
+                    Actualiser les copies
+                  </button>
+                  <button
+                    onClick={() => setSelectedEvaluation(null)}
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition"
+                  >
+                    ✕ Fermer le panneau des copies
+                  </button>
+                </div>
               </div>
 
               {loadingSubmissions ? (
                 <div className="p-8 text-center text-slate-400">
-                  <Loader2 size={24} className="animate-spin mx-auto mb-2 text-purple-600" />
-                  <p className="text-xs">Chargement des copies remises…</p>
+                  <Loader2 size={24} className="animate-spin mx-auto mb-2 text-emerald-600" />
+                  <p className="text-xs font-semibold">Chargement des copies remises par les élèves…</p>
                 </div>
               ) : submissions.length === 0 ? (
-                <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-400">
+                <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-500">
                   <User size={30} className="mx-auto mb-2 text-slate-300" />
-                  <p className="font-semibold text-slate-600">Aucun élève n'a encore soumis sa copie.</p>
+                  <p className="font-bold text-slate-700">Aucune copie soumise pour cette évaluation pour l'instant.</p>
                   <p className="text-[11px] mt-1">
-                    Partagez le code <strong>{selectedEvaluation.accessCode}</strong> à vos élèves pour qu'ils commencent à composer.
+                    Les élèves peuvent rejoindre avec le code <strong>{selectedEvaluation.accessCode}</strong>.
                   </p>
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-xs">
                   <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                    <thead className="bg-emerald-50/80 text-emerald-950 font-black border-b border-emerald-200">
                       <tr>
                         <th className="px-4 py-3">Élève</th>
-                        <th className="px-4 py-3">N° Inscription</th>
+                        <th className="px-4 py-3">Matricule</th>
                         <th className="px-4 py-3">Date de remise</th>
-                        <th className="px-4 py-3">Statut</th>
-                        <th className="px-4 py-3">Note globale</th>
-                        <th className="px-4 py-3 text-right">Actions</th>
+                        <th className="px-4 py-3">Statut de correction</th>
+                        <th className="px-4 py-3">Note obtenue</th>
+                        <th className="px-4 py-3 text-right">Actions rapides</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1985,47 +1589,56 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           const isBest = isGraded && bestScore !== undefined && sub.totalScore === bestScore;
 
                           return (
-                            <tr key={sub.id} className="hover:bg-slate-50/80 transition">
+                            <tr key={sub.id} className="hover:bg-emerald-50/40 transition">
                               <td className="px-4 py-3 font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
                                 <span>{sub.studentName}</span>
                                 {isBest && (
-                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[9px] font-black uppercase tracking-wider" title="Note la plus élevée retenue (Parmi les différents essais)">
+                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[9px] font-black uppercase tracking-wider" title="Note la plus élevée retenue">
                                     ⭐ Meilleure note
                                   </span>
                                 )}
                               </td>
-                              <td className="px-4 py-3 font-mono text-slate-600">{sub.studentNumber}</td>
+                              <td className="px-4 py-3 font-mono font-bold text-purple-800">{sub.studentNumber}</td>
                               <td className="px-4 py-3 text-slate-500">
                                 {new Date(sub.submittedAt).toLocaleString('fr-FR', {
                                   day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
                                 })}
                               </td>
                               <td className="px-4 py-3">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  isGraded ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${
+                                  isGraded ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
                                 }`}>
-                                  {isGraded ? '✓ Corrigé' : '⏳ En attente'}
+                                  {isGraded ? '✓ Corrigée' : '⏳ À corriger'}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 font-black text-slate-800">
-                                {isGraded ? `${sub.totalScore ?? 0} / ${totalMax}` : '—'}
+                              <td className="px-4 py-3 font-black text-slate-900 text-sm">
+                                {isGraded ? (
+                                  <span className="text-emerald-700">{sub.totalScore ?? 0} / {totalMax}</span>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
                               </td>
                               <td className="px-4 py-3 text-right space-x-1.5 whitespace-nowrap">
                                 <button
                                   onClick={() => handleOpenGrading(sub)}
-                                  className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-xs shadow-xs transition"
+                                  className={`px-3.5 py-1.5 rounded-xl font-black text-xs shadow-xs transition ${
+                                    isGraded
+                                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                      : 'bg-purple-600 hover:bg-purple-700 text-white'
+                                  }`}
                                 >
-                                  {isGraded ? 'Modifier correction' : 'Corriger la copie'}
+                                  {isGraded ? '👁️ Voir / Modifier correction' : '✍️ Corriger la copie (IA)'}
                                 </button>
                                 <button
                                   onClick={() => {
                                     setPrintEvaluation(selectedEvaluation);
                                     setPrintSubmission(sub);
                                   }}
-                                  className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition"
-                                  title="Imprimer la copie corrigée (A4, 1 cm)"
+                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition inline-flex items-center gap-1"
+                                  title="Imprimer la copie de l'élève (A4, 1 cm)"
                                 >
-                                  <Printer size={15} />
+                                  <Printer size={14} />
+                                  <span>Imprimer</span>
                                 </button>
                                 <button
                                   onClick={() => {
@@ -2037,11 +1650,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                     setAdminDeleteValidated(false);
                                     setAdminResetMatriculeOnDelete(true);
                                   }}
-                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1"
+                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 rounded-xl font-bold text-[11px] transition inline-flex items-center gap-1"
                                   title="Supprimer cette copie d'élève (réservé à l'administrateur)"
                                 >
                                   <Trash2 size={13} />
-                                  <span>Supprimer la copie</span>
                                 </button>
                               </td>
                             </tr>
@@ -2054,6 +1666,336 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               )}
             </div>
           )}
+
+          {/* ═══════════════════════════════════════════════════════════════════
+              BARRE DE RECHERCHE & FILTRES DES ÉVALUATIONS DÉJÀ LANCÉES
+              ═══════════════════════════════════════════════════════════════════ */}
+          <div className="space-y-5">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <div className="relative w-full md:w-80">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Rechercher par titre, code, unité ou classe…"
+                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-purple-400 font-medium"
+                />
+                <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                {/* Filtre par Unité */}
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="font-bold text-slate-600">Unité :</span>
+                  <select
+                    value={evalUnitFilter}
+                    onChange={e => setEvalUnitFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400 max-w-[200px]"
+                  >
+                    <option value="">Toutes les unités</option>
+                    {unitsForSelectedSubject.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Filtre par Semestre */}
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="font-bold text-slate-600">Semestre :</span>
+                  <select
+                    value={evalSemesterFilter}
+                    onChange={e => setEvalSemesterFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400"
+                  >
+                    <option value="">Tous les semestres</option>
+                    <option value="Semestre 1">Semestre 1</option>
+                    <option value="Semestre 2">Semestre 2</option>
+                  </select>
+                </div>
+
+                {/* Tri chronologique */}
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="font-bold text-slate-600">Tri :</span>
+                  <select
+                    value={evalSortOrder}
+                    onChange={e => setEvalSortOrder(e.target.value as 'newest' | 'oldest')}
+                    className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400"
+                  >
+                    <option value="newest">Copies & Plus récentes</option>
+                    <option value="oldest">Plus anciennes</option>
+                  </select>
+                </div>
+
+                <div className="text-xs text-slate-500 font-semibold ml-auto">
+                  <span className="font-black text-purple-700">{filteredEvaluations.length}</span> évaluation(s) affichée(s)
+                </div>
+              </div>
+            </div>
+
+            {/* Liste des évaluations déjà lancées */}
+            {loading ? (
+              <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
+                <Loader2 size={32} className="animate-spin mx-auto mb-2 text-purple-600" />
+                <p className="text-sm font-semibold">Chargement des évaluations lancées et des copies d'élèves…</p>
+              </div>
+            ) : filteredEvaluations.length === 0 ? (
+              <div className="p-12 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-white">
+                <FileText size={40} className="mx-auto text-slate-300 mb-2" />
+                <h4 className="font-bold text-slate-700 text-sm">
+                  {evalCompletionFilter === 'completed'
+                    ? 'Aucune évaluation déjà faite par les élèves pour ce filtre'
+                    : 'Aucune évaluation électronique déjà lancée trouvée'}
+                </h4>
+                <p className="text-slate-400 text-xs mt-1 max-w-md mx-auto">
+                  {evalCompletionFilter !== 'all'
+                    ? 'Cliquez sur « Toutes les évaluations lancées » ci-dessus pour voir l\'ensemble des évaluations actives.'
+                    : 'Aucune évaluation électronique ne correspond aux filtres sélectionnés.'}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredEvaluations.map(ev => {
+                  const totalPoints = (ev.assessments || []).reduce((acc, a) => acc + (a.maxPoints || 8), 0);
+                  const isLinkCopied = copiedCode === `link_${ev.accessCode}`;
+                  const subsForEv = allSubmissionsMap[ev.id] || [];
+                  const gradedCount = subsForEv.filter(s => s.status === 'graded').length;
+                  const pendingCount = subsForEv.length - gradedCount;
+                  const codes = ev.studentAccessCodes || [];
+                  const totalCodes = codes.length;
+                  const usedCodes = codes.filter(c => c.isUsed).length;
+                  const retakeCodes = codes.filter(c => c.isUsed && c.allowedRetake).length;
+                  const isCompletedByStudents = subsForEv.length > 0 || usedCodes > 0;
+                  const isCurrentlySelected = selectedEvaluation?.id === ev.id;
+
+                  return (
+                    <div
+                      key={ev.id}
+                      className={`rounded-3xl overflow-hidden border transition flex flex-col justify-between ${
+                        isCurrentlySelected
+                          ? 'bg-emerald-50/90 border-2 border-emerald-600 ring-4 ring-emerald-500/20 shadow-lg'
+                          : isCompletedByStudents
+                          ? 'bg-white border-2 border-emerald-400 shadow-md hover:shadow-lg'
+                          : 'bg-white border border-slate-200 shadow-xs hover:shadow-md'
+                      }`}
+                    >
+                      {/* Bandeau supérieur de statut très lisible */}
+                      <div className={`px-4 py-2.5 flex items-center justify-between gap-2 border-b ${
+                        isCompletedByStudents
+                          ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-600'
+                          : 'bg-slate-100 text-slate-700 border-slate-200'
+                      }`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`font-mono text-xs font-black px-2.5 py-0.5 rounded-lg tracking-wider ${
+                            isCompletedByStudents ? 'bg-white text-emerald-900' : 'bg-purple-100 text-purple-800'
+                          }`}>
+                            {ev.accessCode}
+                          </span>
+                          {isCompletedByStudents ? (
+                            <span className="text-[11px] font-black flex items-center gap-1">
+                              ✅ Faite par les élèves ({Math.max(subsForEv.length, usedCodes)} copie{Math.max(subsForEv.length, usedCodes) > 1 ? 's' : ''})
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-bold text-slate-500">
+                              ⏳ En attente de passage
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={(e) => handleDeleteEvaluation(ev.id, e)}
+                          className={`p-1 rounded-lg transition ${
+                            isCompletedByStudents ? 'text-white/80 hover:text-white hover:bg-white/15' : 'text-slate-400 hover:text-rose-600'
+                          }`}
+                          title="Supprimer cette évaluation"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+
+                      <div className="p-5 space-y-3.5 flex-1 flex flex-col justify-between">
+                        <div className="space-y-3">
+                          <div>
+                            <h3 className="font-black text-sm text-slate-900 line-clamp-2 leading-snug">{ev.title}</h3>
+                            <p className="text-xs text-slate-500 mt-1 font-medium">
+                              {ev.subject} · <strong className="text-slate-700">{ev.grade}</strong> · {ev.assessments?.length || 0} critère(s) (/{totalPoints} pts)
+                            </p>
+                            {ev.createdAt && (
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                Lancée le {formatEvaluationDate(ev.createdAt)}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* ── ENCADRÉ SPÉCIAL : RÉSUMÉ DES COPIES D'ÉLÈVES (POUR CELLES DÉJÀ FAITES) ── */}
+                          {isCompletedByStudents ? (
+                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 space-y-2">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="font-black text-emerald-950 flex items-center gap-1.5">
+                                  📥 Copies reçues : {subsForEv.length}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-200 text-emerald-900">
+                                    ✓ {gradedCount} corrigée{gradedCount > 1 ? 's' : ''}
+                                  </span>
+                                  {pendingCount > 0 && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-900">
+                                      ⏳ {pendingCount} à corriger
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Liste rapide des élèves ayant remis une copie (cliquable pour corriger direct) */}
+                              {subsForEv.length > 0 && (
+                                <div className="space-y-1 max-h-28 overflow-y-auto pr-1 pt-1 border-t border-emerald-200/70">
+                                  {subsForEv.map(sub => {
+                                    const isGraded = sub.status === 'graded';
+                                    return (
+                                      <div
+                                        key={sub.id}
+                                        onClick={() => {
+                                          setSelectedEvaluation(ev);
+                                          setSubmissions(subsForEv);
+                                          handleOpenGrading(sub);
+                                        }}
+                                        className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white hover:bg-emerald-100/80 border border-emerald-200/80 cursor-pointer transition text-[11px]"
+                                        title="Cliquer pour ouvrir et corriger directement la copie de cet élève"
+                                      >
+                                        <span className="font-bold text-slate-800 truncate">
+                                          👤 {sub.studentName} <span className="text-slate-400 font-mono text-[10px]">({sub.studentNumber})</span>
+                                        </span>
+                                        <span className={`font-black px-2 py-0.5 rounded-md flex-shrink-0 text-[10px] ${
+                                          isGraded ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                        }`}>
+                                          {isGraded ? `${sub.totalScore ?? 0}/${totalPoints}` : 'Corriger →'}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-500 flex items-center justify-between">
+                              <span>Aucune copie remise pour l'instant</span>
+                              <span className="font-mono font-bold text-slate-600">{totalCodes} matricules</span>
+                            </div>
+                          )}
+
+                          {/* Critères badges */}
+                          <div className="flex gap-1.5 flex-wrap">
+                            {ev.assessments.map(a => {
+                              const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
+                              return (
+                                <span
+                                  key={a.criterion}
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${col.light} ${col.text}`}
+                                >
+                                  Critère {a.criterion} ({a.exercises?.length || 0} Q · /{a.maxPoints || 8})
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="pt-3 border-t border-slate-100 space-y-2">
+                          {/* BOUTON PRIORITAIRE : OUVRIR & CORRIGER LES COPIES DES ÉLÈVES */}
+                          <button
+                            onClick={() => handleOpenSubmissions(ev)}
+                            className={`w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition shadow-sm ${
+                              isCompletedByStudents
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                : 'bg-purple-600 hover:bg-purple-700 text-white'
+                            }`}
+                            title="Afficher toutes les copies remises par les élèves et lancer la correction"
+                          >
+                            <Eye size={15} />
+                            <span>
+                              {isCompletedByStudents
+                                ? `📂 Gérer & Corriger les copies (${subsForEv.length})`
+                                : `Voir les copies d'élèves (${subsForEv.length})`}
+                            </span>
+                          </button>
+
+                          {/* Actions sur le sujet & matricules */}
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              onClick={() => setStudentPreviewEvaluation(JSON.parse(JSON.stringify(ev)))}
+                              className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 rounded-xl text-[11px] font-extrabold transition"
+                              title="Voir l'évaluation exactement comme chez l'élève et ajuster la mise en page"
+                            >
+                              <Sliders size={13} />
+                              <span>Version Élève</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
+                                setEditingCriterionIdx(0);
+                              }}
+                              className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-[11px] font-extrabold transition"
+                              title="Modifier les questions ou régénérer avec l'IA"
+                            >
+                              <Edit3 size={13} />
+                              <span>Questions (IA)</span>
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              onClick={() => setManagingCodesEval(ev)}
+                              className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-[11px] font-bold transition"
+                              title="Gérer les matricules des élèves et réouvrir un 2e essai"
+                            >
+                              <Users size={13} className="text-purple-700 flex-shrink-0" />
+                              <span className="truncate">
+                                Matricules ({usedCodes}/{totalCodes})
+                                {retakeCodes > 0 ? ` · ${retakeCodes} 2e` : ''}
+                              </span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setPrintEvaluation(ev);
+                                setPrintSubmission(null);
+                              }}
+                              className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-[11px] font-bold transition"
+                              title="Imprimer le sujet vierge en format A4"
+                            >
+                              <Printer size={13} />
+                              <span>Sujet vierge A4</span>
+                            </button>
+                          </div>
+
+                          {/* Partage rapide du lien élève / Classroom */}
+                          <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                            <button
+                              onClick={() => handleCopyStudentLink(ev.accessCode)}
+                              className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
+                              title="Copier le lien direct élève"
+                            >
+                              {isLinkCopied ? <Check size={11} className="text-emerald-600" /> : <ExternalLink size={11} />}
+                              <span>{isLinkCopied ? 'Lien copié !' : 'Copier lien élève'}</span>
+                            </button>
+                            <button
+                              onClick={() => handleCopyClassroomPost(ev)}
+                              className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
+                              title="Copier le message complet pour Google Classroom"
+                            >
+                              {copiedCode === `classroom_${ev.accessCode}` ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
+                              <span>{copiedCode === `classroom_${ev.accessCode}` ? 'Copié !' : 'Message Classroom'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
         </div>
 

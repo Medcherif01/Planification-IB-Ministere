@@ -3045,12 +3045,16 @@ export const exportCalendarToWord = async (calendar: AnnualCalendar, grade: stri
       const cellContent = subjEntries.map(e => {
         const isAssessment = e.type === 'assessment';
         if (isAssessment) {
-          return `<div style="margin:1px 0;padding:2px 4px;font-size:8px;font-weight:700;border-radius:4px;border:2px solid ${color};color:${darkenHex(color)};background:#fff;text-align:center;">
+          return `<div style="margin:2px 0;padding:2px 4px;font-size:8px;font-weight:700;border-radius:4px;border:2px solid ${color};color:${darkenHex(color)};background:#fff;text-align:center;">
             ★ Éval. Crit.${e.assessmentCriterion || ''}<br/><span style="font-size:7px;font-weight:400;">U${e.unitNumber}</span>
           </div>`;
         }
-        return `<div style="margin:1px 0;padding:2px 4px;font-size:8px;font-weight:600;border-radius:4px;background-color:${lightenHex(color,0.75)};color:${darkenHex(color)};border:1px solid ${color};">
-          U${e.unitNumber}: ${(e.unitTitle || '').slice(0, 25)}${(e.unitTitle || '').length > 25 ? '…' : ''}
+        const chapHtml = e.chapter
+          ? `<div style="margin-top:2px;padding-top:2px;border-top:1px dashed ${color};font-size:7.5px;font-weight:500;color:#1e293b;">📖 ${e.chapter}</div>`
+          : '';
+        return `<div style="margin:2px 0;padding:3px 4px;font-size:8px;font-weight:700;border-radius:4px;background-color:${lightenHex(color,0.78)};color:${darkenHex(color)};border:1px solid ${color};">
+          <div>U${e.unitNumber} : ${(e.unitTitle || '').slice(0, 38)}${(e.unitTitle || '').length > 38 ? '…' : ''}</div>
+          ${chapHtml}
         </div>`;
       }).join('');
 
