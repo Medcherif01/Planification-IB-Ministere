@@ -14,9 +14,8 @@ import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterial
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import EvaluationPrintView from './EvaluationPrintView';
 import RichExerciseContent from './RichExerciseContent';
-import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, convertGoogleDriveUrl } from '../services/artworkService';
-import { generateDiagramOrMapWithGeminiAI, DEFAULT_AI_PHOTO_MODEL, AiPhotoModelOption } from '../services/educationalDiagramService';
+import { generateDiagramOrMapWithGeminiAI } from '../services/educationalDiagramService';
 
 interface StudentViewLayoutEditorModalProps {
   evaluation: OnlineEvaluation;
@@ -1148,11 +1147,8 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                       const generated = await generateDiagramOrMapWithGeminiAI({
                                         subject: draftEval.subject || '',
                                         grade: draftEval.grade || '',
-                                        unitTitle: draftEval.unitTitle || draftEval.title,
                                         exerciseTitle: ex.title,
                                         exerciseContent: customPrompt || `${ex.title} - ${ex.content}`,
-                                        customPrompt,
-                                        imageModel: ex.aiImageModel || DEFAULT_AI_PHOTO_MODEL,
                                       });
                                       if (generated) {
                                         handleUpdateExerciseField(critIdx, exIdx, {
@@ -1169,8 +1165,8 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                   <Sparkles size={13} className="text-yellow-300" />
                                   <span>
                                     {isGeneratingDiagramKey === `${critIdx}_${exIdx}`
-                                      ? isEn ? 'Generating...' : 'Génération Nano Banana...'
-                                      : isEn ? '🍌 Generate AI Photo (Nano Banana)' : '🍌 Générer Photo IA (Nano Banana)'}
+                                      ? isEn ? 'Generating...' : 'Génération...'
+                                      : isEn ? 'Generate Diagram (Gemini AI)' : 'Générer Schéma / Carte (Gemini AI)'}
                                   </span>
                                 </button>
                               </div>
@@ -1233,25 +1229,6 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                               </div>
                             );
                           })()}
-
-                          {/* 📊🏷️🧪 Outils interactifs élève (Tableau à remplir, Étiquettes à déplacer, Laboratoire virtuel) */}
-                          <InteractiveExerciseWidgets
-                            exercise={ex}
-                            subject={draftEval.subject}
-                            currentAnswer={
-                              hasSubQuestions
-                                ? testAnswers[`${activeAssessment.criterion}_${exIdx}_sub_0`] || ''
-                                : testAnswers[editKey] || ''
-                            }
-                            onUpdateAnswer={val => {
-                              const targetK = hasSubQuestions
-                                ? `${activeAssessment.criterion}_${exIdx}_sub_0`
-                                : editKey;
-                              setTestAnswers(prev => ({ ...prev, [targetK]: val }));
-                            }}
-                            isTeacherConfigMode={viewMode === 'organize'}
-                            onUpdateExerciseConfig={updates => handleUpdateExerciseField(critIdx, exIdx, updates)}
-                          />
 
                           {/* Sous-questions ou Question directe */}
                           {hasSubQuestions ? (

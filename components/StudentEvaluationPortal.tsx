@@ -12,7 +12,6 @@ import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './Scie
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import VirtualTabletKeyboard from './VirtualTabletKeyboard';
 import RichExerciseContent from './RichExerciseContent';
-import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, findMatchingArtwork, generateDynamicMuseumArtCard, getSafeArtworkImageUrl } from '../services/artworkService';
 import { getEvaluationByAccessCode, getStudentSubmission, getLocalSubmissions, createOrUpdateEvaluation, submitStudentEvaluation } from '../services/onlineEvaluationService';
 
@@ -2451,25 +2450,6 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                             <RichExerciseContent content={ex.content} />
                           </div>
                         )}
-
-                        {/* 📊🏷️🧪 OUTILS INTERACTIFS ÉLÈVE : REMPLIR UN TABLEAU, DÉPLACER DES ÉTIQUETTES OU MANIPULATION DE LABORATOIRE VIRTUEL */}
-                        <InteractiveExerciseWidgets
-                          exercise={ex}
-                          subject={evaluation.subject}
-                          currentAnswer={
-                            hasSubQuestions
-                              ? answers[`${activeAssessment.criterion}_${exIdx}_sub_0`] || ''
-                              : answers[`${activeAssessment.criterion}_${exIdx}`] || ''
-                          }
-                          onUpdateAnswer={val =>
-                            handleResponseChange(
-                              hasSubQuestions
-                                ? `${activeAssessment.criterion}_${exIdx}_sub_0`
-                                : `${activeAssessment.criterion}_${exIdx}`,
-                              val
-                            )
-                          }
-                        />
 
                         {/* ═══════════════════════════════════════════════════════════
                             CAS 1 : L'EXERCICE CONTIENT DES SOUS-QUESTIONS 1), 2), 3)...

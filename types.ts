@@ -26,17 +26,6 @@ export interface AssessmentExercise {
   expectedLines?: number; // Hauteur de la zone de réponse (nombre de lignes)
   imageUrl?: string; // Photo / oeuvre d'art / figure géométrique
   imageCaption?: string; // Légende de l'oeuvre (titre, artiste, date)
-  aiImageModel?: string; // Modèle IA photo utilisé (ex: 'nano-banana', 'nano-banana-2.1')
-  interactiveType?: 'none' | 'table' | 'labels' | 'virtual_lab' | 'all'; // Activité interactive élève
-  interactiveTableConfig?: {
-    headers: string[];
-    rows: string[][];
-  };
-  interactiveLabelsConfig?: {
-    labels: string[]; // Étiquettes à déplacer
-    targets: string[]; // Zones cibles / numéros de légende
-  };
-  virtualLabType?: 'chemistry_ph' | 'electricity_ohm' | 'biology_photosynthesis' | 'mechanics_pendulum';
   subQuestions?: AssessmentSubQuestion[]; // Sous-questions 1), 2), 3)... avec chacune son sous-aspect individuel
 }
 
