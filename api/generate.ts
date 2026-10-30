@@ -6,9 +6,24 @@ import { GoogleGenAI } from '@google/genai';
 // ─────────────────────────────────────────────────────────────────────────────
 const GEMINI_MODELS = [
   'gemini-2.5-flash',
-  'gemini-2.0-flash',
+  'gemini-3.8-flash',
   'gemini-2.5-flash-lite',
   'gemini-flash-latest',
+];
+
+// Variable de modèle IA pour la génération automatique de photos, schémas, oeuvres et cartes (Nano Banana)
+export const AI_IMAGE_GENERATION_MODEL =
+  process.env.AI_IMAGE_MODEL === 'nano-banana-pro'
+    ? 'gemini-3-pro-image'
+    : process.env.AI_IMAGE_MODEL === 'nano-banana-2.1'
+    ? 'gemini-nano-banana-2.1'
+    : 'gemini-3.1-flash-lite-image';
+
+const NANO_BANANA_IMAGE_MODELS = [
+  AI_IMAGE_GENERATION_MODEL,
+  'gemini-3.1-flash-lite-image',
+  'gemini-2.5-flash-image',
+  'gemini-nano-banana-2.1',
 ];
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -351,7 +366,69 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { contents, systemInstruction, generationConfig } = req.body;
+    const { contents, systemInstruction, generationConfig, mode, imageModel, aspectRatio } = req.body;
+
+    // ── MODE GÉNÉRATION D'IMAGE IA (NANO BANANA) ────────────────────────────
+    if (mode === 'image') {
+      const promptText = typeof contents === 'string' ? contents : JSON.stringify(contents || '');
+      if (!promptText) {
+        return res.status(400).json({ error: 'Missing image prompt' });
+      }
+      const requestedModel =
+        imageModel === 'nano-banana-pro'
+          ? 'gemini-3-pro-image'
+          : imageModel === 'nano-banana-2.1'
+          ? 'gemini-nano-banana-2.1'
+          : imageModel === 'nano-banana'
+          ? 'gemini-3.1-flash-lite-image'
+          : AI_IMAGE_GENERATION_MODEL;
+
+      const modelsToTry = Array.from(new Set([requestedModel, ...NANO_BANANA_IMAGE_MODELS]));
+      let lastImgErr: any = null;
+
+      for (const mdl of modelsToTry) {
+        for (const key of geminiKeys) {
+          try {
+            const ai = new GoogleGenAI({
+              apiKey: cleanKey(key),
+              httpOptions: {
+                headers: { 'User-Agent': 'aistudio-build' },
+              },
+            });
+            const response = await ai.models.generateContent({
+              model: mdl,
+              contents: {
+                parts: [{ text: promptText }],
+              },
+              config: {
+                imageConfig: {
+                  aspectRatio: (aspectRatio as any) || '4:3',
+                },
+              },
+            });
+            for (const part of response?.candidates?.[0]?.content?.parts ?? []) {
+              if (part.inlineData?.data) {
+                const mime = part.inlineData.mimeType || 'image/png';
+                const imageUrl = `data:${mime};base64,${part.inlineData.data}`;
+                return res.status(200).json({
+                  imageUrl,
+                  modelUsed: mdl,
+                });
+              }
+            }
+          } catch (imgErr: any) {
+            lastImgErr = imgErr;
+            console.warn(`⚠️ [NanoBanana/${mdl}] Essai suivant:`, imgErr?.message || imgErr);
+          }
+        }
+      }
+
+      return res.status(502).json({
+        error: 'image_generation_failed',
+        message: lastImgErr?.message || 'Nano Banana image generation unavailable on current key',
+      });
+    }
+
     if (!contents) {
       return res.status(400).json({ error: 'Missing contents in request body' });
     }

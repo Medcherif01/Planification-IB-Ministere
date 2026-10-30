@@ -21,6 +21,9 @@ import {
   generateDynamicPlantCell,
   generateDiagramOrMapWithGeminiAI,
   stripHtmlTags,
+  DEFAULT_AI_PHOTO_MODEL,
+  AiPhotoModelOption,
+  autoPopulateExercisesWithAiPhotos,
 } from '../services/educationalDiagramService';
 import {
   FAMOUS_ARTWORKS,
@@ -90,9 +93,14 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [unitEvalStatusFilter, setUnitEvalStatusFilter] = useState<'all' | 'generated' | 'pending'>('all');
   const [evalSortOrder, setEvalSortOrder] = useState<'newest' | 'oldest'>('newest');
 
-  // État pour la génération de schémas/cartes via Gemini AI dans l'éditeur de questions (Exigence 6)
+  // État pour la génération de schémas/cartes/photos IA via la variable AI_PHOTO_GENERATOR_MODEL (ex: nano-banana)
   const [geminiDiagramPromptMap, setGeminiDiagramPromptMap] = useState<Record<string, string>>({});
   const [isGeneratingDiagramKey, setIsGeneratingDiagramKey] = useState<string | null>(null);
+  const [aiPhotoGeneratorModel, setAiPhotoGeneratorModel] = useState<AiPhotoModelOption>(DEFAULT_AI_PHOTO_MODEL);
+
+  // Variables résolues pour éviter toute erreur de référence à l'affichage
+  const selectedGrade = currentGrade || unitGradeFilter || '';
+  const currentUserName = currentUser?.displayName || currentUser?.username || 'Enseignant';
 
   // Formattage soigné de la date de génération
   const formatEvaluationDate = (dateStr?: string): string => {
@@ -1044,6 +1052,18 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           };
         }),
       }));
+
+      // Si l'option de génération de photos/diagrammes IA est activée, générer automatiquement avec la variable IA (ex: nano-banana)
+      // et placer la photo dans chaque exercice qui nécessite un diagramme, une oeuvre, une image ou une carte.
+      if (insertVisualDiagramsOnCreate) {
+        finalAssessments = await autoPopulateExercisesWithAiPhotos(finalAssessments, {
+          subject: selectedPlanForCreate.subject || currentSubject || 'Matière',
+          gradeLevel: targetGrade,
+          unitTitle: selectedPlanForCreate.title,
+          imageModel: aiPhotoGeneratorModel,
+          onlyIfMissing: true,
+        });
+      }
 
       const newEval = await createOrUpdateEvaluation({
         accessCode: code,
@@ -2241,15 +2261,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
                           <div className="flex items-center gap-2 flex-shrink-0">
                             <button
-                              onClick={() => {
-                                setSelectedUnitId(unit.id);
-                                setNewTitle(
-                                  isEnglishSubject(unit.subject)
-                                    ? `Summative Assessment — ${unit.title}`
-                                    : `Évaluation Sommative — ${unit.title}`
-                                );
-                                setShowCreateModal(true);
-                              }}
+                              onClick={() => handleLaunchForUnit(unit)}
                               className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl text-xs font-black transition shadow flex items-center gap-1.5"
                             >
                               <Plus size={14} />
@@ -2271,15 +2283,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                 </p>
                               </div>
                               <button
-                                onClick={() => {
-                                  setSelectedUnitId(unit.id);
-                                  setNewTitle(
-                                    isEnglishSubject(unit.subject)
-                                      ? `Summative Assessment — ${unit.title}`
-                                      : `Évaluation Sommative — ${unit.title}`
-                                  );
-                                  setShowCreateModal(true);
-                                }}
+                                onClick={() => handleLaunchForUnit(unit)}
                                 className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition flex-shrink-0"
                               >
                                 + Créer l'évaluation de l'unité
@@ -2632,8 +2636,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   </label>
                 </div>
 
-                {/* 🖼️ Option Schémas & Diagrammes à légender */}
-                <div className="bg-purple-50/90 border-2 border-purple-200 rounded-2xl p-3.5 space-y-1.5 shadow-2xs">
+                {/* 🖼️ Option Génération Automatique de Photos IA (Variable Nano Banana) & Schémas */}
+                <div className="bg-purple-50/90 border-2 border-purple-200 rounded-2xl p-3.5 space-y-2.5 shadow-2xs">
                   <label className="flex items-start gap-2.5 cursor-pointer">
                     <input
                       type="checkbox"
@@ -2641,16 +2645,33 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                       onChange={e => setInsertVisualDiagramsOnCreate(e.target.checked)}
                       className="mt-0.5 w-4 h-4 accent-purple-600 rounded"
                     />
-                    <div>
+                    <div className="flex-1">
                       <span className="text-xs font-black text-purple-950 flex items-center gap-1.5">
                         <ImageIcon size={14} className="text-purple-600" />
-                        Courbes, figures & schémas intelligents sur-mesure (100% compatibles)
+                        Génération automatique des photos IA (Nano Banana), diagrammes, oeuvres & cartes
                       </span>
                       <p className="text-[11px] text-purple-900/80 leading-relaxed mt-0.5">
-                        Génère des <strong>figures géométriques cotées (triangles, Thalès, solides), courbes de fonctions réelles et schémas scientifiques</strong> qui complètent rigoureusement l'exercice et respectent fidèlement les lettres, valeurs et équations de l'énoncé (sans figure superflue ni contradictoire).
+                        Détecte automatiquement chaque exercice nécessitant un <strong>diagramme, une image, une oeuvre d'art, une figure ou une carte</strong>, génère le visuel par IA et le place directement dans l'exercice qui convient.
                       </p>
                     </div>
                   </label>
+
+                  {insertVisualDiagramsOnCreate && (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white/90 p-2.5 rounded-xl border border-purple-200">
+                      <label className="text-[11px] font-black text-purple-950 flex items-center gap-1.5">
+                        <span>🍌 Variable Modèle Photo IA :</span>
+                      </label>
+                      <select
+                        value={aiPhotoGeneratorModel}
+                        onChange={e => setAiPhotoGeneratorModel(e.target.value as AiPhotoModelOption)}
+                        className="p-1.5 bg-purple-50 border border-purple-300 rounded-lg text-xs font-bold text-purple-950 focus:outline-none"
+                      >
+                        <option value="nano-banana">🍌 Nano Banana (gemini-3.1-flash-lite-image / 2.5-flash-image)</option>
+                        <option value="nano-banana-pro">🍌 Nano Banana Pro HD (gemini-3-pro-image-preview)</option>
+                        <option value="svg-vector">📐 Schéma Vectoriel SVG Haute Définition</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 {/* 🧮 Option Calculatrice Scientifique */}
@@ -3796,13 +3817,29 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                 )}
                               </div>
 
-                              {/* OPTION 1 : Générer un Diagramme / Carte / Schéma sur-mesure par Gemini AI */}
-                              <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-xl p-3 space-y-2">
+                              {/* OPTION 1 : Générer une Photo IA (Variable Nano Banana) / Diagramme / Carte / Oeuvre */}
+                              <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-xl p-3 space-y-2.5">
                                 <div className="flex items-center justify-between gap-2 flex-wrap">
                                   <span className="text-[11px] font-black text-purple-950 flex items-center gap-1.5">
                                     <Sparkles size={13} className="text-purple-600" />
-                                    Option 1 — Générer un diagramme, schéma ou carte avec Gemini AI :
+                                    Option 1 — Générer automatiquement la photo IA (Nano Banana), diagramme, oeuvre ou carte :
                                   </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] font-bold text-purple-800">Variable IA :</span>
+                                    <select
+                                      value={ex.aiImageModel || aiPhotoGeneratorModel}
+                                      onChange={e => {
+                                        const val = e.target.value as AiPhotoModelOption;
+                                        setAiPhotoGeneratorModel(val);
+                                        handleUpdateEditingExercise(editingCriterionIdx, exIdx, { aiImageModel: val });
+                                      }}
+                                      className="p-1 bg-white border border-purple-300 rounded-lg text-[11px] font-black text-purple-900 focus:outline-none"
+                                    >
+                                      <option value="nano-banana">🍌 Nano Banana (Photo IA 4:3)</option>
+                                      <option value="nano-banana-pro">🍌 Nano Banana Pro HD</option>
+                                      <option value="svg-vector">📐 Schéma Vectoriel SVG</option>
+                                    </select>
+                                  </div>
                                 </div>
                                 <div className="flex flex-col sm:flex-row gap-2">
                                   <input
@@ -3814,7 +3851,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                         [`${editingCriterionIdx}_${exIdx}`]: e.target.value,
                                       }))
                                     }
-                                    placeholder="Décrivez le diagramme, la carte ou la figure à générer par Gemini AI (ou laissez vide pour utiliser l'énoncé)…"
+                                    placeholder="Décrivez la photo, le diagramme, l'oeuvre ou la carte à générer (ou laissez vide pour utiliser l'énoncé de l'exercice)…"
                                     className="flex-1 p-2 bg-white border border-purple-300 rounded-lg text-xs focus:ring-2 focus:ring-purple-400 outline-none"
                                   />
                                   <button
@@ -3829,20 +3866,24 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                         const generated = await generateDiagramOrMapWithGeminiAI({
                                           subject: editingEvaluation.subject || '',
                                           grade: editingEvaluation.grade || '',
+                                          unitTitle: editingEvaluation.unitTitle || editingEvaluation.title,
                                           exerciseTitle: ex.title,
                                           exerciseContent: promptToUse,
+                                          customPrompt,
+                                          imageModel: ex.aiImageModel || aiPhotoGeneratorModel,
                                         });
                                         if (generated) {
                                           handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
                                             imageUrl: generated.imageUrl,
                                             imageCaption: generated.imageCaption,
+                                            aiImageModel: (ex.aiImageModel || aiPhotoGeneratorModel) as any,
                                           });
                                         } else {
-                                          alert("Impossible de générer le schéma pour le moment. Réessayez avec une description plus précise.");
+                                          alert("Impossible de générer le visuel pour le moment. Réessayez avec une description plus précise.");
                                         }
                                       } catch (err) {
                                         console.error(err);
-                                        alert("Erreur lors de la génération du diagramme par Gemini AI.");
+                                        alert("Erreur lors de la génération de la photo / diagramme par IA.");
                                       } finally {
                                         setIsGeneratingDiagramKey(null);
                                       }
@@ -3852,16 +3893,42 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                     {isGeneratingDiagramKey === `${editingCriterionIdx}_${exIdx}` ? (
                                       <>
                                         <Loader2 size={13} className="animate-spin" />
-                                        <span>Génération Gemini AI…</span>
+                                        <span>Génération Nano Banana IA…</span>
                                       </>
                                     ) : (
                                       <>
                                         <Sparkles size={13} className="text-yellow-300" />
-                                        <span>Générer par Gemini AI</span>
+                                        <span>🍌 Générer & Placer Photo IA</span>
                                       </>
                                     )}
                                   </button>
                                 </div>
+                              </div>
+
+                              {/* 🧪 OUTIL INTERACTIF ÉLÈVE PRÉ-ACTIVÉ POUR CET EXERCICE (Tableau, Étiquettes, Labo Virtuel) */}
+                              <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div>
+                                  <span className="text-[11px] font-black text-teal-950 block">
+                                    🧪 Manipulation interactive pour l'élève dans cet exercice :
+                                  </span>
+                                  <span className="text-[10px] text-teal-800">
+                                    L'élève peut toujours ouvrir ces 3 outils, ou vous pouvez en pré-ouvrir un automatiquement sous la question :
+                                  </span>
+                                </div>
+                                <select
+                                  value={ex.interactiveType || 'none'}
+                                  onChange={e =>
+                                    handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                      interactiveType: e.target.value as any,
+                                    })
+                                  }
+                                  className="p-2 bg-white border border-teal-300 rounded-xl text-xs font-black text-teal-950 focus:outline-none"
+                                >
+                                  <option value="none">✨ Au choix de l'élève (barre d'outils visible)</option>
+                                  <option value="table">📊 Ouvrir directement un Tableau à remplir</option>
+                                  <option value="labels">🏷️ Ouvrir directement des Étiquettes à déplacer</option>
+                                  <option value="virtual_lab">🧪 Ouvrir directement le Laboratoire Virtuel</option>
+                                </select>
                               </div>
 
                               {/* OPTION 2 : Insérer par lien Google Drive ou URL directe */}

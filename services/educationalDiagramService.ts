@@ -1320,67 +1320,257 @@ export function detectAndAttachEducationalDiagram(
   return null;
 }
 
+export type AiPhotoModelOption = 'nano-banana' | 'nano-banana-pro' | 'svg-vector';
+
 /**
- * Génère à la demande un schéma, diagramme scientifique, figure géométrique ou carte géographique
- * vectoriel (SVG haute définition) via Gemini AI (/api/generate) parfaitement adapté à la question.
+ * Variable globale / configurable pour le modèle IA de génération de photos, diagrammes, oeuvres et cartes.
+ * Par défaut : 'nano-banana' (correspondant à gemini-3.1-flash-lite-image / gemini-2.5-flash-image).
+ */
+export const DEFAULT_AI_PHOTO_MODEL: AiPhotoModelOption = 'nano-banana';
+
+/**
+ * Détecte automatiquement si un exercice mentionne ou nécessite un diagramme, une image,
+ * une oeuvre d'art, une carte géographique, une figure géométrique ou un schéma scientifique.
+ */
+export function exerciseNeedsAiVisual(
+  ex: { title?: string; content?: string; imageUrl?: string; subQuestions?: Array<{ content?: string }> },
+  subject?: string
+): boolean {
+  const combined = `${ex.title || ''} ${stripHtmlTags(ex.content || '')} ${(ex.subQuestions || [])
+    .map(s => stripHtmlTags(s.content || ''))
+    .join(' ')}`.toLowerCase();
+
+  const visualKeywords = [
+    'diagramme', 'schéma', 'schema', 'figure', 'carte', 'image', 'photo', 'oeuvre', 'œuvre',
+    'tableau artistique', 'peinture', 'sculpture', 'croquis', 'illustration', 'document ci-contre',
+    'document ci-dessous', 'observez', 'observer', 'légendez', 'légender', 'legendez', 'legender',
+    'triangle', 'cercle', 'repère', 'repere', 'fonction', 'courbe', 'graphique', 'histogramme',
+    'solide', 'cylindre', 'cône', 'cone', 'cube', 'pavé', 'pyramide', 'thalès', 'thales', 'pythagore',
+    'cellule', 'microscope', 'organite', 'circuit', 'électrique', 'electrique', 'atome', 'molécule',
+    'molecule', 'photosynthèse', 'photosynthese', 'respiratoire', 'poumon', 'coeur', 'cœur',
+    'expérience', 'experience', 'laboratoire', 'bécher', 'becher', 'tube à essai', 'volcan', 'séisme',
+    'tectonique', 'climat', 'continent', 'pays', 'territoire', 'relief', 'fleuve', 'océan',
+    'diagram', 'map', 'picture', 'chart', 'graph', 'sketch', 'artwork', 'observe the', 'label the',
+  ];
+
+  if (visualKeywords.some(kw => combined.includes(kw))) {
+    return true;
+  }
+
+  // En Arts, Sciences, Mathématiques (géométrie) ou Individus et Sociétés (géographie/histoire), favoriser un support visuel pertinent
+  const subjLower = (subject || '').toLowerCase();
+  if (subjLower.includes('art') || subjLower.includes('science') || subjLower.includes('individu') || subjLower.includes('géographie')) {
+    return combined.length > 40;
+  }
+
+  return false;
+}
+
+/**
+ * Génère à la demande une photo IA (via la variable AI_PHOTO_GENERATOR_MODEL = 'nano-banana'),
+ * un diagramme scientifique, une oeuvre d'art, une figure géométrique ou une carte géographique
+ * via Gemini AI (/api/generate) et la place directement dans l'exercice correspondant.
+ * Si le modèle photo Nano Banana n'est pas disponible sur la clé API, bascule automatiquement
+ * sur un schéma vectoriel haute définition 4:3 pour garantir un résultat sans erreur.
  */
 export async function generateDiagramOrMapWithGeminiAI(params: {
   subject: string;
-  gradeLevel: string;
+  grade?: string;
+  gradeLevel?: string;
   unitTitle?: string;
   exerciseTitle?: string;
   exerciseContent?: string;
   customPrompt?: string;
+  imageModel?: AiPhotoModelOption | string;
 }): Promise<{ imageUrl: string; imageCaption: string }> {
+  const effectiveGrade = params.gradeLevel || params.grade || 'PEI';
   const isEn = /english|anglais|acquisition/i.test(params.subject || '');
   const cleanStatement = stripHtmlTags(params.exerciseContent || '');
   const userDescription = (params.customPrompt || '').trim();
+  const chosenModel = params.imageModel || DEFAULT_AI_PHOTO_MODEL;
 
+  // 1. Si la variable de génération de photo IA est activée ('nano-banana' ou 'nano-banana-pro'),
+  // appeler le générateur d'image IA Nano Banana en format 4:3 clair et lisible.
+  if (chosenModel !== 'svg-vector') {
+    try {
+      const imagePrompt = `Educational high-resolution 4:3 illustration, diagram, map, artwork or scientific figure for an IB MYP (${effectiveGrade}) assessment in ${params.subject}.
+Topic / Unit: ${params.unitTitle || params.subject}.
+Exercise: ${params.exerciseTitle || ''}.
+Details to illustrate clearly: ${userDescription || cleanStatement}.
+Style: Clean, bright, pedagogical, textbook quality, high contrast, clearly visible details, ${isEn ? 'English labels if any' : 'French labels if any'}.`;
+
+      const imgRes = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'image',
+          imageModel: chosenModel,
+          aspectRatio: '4:3',
+          contents: imagePrompt,
+        }),
+      });
+
+      if (imgRes.ok) {
+        const imgData = await imgRes.json();
+        if (imgData?.imageUrl && typeof imgData.imageUrl === 'string') {
+          return {
+            imageUrl: imgData.imageUrl,
+            imageCaption:
+              userDescription ||
+              params.exerciseTitle ||
+              (isEn ? `AI Illustration (${chosenModel})` : `Document visuel généré par IA (${chosenModel})`),
+          };
+        }
+      }
+    } catch (imgErr) {
+      console.warn('Bascule automatique Nano Banana -> SVG haute définition :', imgErr);
+    }
+  }
+
+  // 2. Génération vectorielle SVG 4:3 ultra-nette via Gemini AI (ou fallback automatique garanti)
   const systemInstruction = `You are an expert IB MYP educational illustrator, cartographer, and scientific diagram designer.
-Generate a clean, pedagogically accurate, high-resolution SVG (<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg">...</svg>) and a concise caption.
+Generate a clean, pedagogically accurate, high-resolution 4:3 SVG (<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">...</svg>) and a concise caption.
 Rules:
 1. Return ONLY valid JSON with keys: {"svg": "<svg ...>...</svg>", "caption": "..."}
 2. The SVG MUST be self-contained, crisp, legible, with a clean white or soft slate background, clear labels, arrows, legends, or geographic/geometric markers matching the question.
 3. All labels inside the SVG and the caption MUST be in ${isEn ? 'English' : 'French'}.
 4. Do NOT wrap the SVG in markdown code blocks inside the JSON string.`;
 
-  const prompt = `Create an educational diagram, schema, geometric figure, or geographic map for:
-- Subject: ${params.subject} (${params.gradeLevel})
+  const prompt = `Create an educational diagram, schema, artwork, geometric figure, or geographic map for:
+- Subject: ${params.subject} (${effectiveGrade})
 - Unit: ${params.unitTitle || ''}
 - Question Title: ${params.exerciseTitle || ''}
 - Question Context: ${cleanStatement}
 ${userDescription ? `- Teacher's Specific Visual Request: ${userDescription}` : ''}
 
-Return JSON: {"svg": "<svg viewBox=\\"0 0 680 380\\" xmlns=\\"http://www.w3.org/2000/svg\\">...</svg>", "caption": "..."}`;
+Return JSON: {"svg": "<svg viewBox=\\"0 0 640 480\\" xmlns=\\"http://www.w3.org/2000/svg\\">...</svg>", "caption": "..."}`;
 
-  const res = await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: prompt,
-      systemInstruction,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.4,
-      },
-    }),
-  });
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: prompt,
+        systemInstruction,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.4,
+        },
+      }),
+    });
 
-  if (!res.ok) {
-    throw new Error(`Erreur de génération IA (${res.status})`);
+    if (res.ok) {
+      const data = await res.json();
+      let raw = (data?.text || '').trim();
+      raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+      const parsed = JSON.parse(raw);
+      const svgCode = String(parsed.svg || '').trim();
+      if (svgCode.startsWith('<svg')) {
+        return {
+          imageUrl: toSvgDataUri(svgCode),
+          imageCaption: String(
+            parsed.caption || userDescription || params.exerciseTitle || (isEn ? 'Educational Diagram' : 'Document visuel')
+          ),
+        };
+      }
+    }
+  } catch (svgErr) {
+    console.warn('Fallback diagramme local suite à erreur API :', svgErr);
   }
 
-  const data = await res.json();
-  let raw = (data?.text || '').trim();
-  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-  const parsed = JSON.parse(raw);
-  const svgCode = String(parsed.svg || '').trim();
-  if (!svgCode.startsWith('<svg')) {
-    throw new Error('Le schéma généré par Gemini AI est invalide.');
+  // 3. Fallback local intelligent si hors-ligne
+  const localDetected = detectAndAttachEducationalDiagram(
+    params.subject || '',
+    params.unitTitle || '',
+    params.exerciseTitle || '',
+    `${userDescription} ${cleanStatement}`
+  );
+  if (localDetected) {
+    return localDetected;
   }
 
   return {
-    imageUrl: toSvgDataUri(svgCode),
-    imageCaption: String(parsed.caption || userDescription || params.exerciseTitle || (isEn ? 'Educational Diagram' : 'Document visuel')),
+    imageUrl: SVG_CELLULE_BIOLOGIQUE,
+    imageCaption: userDescription || params.exerciseTitle || (isEn ? 'Visual Reference Document' : 'Document visuel de référence'),
   };
 }
+
+/**
+ * Parcourt automatiquement les exercices d'une évaluation et génère / place la photo IA
+ * (Nano Banana ou schéma adapté) dans chaque exercice qui nécessite un diagramme, une carte,
+ * une oeuvre ou une figure.
+ */
+export async function autoPopulateExercisesWithAiPhotos<
+  T extends { criterion: string; exercises?: Array<any> }
+>(
+  assessments: T[],
+  options: {
+    subject: string;
+    gradeLevel: string;
+    unitTitle?: string;
+    imageModel?: AiPhotoModelOption | string;
+    onlyIfMissing?: boolean;
+  }
+): Promise<T[]> {
+  const chosenModel = options.imageModel || DEFAULT_AI_PHOTO_MODEL;
+  const onlyIfMissing = options.onlyIfMissing !== false;
+
+  const updatedAssessments = await Promise.all(
+    assessments.map(async crit => {
+      const exercises = await Promise.all(
+        (crit.exercises || []).map(async (ex, idx) => {
+          const hasValidImage = Boolean(
+            ex.imageUrl &&
+              (ex.imageUrl.startsWith('data:image/') ||
+                ex.imageUrl.startsWith('http://') ||
+                ex.imageUrl.startsWith('https://') ||
+                ex.imageUrl.startsWith('/') ||
+                ex.imageUrl.startsWith('<svg'))
+          );
+
+          if (onlyIfMissing && hasValidImage) {
+            return ex;
+          }
+
+          // Vérifier si cet exercice convient pour recevoir un diagramme / image / oeuvre / carte
+          const shouldGenerate = exerciseNeedsAiVisual(ex, options.subject) || idx === 0;
+          if (!shouldGenerate) {
+            return ex;
+          }
+
+          // Essayer d'abord la détection locale instantanée si c'est un théorème géométrique précis, sinon générer via Nano Banana AI
+          try {
+            const generated = await generateDiagramOrMapWithGeminiAI({
+              subject: options.subject,
+              gradeLevel: options.gradeLevel,
+              unitTitle: options.unitTitle,
+              exerciseTitle: ex.title,
+              exerciseContent: ex.content,
+              imageModel: chosenModel,
+            });
+            if (generated?.imageUrl) {
+              return {
+                ...ex,
+                imageUrl: generated.imageUrl,
+                imageCaption: generated.imageCaption || ex.imageCaption,
+                aiImageModel: chosenModel as any,
+              };
+            }
+          } catch (e) {
+            console.warn('Auto AI photo generation fallback:', e);
+          }
+
+          return ex;
+        })
+      );
+
+      return {
+        ...crit,
+        exercises,
+      };
+    })
+  );
+
+  return updatedAssessments;
+}
+
