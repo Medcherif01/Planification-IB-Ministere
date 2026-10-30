@@ -2154,40 +2154,47 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                 <span className="bg-amber-400/20 border border-amber-300/40 px-3 py-1 rounded-xl font-black text-amber-200">
                   ⏱️ {evaluation.durationMinutes || 45} min
                 </span>
+                <span className="bg-white/15 px-3 py-1 rounded-xl font-bold text-emerald-200">
+                  👨‍🏫 {evaluation.teacherName || 'Enseignant'}
+                </span>
+                {evaluation.createdAt && (
+                  <span className="bg-white/15 px-3 py-1 rounded-xl font-bold text-indigo-200">
+                    📅 {new Date(evaluation.createdAt).toLocaleDateString(isEn ? 'en-GB' : 'fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                  </span>
+                )}
               </div>
             </div>
 
             <div className="p-4 sm:p-5 bg-slate-50/70 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs border-b border-slate-200">
               <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase block">Candidat(e) :</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">{isEn ? 'Candidate:' : 'Candidat(e) :'}</span>
                 <span className="font-black text-slate-800 text-sm">{studentName}</span>
                 <span className="block text-[11px] font-mono text-purple-700 font-bold mt-0.5">
-                  Matricule : {studentNumber}
+                  {isEn ? 'Student ID:' : 'Matricule :'} {studentNumber}
                 </span>
               </div>
               <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase block">Critères évalués :</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">{isEn ? 'Assessed Criteria:' : 'Critères évalués :'}</span>
                 <div className="flex items-center gap-1.5 flex-wrap mt-1">
                   {evaluation.assessments.map(a => {
                     const c = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
                     return (
                       <span key={a.criterion} className={`px-2 py-0.5 rounded-md text-white font-black text-[11px] ${c.badge}`}>
-                        Critère {a.criterion} ({a.maxPoints || 8} pts)
+                        {isEn ? `Criterion ${a.criterion}` : `Critère ${a.criterion}`} ({a.maxPoints || 8} pts)
                       </span>
                     );
                   })}
                 </div>
               </div>
               <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase block">Outils autorisés :</span>
-                <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px] font-bold text-slate-700">
-                  {showCalculator ? (
-                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">🧮 Calculatrice autorisée</span>
-                  ) : (
-                    <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">🚫 Calculatrice non autorisée</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">{isEn ? 'Teacher & Date:' : 'Enseignant & Date :'}</span>
+                <div className="mt-1 space-y-0.5 text-[11px] font-bold text-slate-700">
+                  <div className="text-purple-900">👨‍🏫 {evaluation.teacherName || 'Enseignant'}</div>
+                  {evaluation.createdAt && (
+                    <div className="text-slate-500">
+                      📅 {isEn ? 'Generated on' : 'Générée le'} {new Date(evaluation.createdAt).toLocaleDateString(isEn ? 'en-GB' : 'fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                    </div>
                   )}
-                  {showMathToolbar && <span className="text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">( ) &#123; &#125; [ ] Symboles</span>}
-                  <span className="text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">📐 Géométrie / Croquis</span>
                 </div>
               </div>
             </div>
@@ -2198,20 +2205,20 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-purple-50/70 border border-purple-200 rounded-xl p-3">
                     <div>
                       <span className="font-black uppercase text-[10px] text-purple-800 mr-2">
-                        🔎 Énoncé de recherche :
+                        🔎 {isEn ? 'Statement of Inquiry:' : 'Énoncé de recherche :'}
                       </span>
                       <span className="italic font-semibold text-purple-950">"{evaluation.statementOfInquiry}"</span>
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-purple-800 flex-shrink-0">
-                      {evaluation.keyConcept && <span>Concept : <strong>{evaluation.keyConcept}</strong></span>}
-                      {evaluation.globalContext && <span>· Contexte : <strong>{evaluation.globalContext}</strong></span>}
+                      {evaluation.keyConcept && <span>{isEn ? 'Key Concept:' : 'Concept :'} <strong>{evaluation.keyConcept}</strong></span>}
+                      {evaluation.globalContext && <span>· {isEn ? 'Global Context:' : 'Contexte :'} <strong>{evaluation.globalContext}</strong></span>}
                     </div>
                   </div>
                 )}
                 {evaluation.instructions && (
                   <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-amber-950">
                     <span className="font-black uppercase text-[10px] text-amber-800 block mb-0.5">
-                      📌 Consignes générales de l'évaluation :
+                      📌 {isEn ? 'General Assessment Instructions:' : 'Consignes générales de l\'évaluation :'}
                     </span>
                     <p className="text-xs leading-relaxed whitespace-pre-wrap">{evaluation.instructions}</p>
                   </div>
@@ -2473,10 +2480,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                                   {subQType === 'true_false' && (
                                     <div className="space-y-2.5 pt-1">
                                       <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                                        Indiquez votre réponse :
+                                        {isEn ? 'Select your answer:' : 'Indiquez votre réponse :'}
                                       </label>
                                       <div className="grid grid-cols-2 gap-3 max-w-xs">
-                                        {['Vrai', 'Faux'].map(opt => {
+                                        {(isEn ? ['True', 'False'] : ['Vrai', 'Faux']).map(opt => {
                                           const isSelected = subAnswer.startsWith(opt);
                                           return (
                                             <button
@@ -2633,10 +2640,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                             {ex.type === 'true_false' && (
                               <div className="space-y-3 pt-1">
                                 <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                                  Indiquez votre réponse :
+                                  {isEn ? 'Select your answer:' : 'Indiquez votre réponse :'}
                                 </label>
                                 <div className="grid grid-cols-2 gap-3 max-w-md">
-                                  {['Vrai', 'Faux'].map(option => {
+                                  {(isEn ? ['True', 'False'] : ['Vrai', 'Faux']).map(option => {
                                     const answerKey = `${activeAssessment.criterion}_${exIdx}`;
                                     const currentAnswer = answers[answerKey] || '';
                                     const isSelected = currentAnswer.startsWith(option);

@@ -551,15 +551,94 @@ export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string)
   }
 
   // ── RÈGLE IB OBLIGATOIRE : ≥ 2 critères, ≥ 3 sous-aspects par critère ────
-  assessments = enforceAssessmentsRules(assessments, subject || plan.subject || '', false, gradeLevel || plan.gradeLevel || '');
+  const effectiveSubject = subject || plan.subject || plan.matiere || '';
+  const effectiveGrade = gradeLevel || plan.gradeLevel || plan.niveau || '';
+  assessments = enforceAssessmentsRules(assessments, effectiveSubject, false, effectiveGrade);
+
+  // Synchroniser systématiquement avec les objectifs spécifiques IB mis à jour et enregistrés par l'enseignant
+  const teacherSavedConfig = getCriteriaSync(effectiveSubject, effectiveGrade);
+  const teacherSavedCriteria = teacherSavedConfig?.criteria || [];
+
+  const syncedAssessments = (() => {
+    const targetCrit = extractCriteriaLetters(Array.isArray(plan.objectives) ? plan.objectives : []);
+    let resultAssessments = assessments;
+    if (targetCrit.length > 0) {
+      const customNames: Record<string, string> = {};
+      if (Array.isArray(plan.objectivesDetails)) {
+        for (const d of plan.objectivesDetails) {
+          const l = normalizeCriterionLetter(d?.criterion);
+          if (l && d?.criterionName) customNames[l] = d.criterionName;
+        }
+      }
+      for (const tc of teacherSavedCriteria) {
+        if (tc.criterion && tc.criterionName) {
+          customNames[tc.criterion] = tc.criterionName;
+        }
+      }
+      resultAssessments = syncAssessmentsWithTargetCriteria(
+        assessments,
+        targetCrit,
+        effectiveSubject,
+        effectiveGrade,
+        customNames,
+        plan.title,
+        plan.chapters || plan.content
+      );
+    }
+
+    // Toujours appliquer les intitulés, aspects (strands) et grilles IB enregistrés par les enseignants
+    return resultAssessments.map(a => {
+      const letter = normalizeCriterionLetter(a.criterion) as 'A' | 'B' | 'C' | 'D' | null;
+      const savedDef = letter ? teacherSavedCriteria.find(c => c.criterion === letter) : undefined;
+      if (!savedDef) return a;
+      return {
+        ...a,
+        criterion: savedDef.criterion,
+        criterionName: savedDef.criterionName || a.criterionName,
+        maxPoints: 8,
+        strands: (savedDef.strands && savedDef.strands.length > 0) ? [...savedDef.strands] : a.strands,
+        rubricRows: (savedDef.rubricRows && savedDef.rubricRows.length > 0)
+          ? savedDef.rubricRows.map(r => ({ level: r.level, descriptor: r.descriptor }))
+          : a.rubricRows,
+      };
+    });
+  })();
+
+  // Synchroniser aussi objectivesDetails avec les objectifs spécifiques IB enregistrés par l'enseignant
+  const syncedObjectivesDetails = (() => {
+    const rawDetails = Array.isArray(plan.objectivesDetails) ? plan.objectivesDetails : [];
+    if (rawDetails.length > 0) {
+      return rawDetails.map((d: any) => {
+        const letter = normalizeCriterionLetter(d?.criterion) as 'A' | 'B' | 'C' | 'D' | null;
+        const savedDef = letter ? teacherSavedCriteria.find(c => c.criterion === letter) : undefined;
+        if (!savedDef) return d;
+        return {
+          ...d,
+          criterion: savedDef.criterion,
+          criterionName: savedDef.criterionName || d.criterionName,
+          strands: (Array.isArray(d.strands) && d.strands.length > 0) ? d.strands : [...savedDef.strands],
+        };
+      });
+    }
+    return syncedAssessments.map(a => ({
+      criterion: a.criterion,
+      criterionName: a.criterionName,
+      strands: a.strands || [],
+    }));
+  })();
+
+  const uniqueUnitId =
+    plan.id && !/^\d{13}$/.test(String(plan.id).trim())
+      ? String(plan.id).trim()
+      : `unit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
   return {
     ...plan, // Preserve ALL detailed nested structures (studentContext, sessions, details, reflections, etc.)
-    id: plan.id || Date.now().toString(),
+    id: uniqueUnitId,
     teacherName: plan.teacherName || "",
     title: plan.title || plan.titre || "Nouvelle Unité",
-    subject: subject || plan.subject || plan.matiere || "",
-    gradeLevel: gradeLevel || plan.gradeLevel || plan.niveau || "",
+    subject: effectiveSubject,
+    gradeLevel: effectiveGrade,
     duration: plan.duration || plan.duree || "10 heures",
     schoolYear: plan.schoolYear || plan.annee_scolaire || "2026/2027",
     numberOfHours: plan.numberOfHours || plan.nombre_heures || "",
@@ -605,29 +684,8 @@ export const sanitizeUnitPlan = (plan: any, subject: string, gradeLevel: string)
     
     generatedAssessmentDocument: plan.generatedAssessmentDocument || "",
     assessmentData: sanitizeAssessmentData(plan.assessmentData || plan.donnees_evaluation),
-    assessments: (() => {
-      const targetCrit = extractCriteriaLetters(Array.isArray(plan.objectives) ? plan.objectives : []);
-      if (targetCrit.length > 0) {
-        const customNames: Record<string, string> = {};
-        if (Array.isArray(plan.objectivesDetails)) {
-          for (const d of plan.objectivesDetails) {
-            const l = normalizeCriterionLetter(d?.criterion);
-            if (l && d?.criterionName) customNames[l] = d.criterionName;
-          }
-        }
-        return syncAssessmentsWithTargetCriteria(
-          assessments,
-          targetCrit,
-          subject || plan.subject || '',
-          gradeLevel || plan.gradeLevel || '',
-          customNames,
-          plan.title,
-          plan.chapters || plan.content
-        );
-      }
-      return assessments;
-    })(),
-    objectivesDetails: Array.isArray(plan.objectivesDetails) ? plan.objectivesDetails : [],
+    assessments: syncedAssessments,
+    objectivesDetails: syncedObjectivesDetails,
     lessons: Array.isArray(plan.lessons) ? plan.lessons : [],
     sessions: Array.isArray(plan.sessions) ? plan.sessions : [],
     formativeDetails: Array.isArray(plan.formativeDetails) ? plan.formativeDetails : [],

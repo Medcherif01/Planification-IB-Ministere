@@ -12,6 +12,7 @@ import StudentBookletsManager from './components/StudentBookletsManager';
 import { sanitizeUnitPlan } from './services/geminiService';
 import { loadPlansFromDatabase, savePlansToDatabase, migrateLocalStorageToMongoDB, needsMigration, cleanupInvalidLocalStorageKeys } from './services/databaseService';
 import { mergePlansWithReplacement, deduplicatePlans } from './services/excelBackupService';
+import { loadCriteria } from './services/ibCriteriaService';
 import { getCurrentUser, setCurrentUser, type AppUser } from './services/authService';
 
 // ─── Initialisation synchrone depuis localStorage ───────────────────────────
@@ -102,6 +103,7 @@ const App: React.FC = () => {
 
   // Ref pour suivre la session actuellement chargée et empêcher toute contamination inter-classes
   const loadedSessionKeyRef = React.useRef<string | null>(null);
+  const loadSeqRef = React.useRef<number>(0);
 
   // Migration automatique au démarrage
   useEffect(() => {
@@ -122,26 +124,48 @@ const App: React.FC = () => {
     runMigration();
   }, []);
 
-  // Charger les plans quand la session change (et vider immédiatement pour éviter toute fuite vers une autre classe)
+  // Charger les plans et les critères IB quand la session change (et vider immédiatement pour éviter toute fuite vers une autre classe)
   useEffect(() => {
     if (session && session.subject && session.grade) {
       const targetKey = `${session.subject.trim()}_${session.grade.trim()}`;
+      const currentSeq = ++loadSeqRef.current;
       loadedSessionKeyRef.current = null;
       setCurrentPlans([]); // Nettoie immédiatement les plans de l'ancienne classe
 
       const loadPlans = async () => {
         try {
+          // 1. Précharger les objectifs spécifiques IB mis à jour par les enseignants depuis MongoDB / localStorage
+          await loadCriteria(session.subject, session.grade).catch(() => {});
+
+          // 2. Charger les unités de cette classe et matière strictement
           const plans = await loadPlansFromDatabase(session.subject, session.grade);
+
+          // Si une nouvelle planification a été lancée ou la session a changé pendant le chargement, ignorer ce résultat obsolète
+          if (loadSeqRef.current !== currentSeq) {
+            return;
+          }
+
           // Filtrage STRICT : ne garder que les unités appartenant explicitement à cette classe et matière
           const strictlyFiltered = plans.filter(p => {
             const matchesSubject = !p.subject || p.subject.trim().toLowerCase() === session.subject.trim().toLowerCase();
             const matchesGrade = !p.gradeLevel || p.gradeLevel.trim().toLowerCase() === session.grade.trim().toLowerCase();
             return matchesSubject && matchesGrade;
           });
-          const sanitizedPlans = strictlyFiltered.map(p => sanitizeUnitPlan(p, session.subject, session.grade));
+          const sanitizedPlans = deduplicatePlans(
+            strictlyFiltered.map((p, idx) =>
+              sanitizeUnitPlan(
+                {
+                  ...p,
+                  id: p.id ? String(p.id) : `unit_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 8)}`,
+                },
+                session.subject,
+                session.grade
+              )
+            )
+          );
 
           // Vérifier que la session n'a pas basculé entre temps
-          if (session && `${session.subject.trim()}_${session.grade.trim()}` === targetKey) {
+          if (loadSeqRef.current === currentSeq && session && `${session.subject.trim()}_${session.grade.trim()}` === targetKey) {
             loadedSessionKeyRef.current = targetKey;
             setCurrentPlans(sanitizedPlans);
           }
@@ -151,6 +175,7 @@ const App: React.FC = () => {
       };
       loadPlans();
     } else {
+      loadSeqRef.current++;
       loadedSessionKeyRef.current = null;
       setCurrentPlans([]);
     }
@@ -305,17 +330,41 @@ const App: React.FC = () => {
       return;
     }
     if (window.confirm('Êtes-vous sûr de vouloir supprimer ce plan ?')) {
-      setCurrentPlans(prev => prev.filter(p => p.id !== id));
+      setCurrentPlans(prev => {
+        const updated = prev.filter(p => p.id !== id);
+        if (session && session.subject && session.grade) {
+          loadedSessionKeyRef.current = `${session.subject.trim()}_${session.grade.trim()}`;
+          savePlansToDatabase(session.subject, session.grade, updated).catch(err =>
+            console.error('❌ Erreur sauvegarde après suppression:', err)
+          );
+        }
+        return updated;
+      });
     }
   };
 
   const handleSavePlan = (plan: UnitPlan) => {
-    const planToSave = {
-      ...plan,
-      subject: plan.subject || session?.subject || '',
-      gradeLevel: plan.gradeLevel || session?.grade || '',
-    };
-    setCurrentPlans(prev => mergePlansWithReplacement(prev, [planToSave]));
+    const targetSubject = session?.subject || plan.subject || '';
+    const targetGrade = session?.grade || plan.gradeLevel || '';
+    const planToSave = sanitizeUnitPlan(
+      {
+        ...plan,
+        subject: targetSubject,
+        gradeLevel: targetGrade,
+      },
+      targetSubject,
+      targetGrade
+    );
+    setCurrentPlans(prev => {
+      const next = mergePlansWithReplacement(prev, [planToSave]);
+      if (targetSubject && targetGrade) {
+        loadedSessionKeyRef.current = `${targetSubject.trim()}_${targetGrade.trim()}`;
+        savePlansToDatabase(targetSubject, targetGrade, next).catch(err =>
+          console.error('❌ Erreur sauvegarde plan:', err)
+        );
+      }
+      return next;
+    });
     setView(AppView.DASHBOARD);
     localStorage.setItem('currentView', AppView.DASHBOARD);
   };
@@ -326,32 +375,86 @@ const App: React.FC = () => {
       const confirmReplace = window.confirm(
         `⚠️ Une planification existe déjà pour ${session.subject} - ${session.grade}.\n\n` +
         `Voulez-vous REMPLACER l'ancienne planification par la nouvelle ?\n\n` +
-        `- OUI: Remplacer complètement\n- NON: Annuler`
+        `- OUI: Remplacer complètement (efface les anciennes versions)\n- NON: Annuler`
       );
       if (!confirmReplace) return;
     }
-    const signedPlans = newPlans.map(p => ({
-      ...p,
-      subject: session.subject,
-      gradeLevel: session.grade,
-    }));
-    setCurrentPlans(deduplicatePlans(signedPlans));
+
+    // Incrémenter le compteur de séquence pour empêcher tout ancien chargement asynchrone d'écraser ces nouvelles unités
+    loadSeqRef.current++;
+    const targetKey = `${session.subject.trim()}_${session.grade.trim()}`;
+    loadedSessionKeyRef.current = targetKey;
+
+    const batchTimestamp = Date.now();
+    const signedPlans = newPlans.map((p, idx) =>
+      sanitizeUnitPlan(
+        {
+          ...p,
+          // Garantir un ID strictement unique pour chaque unité lancée afin qu'aucune unité ne soit supprimée par erreur
+          id: `unit_${batchTimestamp}_${idx + 1}_${Math.random().toString(36).substring(2, 8)}`,
+          subject: session.subject,
+          gradeLevel: session.grade,
+        },
+        session.subject,
+        session.grade
+      )
+    );
+
+    const finalPlans = deduplicatePlans(signedPlans);
+    setCurrentPlans(finalPlans);
+
+    // Sauvegarder immédiatement en base de données et dans localStorage en effaçant toutes les anciennes versions de cette classe
+    savePlansToDatabase(session.subject, session.grade, finalPlans).catch(err =>
+      console.error('❌ Erreur sauvegarde immédiate de la nouvelle planification:', err)
+    );
+
     alert(
       `✅ Planification enregistrée pour ${session.subject} - ${session.grade}\n\n` +
-      `${signedPlans.length} unités créées.`
+      `${finalPlans.length} unités créées et les anciennes versions ont été effacées.`
     );
   };
 
   const handleAddSingleUnit = (plan: UnitPlan) => {
     if (!session) return;
-    const signed = { ...plan, subject: session.subject, gradeLevel: session.grade };
-    setCurrentPlans(prev => mergePlansWithReplacement(prev, [signed]));
+    loadSeqRef.current++;
+    loadedSessionKeyRef.current = `${session.subject.trim()}_${session.grade.trim()}`;
+    const signed = sanitizeUnitPlan(
+      {
+        ...plan,
+        id: plan.id && !String(plan.id).match(/^\d+$/)
+          ? String(plan.id)
+          : `unit_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+        subject: session.subject,
+        gradeLevel: session.grade,
+      },
+      session.subject,
+      session.grade
+    );
+    setCurrentPlans(prev => {
+      const next = mergePlansWithReplacement(prev, [signed]);
+      savePlansToDatabase(session.subject, session.grade, next).catch(err =>
+        console.error('❌ Erreur sauvegarde ajout unité:', err)
+      );
+      return next;
+    });
   };
 
   const handleUpdateUnit = (plan: UnitPlan) => {
     if (!session) return;
-    const signed = { ...plan, subject: session.subject, gradeLevel: session.grade };
-    setCurrentPlans(prev => mergePlansWithReplacement(prev, [signed]));
+    loadSeqRef.current++;
+    loadedSessionKeyRef.current = `${session.subject.trim()}_${session.grade.trim()}`;
+    const signed = sanitizeUnitPlan(
+      { ...plan, subject: session.subject, gradeLevel: session.grade },
+      session.subject,
+      session.grade
+    );
+    setCurrentPlans(prev => {
+      const next = mergePlansWithReplacement(prev, [signed]);
+      savePlansToDatabase(session.subject, session.grade, next).catch(err =>
+        console.error('❌ Erreur sauvegarde mise à jour unité:', err)
+      );
+      return next;
+    });
   };
 
   const handleCancel = () => {

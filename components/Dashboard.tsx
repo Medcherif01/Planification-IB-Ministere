@@ -1463,11 +1463,12 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
         onAddPlans(updated);
       }
     } else {
-      // Ajout d'une nouvelle unité
+      // Ajout d'une nouvelle unité avec identifiant unique garanti
+      const uniqueId = `unit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       if (onAddSingleUnit) {
-        onAddSingleUnit({ ...planWithSession, id: Date.now().toString() });
+        onAddSingleUnit({ ...planWithSession, id: uniqueId });
       } else {
-        onAddPlans([...plans, { ...planWithSession, id: Date.now().toString() }]);
+        onAddPlans([...plans, { ...planWithSession, id: uniqueId }]);
       }
     }
     setIsAddEditUnitModalOpen(false);
@@ -1831,284 +1832,293 @@ Chapitre 4 : Algèbre et équations
       
       <div className="max-w-7xl mx-auto p-6 space-y-8">
         
-        <header className="flex flex-col md:flex-row justify-between items-end bg-gradient-to-r from-slate-800 via-blue-900 to-indigo-900 rounded-2xl px-6 py-5 mb-2 gap-4 shadow-xl">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-white/10 shadow-lg overflow-hidden border-2 border-white/20 flex-shrink-0">
-             <img 
-                src="/logo-alkawtar.png" 
-                alt="Logo Al Kawthar" 
-                className="w-full h-full object-contain p-1"
-                onError={(e) => e.currentTarget.style.display = 'none'}
-             />
-          </div>
-          <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Planificateur PEI — {currentGrade}</h1>
-            <div className="flex items-center gap-2 text-blue-200 mt-0.5">
-              <FileText size={14} />
-              <span className="font-semibold text-sm">{currentSubject}</span>
+        {/* ═══════════════════════════════════════════════════════════════════
+            EN-TÊTE PRINCIPAL & BARRE D'OUTILS ORGANISÉE PAR FONCTION
+            ═══════════════════════════════════════════════════════════════════ */}
+        <header className="bg-white rounded-3xl shadow-md border border-slate-200 overflow-hidden">
+          {/* Niveau 1 : Identité de la Classe (strictement indépendante) & Accès directs prioritaires */}
+          <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 px-6 py-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-white/10 shadow-lg overflow-hidden border-2 border-white/20 flex-shrink-0">
+                <img
+                  src="/logo-alkawtar.png"
+                  alt="Logo Al Kawthar"
+                  className="w-full h-full object-contain p-1"
+                  onError={(e) => (e.currentTarget.style.display = 'none')}
+                />
+              </div>
+              <div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                    Planificateur PEI — {currentGrade}
+                  </h1>
+                  <span className="px-3 py-0.5 rounded-full text-xs font-black bg-emerald-500/20 text-emerald-200 border border-emerald-400/40">
+                    🔒 Classe indépendante : {currentGrade}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 text-blue-200 mt-1 flex-wrap text-xs sm:text-sm">
+                  <span className="inline-flex items-center gap-1.5 font-bold text-white bg-white/10 px-2.5 py-0.5 rounded-lg">
+                    <FileText size={14} className="text-blue-300" />
+                    {currentSubject}
+                  </span>
+                  <span>•</span>
+                  <span>{plans.length} unité{plans.length > 1 ? 's' : ''} enregistrée{plans.length > 1 ? 's' : ''}</span>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-        <div className="flex gap-3 flex-wrap">
-             <button 
-              onClick={onLogout}
-              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white border border-white/20 px-4 py-3 rounded-xl font-semibold shadow transition"
-              title="Changer de matière/classe"
-            >
-              <ArrowLeft size={20} />
-              Retour
-            </button>
-             {/* ── Bouton Overview (toutes les années) ─────────────────────── */}
-             {overviewCompletionStatus && (
-               <div className="relative group">
-                 <button
-                   onClick={overviewCompletionStatus.complete ? handleExportOverview : undefined}
-                   disabled={isOverviewExporting || isCheckingCompletion || !overviewCompletionStatus.complete}
-                   className={`flex items-center gap-2 px-5 py-3 rounded-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5 ${
-                     overviewCompletionStatus.complete
-                       ? 'bg-orange-500 hover:bg-orange-600 text-white cursor-pointer'
-                       : 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-60'
-                   } disabled:cursor-not-allowed`}
-                   title={
-                     overviewCompletionStatus.complete
-                       ? 'Générer le document Overview complet (toutes les années PEI)'
-                       : `Overview indisponible — années manquantes : ${overviewCompletionStatus.gradesMissing.join(', ')}`
-                   }
-                 >
-                   {isOverviewExporting ? (
-                     <><Loader2 className="animate-spin" size={20} />Overview...</>
-                   ) : (
-                     <><Globe size={20} />Overview</>  
-                   )}
-                 </button>
-                 {/* Tooltip avec le statut de complétude */}
-                 {!overviewCompletionStatus.complete && (
-                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 hidden group-hover:block w-64">
-                     <div className="bg-slate-800 text-white text-xs rounded-lg p-3 shadow-xl">
-                       <p className="font-bold mb-1">📊 Progression de la matière</p>
-                       <p className="text-green-300">✅ Complétés : {overviewCompletionStatus.gradesWithPlans.join(', ') || 'Aucun'}</p>
-                       <p className="text-red-300">❌ Manquants : {overviewCompletionStatus.gradesMissing.join(', ')}</p>
-                       <p className="mt-2 text-slate-300 italic">Complétez toutes les années pour activer l'Overview.</p>
-                     </div>
-                   </div>
-                 )}
-               </div>
-             )}
-             {filteredPlans.length > 0 && (
-               <button 
-                 onClick={handlePrintSubjectUnits}
-                 className="flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white border border-white/20 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
-                 title="Imprimer les descriptifs des unités"
-               >
-                 <Printer size={20} />
-                 Imprimer Descriptifs
-               </button>
-             )}
-             <button
-               onClick={() => setIsDistributeChaptersOpen(true)}
-               className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white border border-blue-400/40 px-5 py-3 rounded-xl font-semibold shadow-lg transition hover:-translate-y-0.5"
-               title="Ajouter tous les chapitres et leçons pour que l'IA les distribue dans les unités correspondantes sans modifier leur contenu"
-             >
-               📚 Maj Chapitres & Leçons
-             </button>
-             <button
-               onClick={() => setIsRecapModalOpen(true)}
-               className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border border-emerald-400/40 px-5 py-3 rounded-xl font-semibold shadow-lg transition hover:-translate-y-0.5"
-               title="Tableau récapitulatif des notes des évaluations déjà corrigées par matière, critères et semestre avec commentaires"
-             >
-               📊 Tableau Récap Notes
-             </button>
-             <button
-               onClick={() => {
-                 setOnlineEvalTargetPlan(null);
-                 setIsOnlineEvaluationsOpen(true);
-               }}
-               className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white border border-purple-400/40 px-5 py-3 rounded-xl font-semibold shadow-lg transition hover:-translate-y-0.5"
-               title="Consulter et gérer les évaluations électroniques déjà lancées et corriger les copies des élèves"
-             >
-               💻 Évals Électroniques
-             </button>
-             <button 
-               onClick={handleExportConsolidated}
-               disabled={exportingId === 'consolidated'}
-               className="flex items-center gap-2 bg-emerald-500/80 hover:bg-emerald-500 text-white border border-emerald-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed"
-               title="Exporter toutes les matières de cette classe en un seul document"
-             >
-               {exportingId === 'consolidated' ? (
-                 <>
-                   <Loader2 className="animate-spin" size={20} />
-                   Export...
-                 </>
-               ) : (
-                 <>
-                   <BookOpen size={20} />
-                   Export Classe Complète
-                 </>
-               )}
-             </button>
-             {/* Formulaire Drive, SEA, Interdisciplinaire disponibles depuis HomeScreen uniquement */}
-             <button 
-              onClick={() => setIsBulkModalOpen(true)}
-              className="flex items-center gap-2 bg-violet-500/80 hover:bg-violet-500 text-white border border-violet-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
-            >
-              <Layers size={20} />
-              Planification Annuelle
-            </button>
-             {/* ── Bouton Objectifs IB (éditeur de critères) ─────── */}
-             <button
-               onClick={() => setIsCriteriaEditorOpen(true)}
-               className="flex items-center gap-2 bg-indigo-500/80 hover:bg-indigo-500 text-white border border-indigo-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
-               title={`Configurer les critères IB officiels pour ${currentSubject} — ${currentGrade}`}
-             >
-               <BookOpen size={20} />
-               Objectifs IB
-             </button>
-             {/* ── Bouton Mise à jour Objectifs & Aspects IB (toutes les unités) ── */}
-             {filteredPlans.length > 0 && (
-               <button
-                 onClick={() => handleBulkUpdateObjectives()}
-                 disabled={isBulkUpdatingObjectives}
-                 className="flex items-center gap-2 bg-sky-500/80 hover:bg-sky-500 text-white border border-sky-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                 title="Mettre à jour les objectifs spécifiques (A, B, C, D) et les aspects (i, ii, iii...) pour toutes les unités selon leur contenu"
-               >
-                 {isBulkUpdatingObjectives ? (
-                   <>
-                     <Loader2 className="animate-spin" size={20} />
-                     {bulkUpdateObjectivesProgress || 'Mise à jour...'}
-                   </>
-                 ) : (
-                   <>
-                     <RefreshCw size={20} />
-                     Mise à jour Objectifs & Aspects
-                   </>
-                 )}
-               </button>
-             )}
-             {/* ── Bouton Mise à jour selon Concepts & Objectifs (toutes les unités) ── */}
-             {filteredPlans.length > 0 && (
-               <button
-                 onClick={() => handleBulkUpdateFromConcepts()}
-                 disabled={isBulkUpdatingFromConcepts}
-                 className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white border border-indigo-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                 title="Mettre à jour toutes les unités selon leurs concepts (clé, connexes) et leurs critères d'évaluation adaptés"
-               >
-                 {isBulkUpdatingFromConcepts ? (
-                   <>
-                     <Loader2 className="animate-spin" size={20} />
-                     {bulkUpdateConceptsProgress || 'Mise à jour...'}
-                   </>
-                 ) : (
-                   <>
-                     <Sparkles size={20} className="text-amber-300" />
-                     Mise à jour (Concepts & Objectifs)
-                   </>
-                 )}
-               </button>
-             )}
-             {/* ── Bouton Ajouter Détails (toutes les unités) ─ Gemini ── */}
-             {filteredPlans.length > 0 && (
-               <button
-                 onClick={handleBulkAddDetails}
-                 disabled={isBulkAddingDetails}
-                 className="flex items-center gap-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white border border-teal-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                 title="Ajouter automatiquement tous les détails (séances, contexte élèves, différenciation, réflexion, cohérence…) pour TOUTES les unités de la matière avec Gemini, puis exporter en Word"
-               >
-                 {isBulkAddingDetails ? (
-                   <>
-                     <Loader2 className="animate-spin" size={20} />
-                     {bulkDetailsProgress || 'Ajout des détails...'}
-                   </>
-                 ) : (
-                   <>
-                     <PenLine size={20} />
-                     Ajouter Détails (toutes les unités)
-                   </>
-                 )}
-               </button>
-             )}
-             {/* ── Bouton Calculateur d'heures ──────────────────── */}
-             <button
-               onClick={() => setIsHoursCalculatorOpen(true)}
-               className="flex items-center gap-2 bg-teal-500/80 hover:bg-teal-500 text-white border border-teal-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
-               title="Calculer le volume horaire annuel et vérifier la conformité IB (50h minimum)"
-             >
-               <Clock size={20} />
-               Heures
-             </button>
-             {/* ── Bouton Refaire toutes les unités ─ admin seulement ─── */}
-             {isAdmin && plans.length > 0 && (
-               <button
-                 onClick={handleOpenRegenAll}
-                 className="flex items-center gap-2 bg-amber-500/80 hover:bg-amber-500 text-white border border-amber-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
-                 title="Refaire toutes les unités de l'année (basé sur titre + énoncé + chapitres + critères)"
-               >
-                 <RotateCcw size={20} />
-                 Refaire Toutes les Unités
-               </button>
-             )}
-            {/* ── Bouton Export Excel Global ─ admin seulement ─── */}
-            {isAdmin && (
+
+            {/* Actions Principales de Navigation */}
+            <div className="flex items-center gap-2.5 flex-wrap">
               <button
-                onClick={handleExportAllExcel}
-                disabled={isExportingExcel}
-                className="flex items-center gap-2 bg-green-500/80 hover:bg-green-500 text-white border border-green-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70"
-                title="Télécharger toutes les données en format Excel/CSV"
+                onClick={onLogout}
+                className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 px-3.5 py-2.5 rounded-xl text-xs font-bold transition"
+                title="Changer de matière ou de classe"
               >
-                {isExportingExcel ? <Loader2 className="animate-spin" size={20} /> : <Table size={20} />}
-                Export CSV
+                <ArrowLeft size={16} />
+                <span>Changer de classe</span>
               </button>
-            )}
-            {/* ── Bouton Export ZIP Plans Word Classe ─── */}
-            {plans.length > 0 && (
-              <button
-                onClick={handleExportClassZip}
-                disabled={isExportingZip}
-                className="flex items-center gap-2 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white border border-rose-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5 disabled:opacity-70"
-                title="Télécharger tous les plans d'unités de cette classe sous forme d'archive ZIP (contenant tous les fichiers Word .docx)"
-              >
-                {isExportingZip ? <Loader2 className="animate-spin" size={20} /> : <FileArchive size={20} />}
-                {isExportingZip && zipProgress
-                  ? `Export Word (${zipProgress.current}/${zipProgress.total})...`
-                  : `ZIP Plans Word (${plans.length})`}
-              </button>
-            )}
-            {/* ── Bouton Livrets Scolaires PEI ─── */}
-            {onGoToBooklets && (
-              <button
-                onClick={onGoToBooklets}
-                className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-bold shadow transition hover:-translate-y-0.5"
-                title="Accéder aux Livrets Scolaires PEI (Bulletins officiels IB, critères ATL et export PDF)"
-              >
-                <BookOpen size={20} />
-                Livrets ({currentGrade})
-              </button>
-            )}
-            {/* ── Bouton Demander une modification ─ enseignant seulement ─ */}
-            {!isAdmin && plans.length > 0 && (
+
               <button
                 onClick={() => {
-                  setModRequestPlan(plans[0]);
-                  setShowModRequestModal(true);
+                  setOnlineEvalTargetPlan(null);
+                  setIsOnlineEvaluationsOpen(true);
                 }}
-                className="flex items-center gap-2 bg-blue-500/80 hover:bg-blue-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
-                title="Envoyer une demande de modification à l'administrateur"
+                className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white border border-purple-400/40 px-4 py-2.5 rounded-xl text-xs font-black shadow-lg transition"
+                title="Gérer les évaluations électroniques par unité, visualiser la version élève et corriger les copies"
               >
-                <PenLine size={20} />
-                Demander une modification
+                <span>💻 Évaluations Électroniques</span>
               </button>
-            )}
-            {/* ── Bouton Ajouter une unité ─ admin seulement ─── */}
-            {isAdmin && (
-              <button 
-                onClick={handleOpenAddUnit}
-                className="flex items-center gap-2 bg-blue-500/80 hover:bg-blue-500 text-white border border-blue-400/30 px-5 py-3 rounded-xl font-semibold shadow transition hover:-translate-y-0.5"
+
+              <button
+                onClick={() => setIsRecapModalOpen(true)}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/40 px-3.5 py-2.5 rounded-xl text-xs font-black shadow-md transition"
+                title="Tableau récapitulatif des notes des évaluations corrigées par matière, critères et semestre"
               >
-                <Plus size={20} />
-                Ajouter une unité
+                <span>📊 Tableau Récap Notes</span>
               </button>
-            )}
-        </div>
-      </header>
+
+              {onGoToBooklets && (
+                <button
+                  onClick={onGoToBooklets}
+                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/30 px-3.5 py-2.5 rounded-xl text-xs font-black shadow-md transition"
+                  title="Accéder aux Livrets Scolaires PEI de cette classe"
+                >
+                  <BookOpen size={15} />
+                  <span>Livrets ({currentGrade})</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Niveau 2 : Barre d'outils structurée en 3 pôles clairs (sans doublons) */}
+          <div className="p-4 bg-slate-50/90 grid grid-cols-1 lg:grid-cols-3 gap-3 divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
+            {/* PÔLE 1 : Planification & Normes IB */}
+            <div className="space-y-2 pr-0 lg:pr-3">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                1. Planification & Normes IB ({currentGrade})
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setIsBulkModalOpen(true)}
+                  className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition"
+                  title="Générer ou refaire la planification annuelle de cette classe (efface et remplace proprement l'ancienne version)"
+                >
+                  <Layers size={14} />
+                  <span>Planification Annuelle</span>
+                </button>
+
+                {isAdmin ? (
+                  <button
+                    onClick={handleOpenAddUnit}
+                    className="flex items-center gap-1.5 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-xl text-xs font-bold transition"
+                    title="Ajouter une nouvelle unité à cette classe"
+                  >
+                    <Plus size={14} />
+                    <span>Ajouter une unité</span>
+                  </button>
+                ) : (
+                  plans.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setModRequestPlan(plans[0]);
+                        setShowModRequestModal(true);
+                      }}
+                      className="flex items-center gap-1.5 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-xl text-xs font-bold transition"
+                      title="Envoyer une demande de modification à l'administrateur"
+                    >
+                      <PenLine size={14} />
+                      <span>Demander modif.</span>
+                    </button>
+                  )
+                )}
+
+                <button
+                  onClick={() => setIsCriteriaEditorOpen(true)}
+                  className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3 py-2 rounded-xl text-xs font-bold transition"
+                  title={`Configurer et enregistrer les objectifs spécifiques IB officiels pour ${currentSubject} — ${currentGrade}`}
+                >
+                  <BookOpen size={14} className="text-indigo-700" />
+                  <span>Objectifs Spécifiques IB</span>
+                </button>
+
+                <button
+                  onClick={() => setIsHoursCalculatorOpen(true)}
+                  className="flex items-center gap-1.5 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 px-2.5 py-2 rounded-xl text-xs font-bold transition"
+                  title="Calculer le volume horaire annuel et vérifier la conformité IB (50h minimum)"
+                >
+                  <Clock size={14} className="text-teal-700" />
+                  <span>Heures</span>
+                </button>
+              </div>
+            </div>
+
+            {/* PÔLE 2 : Mise à jour IA & Chapitres (sans boutons redondants) */}
+            <div className="space-y-2 pt-3 lg:pt-0 lg:px-3">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                2. Outils IA & Conformité aux Objectifs IB
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setIsDistributeChaptersOpen(true)}
+                  className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 px-3 py-2 rounded-xl text-xs font-bold transition"
+                  title="Distribuer automatiquement les chapitres et leçons dans les unités de cette classe"
+                >
+                  <span>📚 Maj Chapitres & Leçons</span>
+                </button>
+
+                {filteredPlans.length > 0 && (
+                  <button
+                    onClick={() => handleBulkUpdateFromConcepts()}
+                    disabled={isBulkUpdatingFromConcepts || isBulkUpdatingObjectives}
+                    className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition disabled:opacity-50"
+                    title="Mettre à jour toutes les unités et évaluations selon les concepts et les Objectifs Spécifiques IB enregistrés par les enseignants"
+                  >
+                    {isBulkUpdatingFromConcepts || isBulkUpdatingObjectives ? (
+                      <>
+                        <Loader2 className="animate-spin" size={14} />
+                        <span>{bulkUpdateConceptsProgress || bulkUpdateObjectivesProgress || 'Mise à jour IB...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={14} className="text-amber-300" />
+                        <span>Maj Unités & Objectifs IB</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {filteredPlans.length > 0 && (
+                  <button
+                    onClick={handleBulkAddDetails}
+                    disabled={isBulkAddingDetails}
+                    className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition disabled:opacity-50"
+                    title="Compléter automatiquement les détails (séances, différenciation, réflexion, ATL) pour toutes les unités"
+                  >
+                    {isBulkAddingDetails ? (
+                      <>
+                        <Loader2 className="animate-spin" size={14} />
+                        <span>{bulkDetailsProgress || 'Enrichissement...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <PenLine size={14} />
+                        <span>Enrichir Détails (IA)</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {isAdmin && plans.length > 0 && (
+                  <button
+                    onClick={handleOpenRegenAll}
+                    className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-2 rounded-xl text-xs font-bold transition"
+                    title="Refaire toutes les unités de l'année à partir du résumé"
+                  >
+                    <RotateCcw size={14} />
+                    <span>Refaire unités</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* PÔLE 3 : Exports Word, Impression & Rapports */}
+            <div className="space-y-2 pt-3 lg:pt-0 lg:pl-3">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                3. Exports Word (.docx) & Impression
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {plans.length > 0 && (
+                  <button
+                    onClick={handleExportClassZip}
+                    disabled={isExportingZip}
+                    className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition disabled:opacity-70"
+                    title="Télécharger tous les plans d'unités de cette classe en archive ZIP Word (.docx)"
+                  >
+                    {isExportingZip ? <Loader2 className="animate-spin" size={14} /> : <FileArchive size={14} />}
+                    <span>
+                      {isExportingZip && zipProgress
+                        ? `Word (${zipProgress.current}/${zipProgress.total})...`
+                        : `ZIP Plans Word (${plans.length})`}
+                    </span>
+                  </button>
+                )}
+
+                <button
+                  onClick={handleExportConsolidated}
+                  disabled={exportingId === 'consolidated'}
+                  className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 px-3 py-2 rounded-xl text-xs font-bold transition disabled:opacity-60"
+                  title="Exporter toutes les matières de cette classe en un seul document"
+                >
+                  {exportingId === 'consolidated' ? <Loader2 className="animate-spin" size={14} /> : <BookOpen size={14} />}
+                  <span>Export Classe</span>
+                </button>
+
+                {filteredPlans.length > 0 && (
+                  <button
+                    onClick={handlePrintSubjectUnits}
+                    className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 px-3 py-2 rounded-xl text-xs font-bold transition"
+                    title="Imprimer les descriptifs des unités de cette classe"
+                  >
+                    <Printer size={14} />
+                    <span>Imprimer</span>
+                  </button>
+                )}
+
+                {overviewCompletionStatus && (
+                  <button
+                    onClick={overviewCompletionStatus.complete ? handleExportOverview : undefined}
+                    disabled={isOverviewExporting || isCheckingCompletion || !overviewCompletionStatus.complete}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${
+                      overviewCompletionStatus.complete
+                        ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                    }`}
+                    title={
+                      overviewCompletionStatus.complete
+                        ? 'Générer le document Overview complet (toutes les années PEI)'
+                        : `Overview indisponible — années manquantes : ${overviewCompletionStatus.gradesMissing.join(', ')}`
+                    }
+                  >
+                    {isOverviewExporting ? <Loader2 className="animate-spin" size={14} /> : <Globe size={14} />}
+                    <span>Overview</span>
+                  </button>
+                )}
+
+                {isAdmin && (
+                  <button
+                    onClick={handleExportAllExcel}
+                    disabled={isExportingExcel}
+                    className="flex items-center gap-1.5 bg-green-50 hover:bg-green-100 text-green-800 border border-green-200 px-2.5 py-2 rounded-xl text-xs font-bold transition"
+                    title="Télécharger les données en format CSV/Excel"
+                  >
+                    {isExportingExcel ? <Loader2 className="animate-spin" size={14} /> : <Table size={14} />}
+                    <span>CSV</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </header>
 
       {/* Stats Section */}
       {plans.length > 0 && (() => {
@@ -2378,95 +2388,101 @@ Chapitre 4 : Algèbre et équations
                             })()}
                         </div>
 
-                        <div className="relative z-10 flex items-center justify-between text-xs text-slate-500 mt-4 pt-4 border-t border-slate-100">
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <button 
-                                    onClick={() => handleExportPlan(plan)}
-                                    className="flex items-center gap-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-md transition font-medium"
-                                    disabled={exportingId === `plan-${plan.id}`}
-                                    title="Télécharger ce plan d'unité sous format Word (.docx)"
+                        <div className="relative z-10 mt-4 pt-3.5 border-t border-slate-100 space-y-2">
+                            {/* Ligne 1 : Évaluations (Électronique & Critériée) + Documents Word */}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                    onClick={() => {
+                                      setOnlineEvalTargetPlan(plan);
+                                      setIsOnlineEvaluationsOpen(true);
+                                    }}
+                                    className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-xs transition"
+                                    title="Lancer ou gérer l'évaluation électronique pour cette unité"
                                 >
-                                    {exportingId === `plan-${plan.id}` ? <Loader2 className="animate-spin" size={14}/> : <FileText size={14}/>}
-                                    Plan Word
+                                    <span>💻 Éval Électronique</span>
                                 </button>
-                                <button 
-                                    onClick={() => handleExportAssessment(plan)}
-                                    className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-100 transition"
-                                    disabled={exportingId === `eval-${plan.id}`}
-                                    title="Exporter les évaluations critériées (ZIP Word)"
-                                >
-                                    {exportingId === `eval-${plan.id}` ? <Loader2 className="animate-spin" size={14}/> : <FileArchive size={14}/>}
-                                    Évals (Zip)
-                                </button>
-                                <button 
-                                    onClick={() => handlePrintUnit(plan)}
-                                    className="flex items-center gap-1 bg-violet-50 text-violet-700 px-2 py-1 rounded hover:bg-violet-100 transition"
-                                    title="Imprimer cette unité"
-                                >
-                                    <Printer size={14}/>
-                                    Imprimer
-                                </button>
-                                {/* ── Bouton Voir / Éditer les évaluations critériées ── */}
+
                                 {plan.assessments && plan.assessments.length > 0 && (
                                   <button
                                     onClick={() => setViewerPlan(plan)}
-                                    className="flex items-center gap-1 bg-purple-50 text-purple-700 px-2 py-1 rounded hover:bg-purple-100 transition"
-                                    title="Voir et modifier les évaluations critériées générées"
+                                    className="flex items-center gap-1 bg-purple-50 text-purple-800 hover:bg-purple-100 border border-purple-200 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+                                    title="Voir et modifier les évaluations critériées de cette unité"
                                   >
-                                    <Eye size={14}/>
-                                    Voir Évals
+                                    <Eye size={13}/>
+                                    <span>Voir Évals</span>
                                   </button>
                                 )}
-                                {/* ── Boutons admin uniquement : Mise à jour Évals + Ajouter Détails ── */}
-                                {isAdmin && (
-                                  <>
+
+                                <button 
+                                    onClick={() => handleExportPlan(plan)}
+                                    className="flex items-center gap-1 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+                                    disabled={exportingId === `plan-${plan.id}`}
+                                    title="Télécharger ce plan d'unité sous format Word (.docx)"
+                                >
+                                    {exportingId === `plan-${plan.id}` ? <Loader2 className="animate-spin" size={13}/> : <FileText size={13}/>}
+                                    <span>Plan Word</span>
+                                </button>
+
+                                <button 
+                                    onClick={() => handleExportAssessment(plan)}
+                                    className="flex items-center gap-1 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+                                    disabled={exportingId === `eval-${plan.id}`}
+                                    title="Exporter les évaluations critériées (ZIP Word)"
+                                >
+                                    {exportingId === `eval-${plan.id}` ? <Loader2 className="animate-spin" size={13}/> : <FileArchive size={13}/>}
+                                    <span>Évals (Zip)</span>
+                                </button>
+
+                                <button 
+                                    onClick={() => handlePrintUnit(plan)}
+                                    className="flex items-center gap-1 bg-slate-100 text-slate-700 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition"
+                                    title="Imprimer cette unité"
+                                >
+                                    <Printer size={13}/>
+                                    <span>Imprimer</span>
+                                </button>
+                            </div>
+
+                            {/* Ligne 2 : Outils de mise à jour IB (unifiés sans doublon) & Travaux élèves */}
+                            <div className="flex items-center justify-between gap-1.5 flex-wrap pt-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {isAdmin ? (
+                                    <>
+                                      <button
+                                          onClick={() => handleUpdateUnitFromConcepts(plan)}
+                                          disabled={updatingUnitConceptsId === plan.id || updatingAssessmentId === plan.id}
+                                          className="flex items-center gap-1 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition font-semibold disabled:opacity-50 text-[11px]"
+                                          title="Mettre à jour cette unité et ses évaluations selon les concepts et les Objectifs Spécifiques IB enregistrés"
+                                      >
+                                          {updatingUnitConceptsId === plan.id || updatingAssessmentId === plan.id
+                                            ? <Loader2 className="animate-spin" size={12}/>
+                                            : <Sparkles size={12} className="text-indigo-600"/>}
+                                          <span>Maj Concepts & Objectifs IB</span>
+                                      </button>
+                                      <button
+                                          onClick={() => {
+                                            setDetailUpdatePlan(plan);
+                                            setIsDetailUpdateMode(true);
+                                          }}
+                                          className="flex items-center gap-1 bg-teal-50 text-teal-800 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition"
+                                          title="Ajouter des détails (séances, contexte élèves, réflexion, différenciation)"
+                                      >
+                                          <PenLine size={12}/>
+                                          <span>Détails IA</span>
+                                      </button>
+                                    </>
+                                  ) : (
                                     <button
-                                        onClick={() => handleUpdateUnitFromConcepts(plan)}
-                                        disabled={updatingUnitConceptsId === plan.id}
-                                        className="flex items-center gap-1 bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200 px-2 py-1 rounded transition font-medium disabled:opacity-50 text-xs shadow-sm"
-                                        title="Mettre à jour cette unité selon les modifications des concepts et des objectifs spécifiques, avec évaluations sur les critères adaptés"
+                                      onClick={() => { setModRequestPlan(plan); setShowModRequestModal(true); }}
+                                      className="flex items-center gap-1 bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg hover:bg-blue-100 text-[11px] font-semibold transition"
+                                      title="Demander une modification à l'administrateur"
                                     >
-                                        {updatingUnitConceptsId === plan.id
-                                          ? <Loader2 className="animate-spin" size={14}/>
-                                          : <Sparkles size={14} className="text-indigo-600"/>}
-                                        Mise à jour (Concepts & Objectifs)
+                                      <PenLine size={12}/>
+                                      <span>Demander modif.</span>
                                     </button>
-                                    <button
-                                        onClick={() => handleUpdateAssessments(plan)}
-                                        disabled={updatingAssessmentId === plan.id}
-                                        className="flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-1 rounded hover:bg-amber-100 transition disabled:opacity-50"
-                                        title="Mettre à jour les évaluations critériées selon les objectifs spécifiques enregistrés (titre et contenu inchangés)"
-                                    >
-                                        {updatingAssessmentId === plan.id
-                                          ? <Loader2 className="animate-spin" size={14}/>
-                                          : <RefreshCw size={14}/>}
-                                        Mise à jour Évals
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                          setDetailUpdatePlan(plan);
-                                          setIsDetailUpdateMode(true);
-                                        }}
-                                        className="flex items-center gap-1 bg-teal-50 text-teal-700 px-2 py-1 rounded hover:bg-teal-100 transition"
-                                        title="Ajouter des détails (séances, contexte élèves, réflexion, différenciation) sans modifier titre/objectifs/critères/ATL"
-                                    >
-                                        <PenLine size={14}/>
-                                        Ajouter Détails
-                                    </button>
-                                  </>
-                                )}
-                                {/* ── Bouton Demander une modification ─ enseignant seulement ─ */}
-                                {!isAdmin && (
-                                  <button
-                                    onClick={() => { setModRequestPlan(plan); setShowModRequestModal(true); }}
-                                    className="flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-1 rounded hover:bg-blue-100 transition"
-                                    title="Demander une modification à l'administrateur"
-                                  >
-                                    <PenLine size={14}/>
-                                    Demander modif.
-                                  </button>
-                                )}
-                                {/* ── Bouton Upload travaux élèves ── */}
+                                  )}
+                                </div>
+
                                 <button
                                     onClick={() => {
                                       setUploadModalPlan(plan);
@@ -2474,11 +2490,11 @@ Chapitre 4 : Algèbre et équations
                                       setUploadCriterion(plan.assessments?.[0]?.criterion ? `Critere_${plan.assessments[0].criterion}` : '');
                                       setUploadFile(null);
                                     }}
-                                    className="flex items-center gap-1 bg-sky-50 text-sky-700 px-2 py-1 rounded hover:bg-sky-100 transition"
+                                    className="flex items-center gap-1 bg-sky-50 text-sky-800 hover:bg-sky-100 border border-sky-200 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ml-auto"
                                     title="Déposer le travail d'un élève pour cette évaluation critériée"
                                 >
-                                    <Upload size={14}/>
-                                    Travaux élèves
+                                    <Upload size={12}/>
+                                    <span>Travaux élèves</span>
                                 </button>
                             </div>
                         </div>

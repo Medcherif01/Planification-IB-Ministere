@@ -1320,4 +1320,67 @@ export function detectAndAttachEducationalDiagram(
   return null;
 }
 
+/**
+ * Génère à la demande un schéma, diagramme scientifique, figure géométrique ou carte géographique
+ * vectoriel (SVG haute définition) via Gemini AI (/api/generate) parfaitement adapté à la question.
+ */
+export async function generateDiagramOrMapWithGeminiAI(params: {
+  subject: string;
+  gradeLevel: string;
+  unitTitle?: string;
+  exerciseTitle?: string;
+  exerciseContent?: string;
+  customPrompt?: string;
+}): Promise<{ imageUrl: string; imageCaption: string }> {
+  const isEn = /english|anglais|acquisition/i.test(params.subject || '');
+  const cleanStatement = stripHtmlTags(params.exerciseContent || '');
+  const userDescription = (params.customPrompt || '').trim();
 
+  const systemInstruction = `You are an expert IB MYP educational illustrator, cartographer, and scientific diagram designer.
+Generate a clean, pedagogically accurate, high-resolution SVG (<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg">...</svg>) and a concise caption.
+Rules:
+1. Return ONLY valid JSON with keys: {"svg": "<svg ...>...</svg>", "caption": "..."}
+2. The SVG MUST be self-contained, crisp, legible, with a clean white or soft slate background, clear labels, arrows, legends, or geographic/geometric markers matching the question.
+3. All labels inside the SVG and the caption MUST be in ${isEn ? 'English' : 'French'}.
+4. Do NOT wrap the SVG in markdown code blocks inside the JSON string.`;
+
+  const prompt = `Create an educational diagram, schema, geometric figure, or geographic map for:
+- Subject: ${params.subject} (${params.gradeLevel})
+- Unit: ${params.unitTitle || ''}
+- Question Title: ${params.exerciseTitle || ''}
+- Question Context: ${cleanStatement}
+${userDescription ? `- Teacher's Specific Visual Request: ${userDescription}` : ''}
+
+Return JSON: {"svg": "<svg viewBox=\\"0 0 680 380\\" xmlns=\\"http://www.w3.org/2000/svg\\">...</svg>", "caption": "..."}`;
+
+  const res = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: prompt,
+      systemInstruction,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.4,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Erreur de génération IA (${res.status})`);
+  }
+
+  const data = await res.json();
+  let raw = (data?.text || '').trim();
+  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  const parsed = JSON.parse(raw);
+  const svgCode = String(parsed.svg || '').trim();
+  if (!svgCode.startsWith('<svg')) {
+    throw new Error('Le schéma généré par Gemini AI est invalide.');
+  }
+
+  return {
+    imageUrl: toSvgDataUri(svgCode),
+    imageCaption: String(parsed.caption || userDescription || params.exerciseTitle || (isEn ? 'Educational Diagram' : 'Document visuel')),
+  };
+}

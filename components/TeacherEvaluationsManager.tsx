@@ -3,7 +3,8 @@ import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus,
 import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
 import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini, deleteStudentSubmission } from '../services/onlineEvaluationService';
 import { generateCleanStudentCodesForEvaluation, fetchAllStudents, convertGoogleDriveUrl } from '../services/studentRosterService';
-import { GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
+import { GenerateQuestionOptions, isEnglishSubject } from '../services/criterialQuestionGeneratorService';
+import { getCriteriaSync } from '../services/ibCriteriaService';
 import { SUBJECTS, PEI_GRADES } from '../constants';
 import GradedEvaluationsRecapModal from './GradedEvaluationsRecapModal';
 import EvaluationPrintView from './EvaluationPrintView';
@@ -18,6 +19,7 @@ import {
   generateDynamicRightTriangle,
   generateDynamicSolid,
   generateDynamicPlantCell,
+  generateDiagramOrMapWithGeminiAI,
   stripHtmlTags,
 } from '../services/educationalDiagramService';
 import {
@@ -59,17 +61,24 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
+  const isCurrentSubjectEn = isEnglishSubject(currentUnitPlan?.subject || currentSubject || '');
+
   // New evaluation modal
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedPlanForCreate, setSelectedPlanForCreate] = useState<UnitPlan | null>(currentUnitPlan || null);
   const [selectedCriteriaForCreate, setSelectedCriteriaForCreate] = useState<string[]>([]);
   const [customTitle, setCustomTitle] = useState('');
   const [customDuration, setCustomDuration] = useState('45');
-  const [customInstructions, setCustomInstructions] = useState('Répondez de manière structurée et détaillée à chaque question.');
+  const [customInstructions, setCustomInstructions] = useState(
+    isCurrentSubjectEn
+      ? 'Read each task carefully and answer in complete, well-structured sentences.'
+      : 'Répondez de manière structurée et détaillée à chaque question.'
+  );
   const [customSemester, setCustomSemester] = useState<'Semestre 1' | 'Semestre 2'>('Semestre 1');
   const [showRecapModal, setShowRecapModal] = useState(false);
 
-  // Navigation & Filtres : uniquement les évaluations déjà lancées, avec focus sur celles faites par les élèves
+  // Navigation & Filtres : organisation par unité (Exigence 9) et par statut
+  const [viewGroupedByUnit, setViewGroupedByUnit] = useState<boolean>(true);
   const [managerTab, setManagerTab] = useState<'units' | 'evaluations'>('evaluations');
   const [evalCompletionFilter, setEvalCompletionFilter] = useState<'all' | 'completed' | 'waiting'>('all');
   const [allSubmissionsMap, setAllSubmissionsMap] = useState<Record<string, StudentSubmission[]>>({});
@@ -81,14 +90,18 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [unitEvalStatusFilter, setUnitEvalStatusFilter] = useState<'all' | 'generated' | 'pending'>('all');
   const [evalSortOrder, setEvalSortOrder] = useState<'newest' | 'oldest'>('newest');
 
-  // Formattage soigné de la date de génération en français
+  // État pour la génération de schémas/cartes via Gemini AI dans l'éditeur de questions (Exigence 6)
+  const [geminiDiagramPromptMap, setGeminiDiagramPromptMap] = useState<Record<string, string>>({});
+  const [isGeneratingDiagramKey, setIsGeneratingDiagramKey] = useState<string | null>(null);
+
+  // Formattage soigné de la date de génération
   const formatEvaluationDate = (dateStr?: string): string => {
     if (!dateStr) return 'Date non renseignée';
     try {
       const d = new Date(dateStr);
       if (isNaN(d.getTime())) return dateStr;
       return new Intl.DateTimeFormat('fr-FR', {
-        day: 'numeric',
+        day: '2-digit',
         month: 'short',
         year: 'numeric',
         hour: '2-digit',
@@ -151,14 +164,26 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [showPrintCodesModal, setShowPrintCodesModal] = useState(false);
   const [isSavingCodes, setIsSavingCodes] = useState(false);
 
-  // Charger les évaluations déjà lancées ainsi que toutes les copies d'élèves associées
+  // Charger les évaluations déjà lancées en garantissant l'indépendance STRICTE par classe et matière (Exigence 4)
   const loadEvaluationsList = async () => {
     setLoading(true);
     try {
-      const list = await getEvaluations({
+      const rawList = await getEvaluations({
         subject: currentSubject,
         grade: currentGrade,
       });
+
+      // Filtrage strict par classe et matière pour ne jamais mélanger les évaluations d'une classe à l'autre
+      const list = rawList.filter(ev => {
+        if (currentSubject && ev.subject && ev.subject.trim().toLowerCase() !== currentSubject.trim().toLowerCase()) {
+          return false;
+        }
+        if (currentGrade && ev.grade && ev.grade.trim().toLowerCase() !== currentGrade.trim().toLowerCase()) {
+          return false;
+        }
+        return true;
+      });
+
       setEvaluations(list);
 
       // Charger en parallèle les copies soumises pour chaque évaluation lancée afin d'afficher un résumé immédiat
@@ -185,13 +210,21 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   };
 
   useEffect(() => {
+    setUnitSubjectFilter(currentSubject || '');
+    setUnitGradeFilter(currentGrade || '');
     loadEvaluationsList();
   }, [currentSubject, currentGrade]);
 
-  // Lancer l'évaluation pour une unité spécifique (garantie d'indépendance)
+  // Lancer l'évaluation pour une unité spécifique (garantie d'indépendance + anglais si Acquisition de langues)
   const handleLaunchForUnit = (unit: UnitPlan) => {
+    const isEnUnit = isEnglishSubject(unit.subject || currentSubject || '');
     setSelectedPlanForCreate(unit);
-    setCustomTitle(`Évaluation : ${unit.title}`);
+    setCustomTitle(isEnUnit ? `Summative Assessment: ${unit.title}` : `Évaluation : ${unit.title}`);
+    setCustomInstructions(
+      isEnUnit
+        ? 'Read each task carefully and answer in complete, well-structured sentences.'
+        : 'Répondez de manière structurée et détaillée à chaque question.'
+    );
     setCustomSemester(((unit.semester as any) === 'Semestre 2') ? 'Semestre 2' : 'Semestre 1');
     if (unit.assessments && unit.assessments.length > 0) {
       setSelectedCriteriaForCreate(unit.assessments.map(a => a.criterion));
@@ -200,6 +233,20 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     }
     setShowCreateModal(true);
   };
+
+  // Si une unité cible a été passée à l'ouverture (depuis une carte unité du Dashboard), filtrer dessus
+  useEffect(() => {
+    if (currentUnitPlan) {
+      setSelectedPlanForCreate(currentUnitPlan);
+      const isEnUnit = isEnglishSubject(currentUnitPlan.subject || currentSubject || '');
+      setCustomTitle(isEnUnit ? `Summative Assessment: ${currentUnitPlan.title}` : `Évaluation : ${currentUnitPlan.title}`);
+      setCustomInstructions(
+        isEnUnit
+          ? 'Read each task carefully and answer in complete, well-structured sentences.'
+          : 'Répondez de manière structurée et détaillée à chaque question.'
+      );
+    }
+  }, [currentUnitPlan]);
 
   // Liste des matières uniques disponibles
   const availableSubjects = useMemo(() => {
@@ -211,15 +258,17 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     return Array.from(set).filter(Boolean);
   }, [currentSubject, allUnitPlans, evaluations]);
 
-  // Unités filtrées pour la matière sélectionnée (chacune indépendante)
+  // Unités filtrées strictement pour la classe et matière sélectionnées (Exigence 4 : indépendance stricte des classes)
   const unitsForSelectedSubject = useMemo(() => {
+    const effectiveSubj = currentSubject || unitSubjectFilter;
+    const effectiveGrade = currentGrade || unitGradeFilter;
     return allUnitPlans.filter(p => {
-      if (unitSubjectFilter && p.subject !== unitSubjectFilter) return false;
-      if (unitGradeFilter && p.gradeLevel !== unitGradeFilter) return false;
+      if (effectiveSubj && p.subject && p.subject.trim().toLowerCase() !== effectiveSubj.trim().toLowerCase()) return false;
+      if (effectiveGrade && p.gradeLevel && p.gradeLevel.trim().toLowerCase() !== effectiveGrade.trim().toLowerCase()) return false;
       if (unitSemesterFilter && p.semester !== unitSemesterFilter) return false;
       return true;
     });
-  }, [allUnitPlans, unitSubjectFilter, unitGradeFilter, unitSemesterFilter]);
+  }, [allUnitPlans, currentSubject, currentGrade, unitSubjectFilter, unitGradeFilter, unitSemesterFilter]);
 
   // Statistiques des évaluations générées vs non encore générées
   const unitsStats = useMemo(() => {
@@ -354,33 +403,59 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const targetCrit = newEval.assessments[critIndex];
     if (!targetCrit) return;
 
+    const isEn = isEnglishSubject(editingEvaluation.subject);
+    const savedCriteria = getCriteriaSync(editingEvaluation.subject, editingEvaluation.grade);
+    const savedCritObj = savedCriteria?.criteria?.find(c => c.letter === targetCrit.criterion);
+    if (savedCritObj && (!targetCrit.strands || targetCrit.strands.length === 0)) {
+      targetCrit.strands = savedCritObj.strands.map(s => `${s.id}. ${s.description}`);
+    }
+
     const count = (targetCrit.exercises || []).length + 1;
     const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
     const roman = romanNumerals[(count - 1) % romanNumerals.length];
-    const defaultStrandText = targetCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || `Compétence ${targetCrit.criterion}`;
+    const defaultStrandText =
+      targetCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') ||
+      savedCritObj?.strands?.find(s => s.id === roman)?.description ||
+      (isEn ? `Objective ${targetCrit.criterion} (${roman})` : `Compétence ${targetCrit.criterion}`);
 
     let newExercise: AssessmentExercise;
 
     if (questionKind === 'multiple_choice') {
       newExercise = {
-        title: `Tâche ${count} : Question QCM (Choix multiples)`,
-        content: 'Lisez attentivement l\'énoncé et cochez la bonne réponse parmi les propositions ci-dessous :',
-        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        title: isEn
+          ? `Task ${count}: Multiple Choice Question (MCQ)`
+          : `Tâche ${count} : Question QCM (Choix multiples)`,
+        content: isEn
+          ? 'Read the prompt carefully and select the best answer from the options below:'
+          : 'Lisez attentivement l\'énoncé et cochez la bonne réponse parmi les propositions ci-dessous :',
+        criterionReference: isEn ? `Criterion ${targetCrit.criterion}: ${roman}.` : `Critère ${targetCrit.criterion} : ${roman}.`,
         strandIndex: roman,
         strandText: defaultStrandText,
         type: 'multiple_choice',
-        options: ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'],
-        correctAnswer: 'Proposition A',
+        options: isEn
+          ? ['Option A', 'Option B', 'Option C', 'Option D']
+          : ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'],
+        correctAnswer: isEn ? 'Option A' : 'Proposition A',
       };
     } else if (questionKind === 'subquestions') {
-      const sub1Strand = targetCrit.strands?.find(s => s.toLowerCase().startsWith('i.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Sélectionner et appliquer la méthode';
-      const sub2Strand = targetCrit.strands?.find(s => s.toLowerCase().startsWith('ii.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Résoudre le problème avec démarche';
-      const sub3Strand = targetCrit.strands?.find(s => s.toLowerCase().startsWith('iii.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') || 'Justifier et vérifier la solution';
+      const sub1Strand =
+        targetCrit.strands?.find(s => s.toLowerCase().startsWith('i.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') ||
+        (isEn ? 'Identify explicit and implicit information' : 'Sélectionner et appliquer la méthode');
+      const sub2Strand =
+        targetCrit.strands?.find(s => s.toLowerCase().startsWith('ii.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') ||
+        (isEn ? 'Analyze conventions and connections' : 'Résoudre le problème avec démarche');
+      const sub3Strand =
+        targetCrit.strands?.find(s => s.toLowerCase().startsWith('iii.'))?.replace(/^[ivx]+[\.\)]\s*/i, '') ||
+        (isEn ? 'Justify and evaluate with evidence' : 'Justifier et vérifier la solution');
 
       newExercise = {
-        title: `Tâche ${count} : Problème à sous-questions multiples`,
-        content: 'Mise en situation globale / Énoncé principal du problème...',
-        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        title: isEn
+          ? `Task ${count}: Multi-part Structured Task`
+          : `Tâche ${count} : Problème à sous-questions multiples`,
+        content: isEn
+          ? 'Read the context / text carefully and answer the following sub-questions:'
+          : 'Mise en situation globale / Énoncé principal du problème...',
+        criterionReference: isEn ? `Criterion ${targetCrit.criterion}: ${roman}.` : `Critère ${targetCrit.criterion} : ${roman}.`,
         strandIndex: roman,
         strandText: defaultStrandText,
         type: 'open',
@@ -388,7 +463,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           {
             id: 'sub_1',
             label: '1)',
-            content: 'Première sous-question : identifier et énoncer...',
+            content: isEn ? 'First sub-question: identify and state key details...' : 'Première sous-question : identifier et énoncer...',
             strandIndex: 'i',
             strandText: sub1Strand,
             type: 'open',
@@ -396,7 +471,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           {
             id: 'sub_2',
             label: '2)',
-            content: 'Deuxième sous-question : calculer et résoudre avec démarche...',
+            content: isEn ? 'Second sub-question: analyze and explain in detail...' : 'Deuxième sous-question : calculer et résoudre avec démarche...',
             strandIndex: 'ii',
             strandText: sub2Strand,
             type: 'open',
@@ -404,20 +479,26 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
           {
             id: 'sub_3',
             label: '3)',
-            content: 'Troisième sous-question : vérifier la réponse (QCM de validation)...',
+            content: isEn ? 'Third sub-question: select the best conclusion (MCQ)...' : 'Troisième sous-question : vérifier la réponse (QCM de validation)...',
             strandIndex: 'iii',
             strandText: sub3Strand,
             type: 'multiple_choice',
-            options: ['Solution A (conforme)', 'Solution B (incorrecte)', 'Solution C (partielle)'],
-            correctAnswer: 'Solution A (conforme)',
+            options: isEn
+              ? ['Option A (accurate)', 'Option B (inaccurate)', 'Option C (incomplete)']
+              : ['Solution A (conforme)', 'Solution B (incorrecte)', 'Solution C (partielle)'],
+            correctAnswer: isEn ? 'Option A (accurate)' : 'Solution A (conforme)',
           },
         ],
       };
     } else if (questionKind === 'geometry') {
       newExercise = {
-        title: `Tâche ${count} : Construction Géométrique (Équerre, Compas)`,
-        content: 'À l\'aide des outils de géométrie (équerre, compas, rapporteur, règle graduée), réalisez la construction demandée et justifiez votre démarche :',
-        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        title: isEn
+          ? `Task ${count}: Visual / Diagram Construction`
+          : `Tâche ${count} : Construction Géométrique (Équerre, Compas)`,
+        content: isEn
+          ? 'Using the drawing tools, complete the requested construction and explain your steps:'
+          : 'À l\'aide des outils de géométrie (équerre, compas, rapporteur, règle graduée), réalisez la construction demandée et justifiez votre démarche :',
+        criterionReference: isEn ? `Criterion ${targetCrit.criterion}: ${roman}.` : `Critère ${targetCrit.criterion} : ${roman}.`,
         strandIndex: roman,
         strandText: defaultStrandText,
         type: 'open',
@@ -426,9 +507,13 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     } else if (questionKind === 'art') {
       const art = FAMOUS_ARTWORKS[0];
       newExercise = {
-        title: `Tâche ${count} : Analyse Visuelle & Création Artistique`,
-        content: `Observez l'oeuvre '${art.name}' (${art.artist}, ${art.year}) ci-dessous. Analysez les contrastes de couleurs, la composition et les textures, puis réalisez votre proposition plastique dans le studio d'art :`,
-        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        title: isEn
+          ? `Task ${count}: Visual Analysis & Creative Expression`
+          : `Tâche ${count} : Analyse Visuelle & Création Artistique`,
+        content: isEn
+          ? `Observe the visual stimulus '${art.name}' (${art.artist}, ${art.year}) below. Analyze the visual message, composition and conventions, then write your response:`
+          : `Observez l'oeuvre '${art.name}' (${art.artist}, ${art.year}) ci-dessous. Analysez les contrastes de couleurs, la composition et les textures, puis réalisez votre proposition plastique dans le studio d'art :`,
+        criterionReference: isEn ? `Criterion ${targetCrit.criterion}: ${roman}.` : `Critère ${targetCrit.criterion} : ${roman}.`,
         strandIndex: roman,
         strandText: defaultStrandText,
         type: 'open',
@@ -438,19 +523,23 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       };
     } else if (questionKind === 'true_false') {
       newExercise = {
-        title: `Tâche ${count} : Affirmation Vrai ou Faux`,
-        content: 'Indiquez si l\'affirmation suivante est Vraie ou Fausse et justifiez brièvement :',
-        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        title: isEn
+          ? `Task ${count}: True or False Statement`
+          : `Tâche ${count} : Affirmation Vrai ou Faux`,
+        content: isEn
+          ? 'Indicate whether the following statement is True or False and justify briefly with evidence:'
+          : 'Indiquez si l\'affirmation suivante est Vraie ou Fausse et justifiez brièvement :',
+        criterionReference: isEn ? `Criterion ${targetCrit.criterion}: ${roman}.` : `Critère ${targetCrit.criterion} : ${roman}.`,
         strandIndex: roman,
         strandText: defaultStrandText,
         type: 'true_false',
-        correctAnswer: 'Vrai',
+        correctAnswer: isEn ? 'True' : 'Vrai',
       };
     } else {
       newExercise = {
-        title: `Tâche ${count} : Question d'évaluation`,
-        content: 'Consigne détaillée de la question...',
-        criterionReference: `Critère ${targetCrit.criterion} : ${roman}.`,
+        title: isEn ? `Task ${count}: Assessment Question` : `Tâche ${count} : Question d'évaluation`,
+        content: isEn ? 'Write your detailed answer to the following prompt...' : 'Consigne détaillée de la question...',
+        criterionReference: isEn ? `Criterion ${targetCrit.criterion}: ${roman}.` : `Critère ${targetCrit.criterion} : ${roman}.`,
         strandIndex: roman,
         strandText: defaultStrandText,
         type: 'open',
@@ -542,15 +631,16 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const ex = targetCrit.exercises[exIdx];
     if (!ex.subQuestions) ex.subQuestions = [];
 
+    const isEn = isEnglishSubject(editingEvaluation.subject);
     const subCount = ex.subQuestions.length + 1;
     const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
     const roman = romanNumerals[(subCount - 1) % romanNumerals.length];
-    const defaultStrand = targetCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || `Aspect (${roman})`;
+    const defaultStrand = targetCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') || (isEn ? `Strand (${roman})` : `Aspect (${roman})`);
 
     ex.subQuestions.push({
       id: `sub_${Date.now()}_${subCount}`,
       label: `${subCount})`,
-      content: `Consigne de la sous-question ${subCount}...`,
+      content: isEn ? `Sub-question ${subCount} prompt...` : `Consigne de la sous-question ${subCount}...`,
       strandIndex: roman,
       strandText: defaultStrand,
       type: 'open',
@@ -611,45 +701,82 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     setEditingCriterionIdx(0);
   };
 
-  // Ajouter un critère à l'évaluation (depuis l'unité source ou standard IB)
+  // Ajouter un critère à l'évaluation (depuis l'unité source ou les objectifs IB enregistrés par l'enseignant)
   const handleAddCriterionToEvaluation = (criterionLetter: string) => {
     if (!editingEvaluation) return;
     const parentUnit = allUnitPlans.find(p => p.id === editingEvaluation.unitId);
     const existingInParent = parentUnit?.assessments?.find(a => a.criterion === criterionLetter);
+    const isEn = isEnglishSubject(editingEvaluation.subject);
+    const savedCriteria = getCriteriaSync(editingEvaluation.subject, editingEvaluation.grade);
+    const savedCritObj = savedCriteria?.criteria?.find(c => c.letter === criterionLetter);
 
     const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
 
     if (existingInParent) {
-      newEval.assessments.push(JSON.parse(JSON.stringify(existingInParent)));
+      const cloned = JSON.parse(JSON.stringify(existingInParent));
+      if (savedCritObj) {
+        cloned.criterionName = savedCritObj.name || cloned.criterionName;
+        if (savedCritObj.strands?.length) {
+          cloned.strands = savedCritObj.strands.map(s => `${s.id}. ${s.description}`);
+        }
+      }
+      newEval.assessments.push(cloned);
     } else {
-      const criterionNames: Record<string, string> = {
-        A: 'Connaissances et compréhension',
-        B: 'Recherche de régularités / Conception',
-        C: 'Communication',
-        D: 'Application dans des contextes réels',
-      };
+      const criterionNames: Record<string, string> = isEn
+        ? {
+            A: 'Listening',
+            B: 'Reading',
+            C: 'Speaking',
+            D: 'Writing',
+          }
+        : {
+            A: 'Connaissances et compréhension',
+            B: 'Recherche de régularités / Conception',
+            C: 'Communication',
+            D: 'Application dans des contextes réels',
+          };
+      const officialStrands = savedCritObj?.strands?.length
+        ? savedCritObj.strands.map(s => `${s.id}. ${s.description}`)
+        : isEn
+        ? [
+            'i. Identify explicit and implicit information (facts, opinions, messages and supporting details)',
+            'ii. Analyze conventions in the text',
+            'iii. Analyze connections between items of information',
+          ]
+        : [
+            'i. Sélectionner les concepts et techniques appropriés',
+            'ii. Appliquer les méthodes pour résoudre des problèmes',
+            'iii. Justifier et expliquer la démarche de résolution',
+          ];
+      const firstStrandDesc = officialStrands[0]?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
+
       newEval.assessments.push({
         criterion: criterionLetter,
-        criterionName: criterionNames[criterionLetter] || `Critère ${criterionLetter}`,
-        maxPoints: 8,
-        strands: [
-          'i. Sélectionner les concepts et techniques appropriés',
-          'ii. Appliquer les méthodes pour résoudre des problèmes',
-          'iii. Justifier et expliquer la démarche de résolution',
-        ],
-        rubricRows: [
-          { level: '1-2', descriptor: 'L\'élève démontre des connaissances très élémentaires.' },
-          { level: '3-4', descriptor: 'L\'élève démontre une compréhension satisfaisante des concepts.' },
-          { level: '5-6', descriptor: 'L\'élève démontre une bonne compréhension et applique les méthodes avec assurance.' },
-          { level: '7-8', descriptor: 'L\'élève démontre une excellente maîtrise et justifie de manière rigoureuse.' },
-        ],
+        criterionName: savedCritObj?.name || criterionNames[criterionLetter] || (isEn ? `Criterion ${criterionLetter}` : `Critère ${criterionLetter}`),
+        maxPoints: savedCritObj?.maxScore || 8,
+        strands: officialStrands,
+        rubricRows: isEn
+          ? [
+              { level: '0', descriptor: 'The student does not reach a standard described by any of the descriptors below.' },
+              { level: '1-2', descriptor: `1-2 (i, ii, iii): Limited achievement in ${savedCritObj?.name || criterionLetter}.` },
+              { level: '3-4', descriptor: `3-4 (i, ii, iii): Adequate achievement in ${savedCritObj?.name || criterionLetter}.` },
+              { level: '5-6', descriptor: `5-6 (i, ii, iii): Substantial achievement in ${savedCritObj?.name || criterionLetter}.` },
+              { level: '7-8', descriptor: `7-8 (i, ii, iii): Excellent achievement in ${savedCritObj?.name || criterionLetter}.` },
+            ]
+          : [
+              { level: '0', descriptor: 'L\'élève n\'atteint aucun des niveaux décrits ci-dessous.' },
+              { level: '1-2', descriptor: 'L\'élève démontre des connaissances très élémentaires.' },
+              { level: '3-4', descriptor: 'L\'élève démontre une compréhension satisfaisante des concepts.' },
+              { level: '5-6', descriptor: 'L\'élève démontre une bonne compréhension et applique les méthodes avec assurance.' },
+              { level: '7-8', descriptor: 'L\'élève démontre une excellente maîtrise et justifie de manière rigoureuse.' },
+            ],
         exercises: [
           {
-            title: `Tâche 1 : Évaluation ${criterionLetter}`,
-            content: 'Consigne de la tâche à réaliser...',
-            criterionReference: `Critère ${criterionLetter} : i.`,
+            title: isEn ? `Task 1: Criterion ${criterionLetter} Assessment` : `Tâche 1 : Évaluation ${criterionLetter}`,
+            content: isEn ? 'Read the instructions carefully and complete the task below...' : 'Consigne de la tâche à réaliser...',
+            criterionReference: isEn ? `Criterion ${criterionLetter}: i.` : `Critère ${criterionLetter} : i.`,
             strandIndex: 'i',
-            strandText: 'Sélectionner les concepts et techniques appropriés',
+            strandText: firstStrandDesc,
             type: 'open',
           }
         ],
@@ -1391,20 +1518,35 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               💻
             </div>
             <div>
-              <h2 className="text-lg font-black tracking-tight">
-                Évaluations Électroniques Déjà Lancées & Copies des Élèves
-              </h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-black tracking-tight">
+                  Évaluations Électroniques & Copies des Élèves
+                </h2>
+                {selectedGrade && (
+                  <span className="px-2.5 py-0.5 bg-white/20 border border-white/30 rounded-full text-xs font-black tracking-wide">
+                    🔒 Classe : {selectedGrade}
+                  </span>
+                )}
+              </div>
               <p className="text-purple-100 text-xs">
-                Suivi des évaluations passées par les élèves · Correction rapide assistée par IA · Impression A4
+                Organisées par Unité · Visualisation Version Élève · Correction IA selon critères IB · Impression A4
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black rounded-xl shadow-lg transition"
+              title="Lancer une nouvelle évaluation électronique pour une unité de cette classe"
+            >
+              <Plus size={15} />
+              <span>Lancer une évaluation</span>
+            </button>
             <button
               onClick={loadEvaluationsList}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl transition border border-white/20"
+              className="flex items-center gap-1.5 px-3 py-2 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl transition border border-white/20"
               title="Actualiser la liste des évaluations lancées et des copies reçues"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -1438,7 +1580,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               }`}
             >
               <FileText size={15} />
-              <span>Toutes les évaluations lancées</span>
+              <span>Toutes les évaluations</span>
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                 evalCompletionFilter === 'all' ? 'bg-indigo-900 text-indigo-100' : 'bg-slate-100 text-slate-700'
               }`}>
@@ -1455,7 +1597,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               }`}
             >
               <CheckCircle size={15} />
-              <span>✅ Déjà faites par les élèves (Copies reçues)</span>
+              <span>✅ Copies reçues</span>
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                 evalCompletionFilter === 'completed' ? 'bg-emerald-800 text-white' : 'bg-emerald-200 text-emerald-900'
               }`}>
@@ -1472,13 +1614,36 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               }`}
             >
               <Clock size={14} />
-              <span>En attente de copies</span>
+              <span>En attente</span>
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                 evalCompletionFilter === 'waiting' ? 'bg-amber-800 text-white' : 'bg-slate-100 text-slate-600'
               }`}>
                 {globalEvalStats.waitingEvalsCount}
               </span>
             </button>
+
+            {/* Bascule d'organisation par Unité vs Liste */}
+            <div className="h-5 w-px bg-slate-300 mx-1 hidden sm:block" />
+            <div className="inline-flex bg-white p-1 rounded-xl border border-slate-300 shadow-2xs">
+              <button
+                onClick={() => setViewGroupedByUnit(true)}
+                className={`px-3 py-1 rounded-lg text-xs font-black transition ${
+                  viewGroupedByUnit ? 'bg-purple-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Afficher les évaluations regroupées par unité pédagogique"
+              >
+                📚 Par Unité
+              </button>
+              <button
+                onClick={() => setViewGroupedByUnit(false)}
+                className={`px-3 py-1 rounded-lg text-xs font-black transition ${
+                  !viewGroupedByUnit ? 'bg-purple-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Afficher toutes les évaluations en grille continue"
+              >
+                📋 En Grille
+              </button>
+            </div>
           </div>
 
           {/* Résumé synthétique des copies */}
@@ -1517,6 +1682,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                       </span>
                       <span className="text-xs font-bold text-slate-500">
                         {selectedEvaluation.subject} · {selectedEvaluation.grade}
+                      </span>
+                      <span className="text-[11px] font-semibold text-slate-500">
+                        · 👨‍🏫 {selectedEvaluation.teacherName || currentUserName || 'Enseignant'} · 📅 {formatEvaluationDate(selectedEvaluation.createdAt)}
                       </span>
                     </div>
                     <h3 className="text-base font-black text-slate-900 mt-0.5">
@@ -1677,7 +1845,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   type="text"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Rechercher par titre, code, unité ou classe…"
+                  placeholder="Rechercher par titre, code, unité ou enseignant…"
                   className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-purple-400 font-medium"
                 />
                 <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
@@ -1690,12 +1858,12 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   <select
                     value={evalUnitFilter}
                     onChange={e => setEvalUnitFilter(e.target.value)}
-                    className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400 max-w-[200px]"
+                    className="bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-purple-400 max-w-[220px]"
                   >
-                    <option value="">Toutes les unités</option>
-                    {unitsForSelectedSubject.map(u => (
+                    <option value="">Toutes les unités ({unitsForSelectedSubject.length})</option>
+                    {unitsForSelectedSubject.map((u, idx) => (
                       <option key={u.id} value={u.id}>
-                        {u.title}
+                        Unité {idx + 1} : {u.title}
                       </option>
                     ))}
                   </select>
@@ -1729,272 +1897,401 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 </div>
 
                 <div className="text-xs text-slate-500 font-semibold ml-auto">
-                  <span className="font-black text-purple-700">{filteredEvaluations.length}</span> évaluation(s) affichée(s)
+                  <span className="font-black text-purple-700">{filteredEvaluations.length}</span> évaluation(s)
                 </div>
               </div>
             </div>
 
-            {/* Liste des évaluations déjà lancées */}
-            {loading ? (
-              <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
-                <Loader2 size={32} className="animate-spin mx-auto mb-2 text-purple-600" />
-                <p className="text-sm font-semibold">Chargement des évaluations lancées et des copies d'élèves…</p>
-              </div>
-            ) : filteredEvaluations.length === 0 ? (
-              <div className="p-12 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-white">
-                <FileText size={40} className="mx-auto text-slate-300 mb-2" />
-                <h4 className="font-bold text-slate-700 text-sm">
-                  {evalCompletionFilter === 'completed'
-                    ? 'Aucune évaluation déjà faite par les élèves pour ce filtre'
-                    : 'Aucune évaluation électronique déjà lancée trouvée'}
-                </h4>
-                <p className="text-slate-400 text-xs mt-1 max-w-md mx-auto">
-                  {evalCompletionFilter !== 'all'
-                    ? 'Cliquez sur « Toutes les évaluations lancées » ci-dessus pour voir l\'ensemble des évaluations actives.'
-                    : 'Aucune évaluation électronique ne correspond aux filtres sélectionnés.'}
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {filteredEvaluations.map(ev => {
-                  const totalPoints = (ev.assessments || []).reduce((acc, a) => acc + (a.maxPoints || 8), 0);
-                  const isLinkCopied = copiedCode === `link_${ev.accessCode}`;
-                  const subsForEv = allSubmissionsMap[ev.id] || [];
-                  const gradedCount = subsForEv.filter(s => s.status === 'graded').length;
-                  const pendingCount = subsForEv.length - gradedCount;
-                  const codes = ev.studentAccessCodes || [];
-                  const totalCodes = codes.length;
-                  const usedCodes = codes.filter(c => c.isUsed).length;
-                  const retakeCodes = codes.filter(c => c.isUsed && c.allowedRetake).length;
-                  const isCompletedByStudents = subsForEv.length > 0 || usedCodes > 0;
-                  const isCurrentlySelected = selectedEvaluation?.id === ev.id;
+            {/* Fonction de rendu d'une carte d'évaluation électronique */}
+            {(() => {
+              const renderEvaluationCard = (ev: OnlineEvaluation) => {
+                const totalPoints = (ev.assessments || []).reduce((acc, a) => acc + (a.maxPoints || 8), 0);
+                const isLinkCopied = copiedCode === `link_${ev.accessCode}`;
+                const subsForEv = allSubmissionsMap[ev.id] || [];
+                const gradedCount = subsForEv.filter(s => s.status === 'graded').length;
+                const pendingCount = subsForEv.length - gradedCount;
+                const codes = ev.studentAccessCodes || [];
+                const totalCodes = codes.length;
+                const usedCodes = codes.filter(c => c.isUsed).length;
+                const retakeCodes = codes.filter(c => c.isUsed && c.allowedRetake).length;
+                const isCompletedByStudents = subsForEv.length > 0 || usedCodes > 0;
+                const isCurrentlySelected = selectedEvaluation?.id === ev.id;
+                const matchedUnit = allUnitPlans.find(u => u.id === ev.unitId);
 
-                  return (
-                    <div
-                      key={ev.id}
-                      className={`rounded-3xl overflow-hidden border transition flex flex-col justify-between ${
-                        isCurrentlySelected
-                          ? 'bg-emerald-50/90 border-2 border-emerald-600 ring-4 ring-emerald-500/20 shadow-lg'
-                          : isCompletedByStudents
-                          ? 'bg-white border-2 border-emerald-400 shadow-md hover:shadow-lg'
-                          : 'bg-white border border-slate-200 shadow-xs hover:shadow-md'
-                      }`}
-                    >
-                      {/* Bandeau supérieur de statut très lisible */}
-                      <div className={`px-4 py-2.5 flex items-center justify-between gap-2 border-b ${
-                        isCompletedByStudents
-                          ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-600'
-                          : 'bg-slate-100 text-slate-700 border-slate-200'
-                      }`}>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`font-mono text-xs font-black px-2.5 py-0.5 rounded-lg tracking-wider ${
-                            isCompletedByStudents ? 'bg-white text-emerald-900' : 'bg-purple-100 text-purple-800'
-                          }`}>
-                            {ev.accessCode}
+                return (
+                  <div
+                    key={ev.id}
+                    className={`rounded-3xl overflow-hidden border transition flex flex-col justify-between ${
+                      isCurrentlySelected
+                        ? 'bg-emerald-50/90 border-2 border-emerald-600 ring-4 ring-emerald-500/20 shadow-lg'
+                        : isCompletedByStudents
+                        ? 'bg-white border-2 border-emerald-400 shadow-md hover:shadow-lg'
+                        : 'bg-white border border-slate-200 shadow-xs hover:shadow-md'
+                    }`}
+                  >
+                    {/* Bandeau supérieur de statut très lisible */}
+                    <div className={`px-4 py-2.5 flex items-center justify-between gap-2 border-b ${
+                      isCompletedByStudents
+                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-600'
+                        : 'bg-slate-100 text-slate-700 border-slate-200'
+                    }`}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`font-mono text-xs font-black px-2.5 py-0.5 rounded-lg tracking-wider ${
+                          isCompletedByStudents ? 'bg-white text-emerald-900' : 'bg-purple-100 text-purple-800'
+                        }`}>
+                          {ev.accessCode}
+                        </span>
+                        {isCompletedByStudents ? (
+                          <span className="text-[11px] font-black flex items-center gap-1">
+                            ✅ {Math.max(subsForEv.length, usedCodes)} copie{Math.max(subsForEv.length, usedCodes) > 1 ? 's' : ''}
                           </span>
-                          {isCompletedByStudents ? (
-                            <span className="text-[11px] font-black flex items-center gap-1">
-                              ✅ Faite par les élèves ({Math.max(subsForEv.length, usedCodes)} copie{Math.max(subsForEv.length, usedCodes) > 1 ? 's' : ''})
-                            </span>
-                          ) : (
-                            <span className="text-[11px] font-bold text-slate-500">
-                              ⏳ En attente de passage
-                            </span>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={(e) => handleDeleteEvaluation(ev.id, e)}
-                          className={`p-1 rounded-lg transition ${
-                            isCompletedByStudents ? 'text-white/80 hover:text-white hover:bg-white/15' : 'text-slate-400 hover:text-rose-600'
-                          }`}
-                          title="Supprimer cette évaluation"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                        ) : (
+                          <span className="text-[11px] font-bold text-slate-500">
+                            ⏳ En attente de copies
+                          </span>
+                        )}
                       </div>
 
-                      <div className="p-5 space-y-3.5 flex-1 flex flex-col justify-between">
-                        <div className="space-y-3">
-                          <div>
-                            <h3 className="font-black text-sm text-slate-900 line-clamp-2 leading-snug">{ev.title}</h3>
-                            <p className="text-xs text-slate-500 mt-1 font-medium">
-                              {ev.subject} · <strong className="text-slate-700">{ev.grade}</strong> · {ev.assessments?.length || 0} critère(s) (/{totalPoints} pts)
-                            </p>
-                            {ev.createdAt && (
-                              <p className="text-[11px] text-slate-400 mt-0.5">
-                                Lancée le {formatEvaluationDate(ev.createdAt)}
-                              </p>
-                            )}
-                          </div>
+                      <button
+                        onClick={(e) => handleDeleteEvaluation(ev.id, e)}
+                        className={`p-1 rounded-lg transition ${
+                          isCompletedByStudents ? 'text-white/80 hover:text-white hover:bg-white/15' : 'text-slate-400 hover:text-rose-600'
+                        }`}
+                        title="Supprimer cette évaluation"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
 
-                          {/* ── ENCADRÉ SPÉCIAL : RÉSUMÉ DES COPIES D'ÉLÈVES (POUR CELLES DÉJÀ FAITES) ── */}
-                          {isCompletedByStudents ? (
-                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 space-y-2">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="font-black text-emerald-950 flex items-center gap-1.5">
-                                  📥 Copies reçues : {subsForEv.length}
-                                </span>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-200 text-emerald-900">
-                                    ✓ {gradedCount} corrigée{gradedCount > 1 ? 's' : ''}
-                                  </span>
-                                  {pendingCount > 0 && (
-                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-900">
-                                      ⏳ {pendingCount} à corriger
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Liste rapide des élèves ayant remis une copie (cliquable pour corriger direct) */}
-                              {subsForEv.length > 0 && (
-                                <div className="space-y-1 max-h-28 overflow-y-auto pr-1 pt-1 border-t border-emerald-200/70">
-                                  {subsForEv.map(sub => {
-                                    const isGraded = sub.status === 'graded';
-                                    return (
-                                      <div
-                                        key={sub.id}
-                                        onClick={() => {
-                                          setSelectedEvaluation(ev);
-                                          setSubmissions(subsForEv);
-                                          handleOpenGrading(sub);
-                                        }}
-                                        className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white hover:bg-emerald-100/80 border border-emerald-200/80 cursor-pointer transition text-[11px]"
-                                        title="Cliquer pour ouvrir et corriger directement la copie de cet élève"
-                                      >
-                                        <span className="font-bold text-slate-800 truncate">
-                                          👤 {sub.studentName} <span className="text-slate-400 font-mono text-[10px]">({sub.studentNumber})</span>
-                                        </span>
-                                        <span className={`font-black px-2 py-0.5 rounded-md flex-shrink-0 text-[10px] ${
-                                          isGraded ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                                        }`}>
-                                          {isGraded ? `${sub.totalScore ?? 0}/${totalPoints}` : 'Corriger →'}
-                                        </span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-500 flex items-center justify-between">
-                              <span>Aucune copie remise pour l'instant</span>
-                              <span className="font-mono font-bold text-slate-600">{totalCodes} matricules</span>
-                            </div>
+                    <div className="p-5 space-y-3.5 flex-1 flex flex-col justify-between">
+                      <div className="space-y-3">
+                        <div>
+                          {matchedUnit && !viewGroupedByUnit && (
+                            <span className="inline-block text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded-md mb-1">
+                              📚 Unité : {matchedUnit.title}
+                            </span>
                           )}
+                          <h3 className="font-black text-sm text-slate-900 line-clamp-2 leading-snug">{ev.title}</h3>
+                          <p className="text-xs text-slate-500 mt-1 font-medium">
+                            {ev.subject} · <strong className="text-slate-700">{ev.grade}</strong> · {ev.assessments?.length || 0} critère(s) (/{totalPoints} pts)
+                          </p>
 
-                          {/* Critères badges */}
-                          <div className="flex gap-1.5 flex-wrap">
-                            {ev.assessments.map(a => {
-                              const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
-                              return (
-                                <span
-                                  key={a.criterion}
-                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${col.light} ${col.text}`}
-                                >
-                                  Critère {a.criterion} ({a.exercises?.length || 0} Q · /{a.maxPoints || 8})
-                                </span>
-                              );
-                            })}
+                          {/* Mention obligatoire : Date de génération & Enseignant créateur */}
+                          <div className="mt-2 p-2 rounded-xl bg-slate-50 border border-slate-200/80 text-[11px] text-slate-700 space-y-0.5">
+                            <div className="flex items-center gap-1.5 font-semibold">
+                              <span className="text-purple-700">👨‍🏫 Créée par :</span>
+                              <span className="font-bold text-slate-900">{ev.teacherName || currentUserName || 'Enseignant'}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 font-medium text-slate-600">
+                              <span className="text-indigo-700">📅 Générée le :</span>
+                              <span>{formatEvaluationDate(ev.createdAt)}</span>
+                            </div>
                           </div>
                         </div>
 
-                        <div className="pt-3 border-t border-slate-100 space-y-2">
-                          {/* BOUTON PRIORITAIRE : OUVRIR & CORRIGER LES COPIES DES ÉLÈVES */}
+                        {/* ── ENCADRÉ SPÉCIAL : RÉSUMÉ DES COPIES D'ÉLÈVES ── */}
+                        {isCompletedByStudents ? (
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-black text-emerald-950 flex items-center gap-1.5">
+                                📥 Copies reçues : {subsForEv.length}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-200 text-emerald-900">
+                                  ✓ {gradedCount} corrigée{gradedCount > 1 ? 's' : ''}
+                                </span>
+                                {pendingCount > 0 && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-900">
+                                    ⏳ {pendingCount} à corriger
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {subsForEv.length > 0 && (
+                              <div className="space-y-1 max-h-28 overflow-y-auto pr-1 pt-1 border-t border-emerald-200/70">
+                                {subsForEv.map(sub => {
+                                  const isGraded = sub.status === 'graded';
+                                  return (
+                                    <div
+                                      key={sub.id}
+                                      onClick={() => {
+                                        setSelectedEvaluation(ev);
+                                        setSubmissions(subsForEv);
+                                        handleOpenGrading(sub);
+                                      }}
+                                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white hover:bg-emerald-100/80 border border-emerald-200/80 cursor-pointer transition text-[11px]"
+                                      title="Cliquer pour ouvrir et corriger directement la copie de cet élève"
+                                    >
+                                      <span className="font-bold text-slate-800 truncate">
+                                        👤 {sub.studentName} <span className="text-slate-400 font-mono text-[10px]">({sub.studentNumber})</span>
+                                      </span>
+                                      <span className={`font-black px-2 py-0.5 rounded-md flex-shrink-0 text-[10px] ${
+                                        isGraded ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                      }`}>
+                                        {isGraded ? `${sub.totalScore ?? 0}/${totalPoints}` : 'Corriger →'}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-500 flex items-center justify-between">
+                            <span>Aucune copie remise pour l'instant</span>
+                            <span className="font-mono font-bold text-slate-600">{totalCodes} matricules</span>
+                          </div>
+                        )}
+
+                        {/* Critères badges */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {ev.assessments.map(a => {
+                            const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
+                            return (
+                              <span
+                                key={a.criterion}
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${col.light} ${col.text}`}
+                              >
+                                Critère {a.criterion} ({a.exercises?.length || 0} Q · /{a.maxPoints || 8})
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-slate-100 space-y-2">
+                        {/* BOUTON PRIORITAIRE 1 : VISUALISER LA VERSION DE L'ÉLÈVE */}
+                        <button
+                          onClick={() => setStudentPreviewEvaluation(JSON.parse(JSON.stringify(ev)))}
+                          className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black transition shadow-sm"
+                          title="Visualiser l'évaluation exactement comme l'élève la voit et ajuster les questions ou la mise en page"
+                        >
+                          <Eye size={15} />
+                          <span>👁️ Visualiser la Version Élève & Mise en page</span>
+                        </button>
+
+                        {/* BOUTON PRIORITAIRE 2 : OUVRIR & CORRIGER LES COPIES DES ÉLÈVES */}
+                        <button
+                          onClick={() => handleOpenSubmissions(ev)}
+                          className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-black transition shadow-xs ${
+                            isCompletedByStudents
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                              : 'bg-purple-600 hover:bg-purple-700 text-white'
+                          }`}
+                          title="Afficher toutes les copies remises par les élèves et lancer la correction"
+                        >
+                          <CheckCircle size={14} />
+                          <span>
+                            {isCompletedByStudents
+                              ? `📂 Gérer & Corriger les copies (${subsForEv.length})`
+                              : `Copies d'élèves reçues (${subsForEv.length})`}
+                          </span>
+                        </button>
+
+                        {/* Actions d'édition, matricules et impression A4 */}
+                        <div className="grid grid-cols-3 gap-1.5">
                           <button
-                            onClick={() => handleOpenSubmissions(ev)}
-                            className={`w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition shadow-sm ${
-                              isCompletedByStudents
-                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                : 'bg-purple-600 hover:bg-purple-700 text-white'
-                            }`}
-                            title="Afficher toutes les copies remises par les élèves et lancer la correction"
+                            onClick={() => {
+                              setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
+                              setEditingCriterionIdx(0);
+                            }}
+                            className="flex items-center justify-center gap-1 py-2 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-[11px] font-extrabold transition"
+                            title="Modifier les questions, ajouter un diagramme Gemini AI ou un lien Drive"
                           >
-                            <Eye size={15} />
-                            <span>
-                              {isCompletedByStudents
-                                ? `📂 Gérer & Corriger les copies (${subsForEv.length})`
-                                : `Voir les copies d'élèves (${subsForEv.length})`}
+                            <Edit3 size={12} />
+                            <span>Éditer / IA</span>
+                          </button>
+
+                          <button
+                            onClick={() => setManagingCodesEval(ev)}
+                            className="flex items-center justify-center gap-1 py-2 px-2 bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-[11px] font-bold transition"
+                            title="Gérer les matricules des élèves et réouvrir un 2e essai"
+                          >
+                            <Users size={12} className="text-purple-700 flex-shrink-0" />
+                            <span className="truncate">
+                              Codes ({usedCodes}/{totalCodes})
                             </span>
                           </button>
 
-                          {/* Actions sur le sujet & matricules */}
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              onClick={() => setStudentPreviewEvaluation(JSON.parse(JSON.stringify(ev)))}
-                              className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 rounded-xl text-[11px] font-extrabold transition"
-                              title="Voir l'évaluation exactement comme chez l'élève et ajuster la mise en page"
-                            >
-                              <Sliders size={13} />
-                              <span>Version Élève</span>
-                            </button>
+                          <button
+                            onClick={() => {
+                              setPrintEvaluation(ev);
+                              setPrintSubmission(null);
+                            }}
+                            className="flex items-center justify-center gap-1 py-2 px-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-[11px] font-bold transition"
+                            title="Imprimer le sujet vierge en format A4"
+                          >
+                            <Printer size={12} />
+                            <span>Sujet A4</span>
+                          </button>
+                        </div>
 
-                            <button
-                              onClick={() => {
-                                setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
-                                setEditingCriterionIdx(0);
-                              }}
-                              className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-[11px] font-extrabold transition"
-                              title="Modifier les questions ou régénérer avec l'IA"
-                            >
-                              <Edit3 size={13} />
-                              <span>Questions (IA)</span>
-                            </button>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              onClick={() => setManagingCodesEval(ev)}
-                              className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-[11px] font-bold transition"
-                              title="Gérer les matricules des élèves et réouvrir un 2e essai"
-                            >
-                              <Users size={13} className="text-purple-700 flex-shrink-0" />
-                              <span className="truncate">
-                                Matricules ({usedCodes}/{totalCodes})
-                                {retakeCodes > 0 ? ` · ${retakeCodes} 2e` : ''}
-                              </span>
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                setPrintEvaluation(ev);
-                                setPrintSubmission(null);
-                              }}
-                              className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-[11px] font-bold transition"
-                              title="Imprimer le sujet vierge en format A4"
-                            >
-                              <Printer size={13} />
-                              <span>Sujet vierge A4</span>
-                            </button>
-                          </div>
-
-                          {/* Partage rapide du lien élève / Classroom */}
-                          <div className="grid grid-cols-2 gap-1.5 pt-0.5">
-                            <button
-                              onClick={() => handleCopyStudentLink(ev.accessCode)}
-                              className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
-                              title="Copier le lien direct élève"
-                            >
-                              {isLinkCopied ? <Check size={11} className="text-emerald-600" /> : <ExternalLink size={11} />}
-                              <span>{isLinkCopied ? 'Lien copié !' : 'Copier lien élève'}</span>
-                            </button>
-                            <button
-                              onClick={() => handleCopyClassroomPost(ev)}
-                              className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
-                              title="Copier le message complet pour Google Classroom"
-                            >
-                              {copiedCode === `classroom_${ev.accessCode}` ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
-                              <span>{copiedCode === `classroom_${ev.accessCode}` ? 'Copié !' : 'Message Classroom'}</span>
-                            </button>
-                          </div>
+                        {/* Partage rapide du lien élève / Classroom */}
+                        <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                          <button
+                            onClick={() => handleCopyStudentLink(ev.accessCode)}
+                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
+                            title="Copier le lien direct élève"
+                          >
+                            {isLinkCopied ? <Check size={11} className="text-emerald-600" /> : <ExternalLink size={11} />}
+                            <span>{isLinkCopied ? 'Lien copié !' : 'Copier lien élève'}</span>
+                          </button>
+                          <button
+                            onClick={() => handleCopyClassroomPost(ev)}
+                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
+                            title="Copier le message complet pour Google Classroom"
+                          >
+                            {copiedCode === `classroom_${ev.accessCode}` ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
+                            <span>{copiedCode === `classroom_${ev.accessCode}` ? 'Copié !' : 'Message Classroom'}</span>
+                          </button>
                         </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  </div>
+                );
+              };
+
+              if (loading) {
+                return (
+                  <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
+                    <Loader2 size={32} className="animate-spin mx-auto mb-2 text-purple-600" />
+                    <p className="text-sm font-semibold">Chargement des évaluations lancées et des copies d'élèves…</p>
+                  </div>
+                );
+              }
+
+              if (!viewGroupedByUnit) {
+                return filteredEvaluations.length === 0 ? (
+                  <div className="p-12 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-white">
+                    <FileText size={40} className="mx-auto text-slate-300 mb-2" />
+                    <h4 className="font-bold text-slate-700 text-sm">Aucune évaluation électronique trouvée</h4>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {filteredEvaluations.map(ev => renderEvaluationCard(ev))}
+                  </div>
+                );
+              }
+
+              // ── AFFICHAGE ORGANISÉ PAR UNITÉ ──
+              const unitsToDisplay = evalUnitFilter
+                ? unitsForSelectedSubject.filter(u => u.id === evalUnitFilter)
+                : unitsForSelectedSubject;
+
+              const knownUnitIds = new Set(unitsForSelectedSubject.map(u => u.id));
+              const unlinkedEvaluations = filteredEvaluations.filter(ev => !ev.unitId || !knownUnitIds.has(ev.unitId));
+
+              return (
+                <div className="space-y-6">
+                  {unitsToDisplay.map((unit, unitIndex) => {
+                    const evalsForThisUnit = filteredEvaluations.filter(ev => ev.unitId === unit.id);
+                    return (
+                      <div
+                        key={unit.id}
+                        className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden"
+                      >
+                        {/* En-tête de l'Unité */}
+                        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-purple-950 text-white px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-2.5 py-0.5 rounded-lg bg-indigo-500/30 border border-indigo-400/40 text-indigo-100 text-[11px] font-black uppercase tracking-wider">
+                                Unité {unitIndex + 1}
+                              </span>
+                              <span className="text-xs font-bold text-purple-200">
+                                {unit.subject} · {unit.gradeLevel}
+                              </span>
+                              {unit.semester && (
+                                <span className="px-2 py-0.5 rounded-md bg-white/10 text-white/90 text-[10px] font-bold">
+                                  {unit.semester}
+                                </span>
+                              )}
+                              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-[11px] font-black">
+                                {evalsForThisUnit.length} évaluation{evalsForThisUnit.length > 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <h3 className="text-base font-black text-white leading-snug">
+                              {unit.title}
+                            </h3>
+                          </div>
+
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <button
+                              onClick={() => {
+                                setSelectedUnitId(unit.id);
+                                setNewTitle(
+                                  isEnglishSubject(unit.subject)
+                                    ? `Summative Assessment — ${unit.title}`
+                                    : `Évaluation Sommative — ${unit.title}`
+                                );
+                                setShowCreateModal(true);
+                              }}
+                              className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl text-xs font-black transition shadow flex items-center gap-1.5"
+                            >
+                              <Plus size={14} />
+                              <span>Lancer une évaluation pour cette unité</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Grille des évaluations de cette unité */}
+                        <div className="p-5 bg-slate-50/50">
+                          {evalsForThisUnit.length === 0 ? (
+                            <div className="p-6 text-center bg-white rounded-2xl border border-dashed border-slate-300 flex flex-col sm:flex-row items-center justify-between gap-3">
+                              <div className="text-left">
+                                <p className="text-xs font-bold text-slate-700">
+                                  Aucune évaluation électronique lancée pour cette unité ({unit.title}).
+                                </p>
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                  Cliquez sur « Lancer une évaluation pour cette unité » pour générer automatiquement les questions alignées sur les critères IB de l'unité.
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setSelectedUnitId(unit.id);
+                                  setNewTitle(
+                                    isEnglishSubject(unit.subject)
+                                      ? `Summative Assessment — ${unit.title}`
+                                      : `Évaluation Sommative — ${unit.title}`
+                                  );
+                                  setShowCreateModal(true);
+                                }}
+                                className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition flex-shrink-0"
+                              >
+                                + Créer l'évaluation de l'unité
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                              {evalsForThisUnit.map(ev => renderEvaluationCard(ev))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Évaluations non rattachées ou générales */}
+                  {unlinkedEvaluations.length > 0 && !evalUnitFilter && (
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+                      <div className="bg-slate-800 text-white px-5 py-3.5 flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-300">
+                            Autres évaluations de la classe {selectedGrade || ''}
+                          </span>
+                          <h3 className="text-sm font-black text-white">
+                            Évaluations transversales / hors unité ({unlinkedEvaluations.length})
+                          </h3>
+                        </div>
+                      </div>
+                      <div className="p-5 bg-slate-50/50 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                        {unlinkedEvaluations.map(ev => renderEvaluationCard(ev))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
         </div>
@@ -3438,15 +3735,15 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                             {!hasSubQuestions && qType === 'true_false' && (
                               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                                 <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
-                                  Bonne réponse attendue :
+                                  {isEnglishSubject(editingEvaluation.subject) ? 'Expected correct answer:' : 'Bonne réponse attendue :'}
                                 </label>
                                 <div className="flex gap-4 pt-1">
-                                  {['Vrai', 'Faux'].map(opt => (
+                                  {(isEnglishSubject(editingEvaluation.subject) ? ['True', 'False'] : ['Vrai', 'Faux']).map(opt => (
                                     <label key={opt} className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer">
                                       <input
                                         type="radio"
                                         name={`tf_correct_${exIdx}`}
-                                        checked={ex.correctAnswer === opt}
+                                        checked={ex.correctAnswer === opt || (opt === 'True' && ex.correctAnswer === 'Vrai') || (opt === 'False' && ex.correctAnswer === 'Faux')}
                                         onChange={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { correctAnswer: opt })}
                                         className="text-purple-600 focus:ring-purple-400"
                                       />
@@ -3457,42 +3754,126 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               </div>
                             )}
 
-                            {/* 🖼️ OEUVRE D'ART / PHOTO / ILLUSTRATION (POUR LES ARTS, SCIENCES, ETC.) */}
-                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
-                              <div className="flex items-center justify-between">
-                                <label className="text-[11px] font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                            {/* 🖼️ DIAGRAMME / SCHÉMA / CARTE GÉNÉRÉ PAR GEMINI AI OU LIEN GOOGLE DRIVE */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                              <div className="flex items-center justify-between flex-wrap gap-2">
+                                <label className="text-[11px] font-black text-slate-800 uppercase flex items-center gap-1.5">
                                   <ImageIcon size={14} className="text-purple-600" />
-                                  Oeuvre d'art / Photo / Schéma d'illustration (facultatif) :
+                                  Diagramme, Schéma, Carte ou Image (Gemini AI ou Lien Google Drive) :
                                 </label>
                                 {ex.imageUrl && (
                                   <button
+                                    type="button"
                                     onClick={() => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: '', imageCaption: '' })}
-                                    className="text-[10px] font-bold text-rose-600 hover:text-rose-800"
+                                    className="text-[10px] font-bold text-rose-600 hover:text-rose-800 px-2 py-0.5 bg-rose-50 rounded border border-rose-200"
                                   >
-                                    Supprimer l'image
+                                    ✕ Supprimer le visuel
                                   </button>
                                 )}
                               </div>
 
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <div>
+                              {/* OPTION 1 : Générer un Diagramme / Carte / Schéma sur-mesure par Gemini AI */}
+                              <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-xl p-3 space-y-2">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <span className="text-[11px] font-black text-purple-950 flex items-center gap-1.5">
+                                    <Sparkles size={13} className="text-purple-600" />
+                                    Option 1 — Générer un diagramme, schéma ou carte avec Gemini AI :
+                                  </span>
+                                </div>
+                                <div className="flex flex-col sm:flex-row gap-2">
                                   <input
                                     type="text"
-                                    value={ex.imageUrl || ''}
-                                    onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: e.target.value })}
-                                    placeholder="Lien URL de l'image ou photo (https://...)"
-                                    className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs"
+                                    value={geminiDiagramPromptMap[`${editingCriterionIdx}_${exIdx}`] ?? ''}
+                                    onChange={e =>
+                                      setGeminiDiagramPromptMap(prev => ({
+                                        ...prev,
+                                        [`${editingCriterionIdx}_${exIdx}`]: e.target.value,
+                                      }))
+                                    }
+                                    placeholder="Décrivez le diagramme, la carte ou la figure à générer par Gemini AI (ou laissez vide pour utiliser l'énoncé)…"
+                                    className="flex-1 p-2 bg-white border border-purple-300 rounded-lg text-xs focus:ring-2 focus:ring-purple-400 outline-none"
                                   />
+                                  <button
+                                    type="button"
+                                    disabled={isGeneratingDiagramKey === `${editingCriterionIdx}_${exIdx}`}
+                                    onClick={async () => {
+                                      const key = `${editingCriterionIdx}_${exIdx}`;
+                                      setIsGeneratingDiagramKey(key);
+                                      try {
+                                        const customPrompt = (geminiDiagramPromptMap[key] || '').trim();
+                                        const promptToUse = customPrompt || `${ex.title} - ${stripHtmlTags(ex.content)}`;
+                                        const generated = await generateDiagramOrMapWithGeminiAI({
+                                          subject: editingEvaluation.subject || '',
+                                          grade: editingEvaluation.grade || '',
+                                          exerciseTitle: ex.title,
+                                          exerciseContent: promptToUse,
+                                        });
+                                        if (generated) {
+                                          handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                            imageUrl: generated.imageUrl,
+                                            imageCaption: generated.imageCaption,
+                                          });
+                                        } else {
+                                          alert("Impossible de générer le schéma pour le moment. Réessayez avec une description plus précise.");
+                                        }
+                                      } catch (err) {
+                                        console.error(err);
+                                        alert("Erreur lors de la génération du diagramme par Gemini AI.");
+                                      } finally {
+                                        setIsGeneratingDiagramKey(null);
+                                      }
+                                    }}
+                                    className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg text-xs font-black transition flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-60 whitespace-nowrap"
+                                  >
+                                    {isGeneratingDiagramKey === `${editingCriterionIdx}_${exIdx}` ? (
+                                      <>
+                                        <Loader2 size={13} className="animate-spin" />
+                                        <span>Génération Gemini AI…</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Sparkles size={13} className="text-yellow-300" />
+                                        <span>Générer par Gemini AI</span>
+                                      </>
+                                    )}
+                                  </button>
                                 </div>
-                                <div>
-                                  <input
-                                    type="text"
-                                    value={ex.imageCaption || ''}
-                                    onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageCaption: e.target.value })}
-                                    placeholder="Légende (Titre, Artiste, Date, etc.)"
-                                    className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs"
-                                  />
+                              </div>
+
+                              {/* OPTION 2 : Insérer par lien Google Drive ou URL directe */}
+                              <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2">
+                                <span className="text-[11px] font-black text-slate-800 block">
+                                  🔗 Option 2 — Insérer une image, carte ou document depuis un lien Google Drive (ou URL) :
+                                </span>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  <div>
+                                    <input
+                                      type="text"
+                                      value={ex.imageUrl || ''}
+                                      onChange={e => {
+                                        const rawVal = e.target.value;
+                                        const converted = rawVal.includes('drive.google.com')
+                                          ? convertGoogleDriveUrl(rawVal)
+                                          : rawVal;
+                                        handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageUrl: converted });
+                                      }}
+                                      placeholder="Collez un lien Google Drive (https://drive.google.com/file/d/...) ou URL"
+                                      className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-purple-400 outline-none"
+                                    />
+                                  </div>
+                                  <div>
+                                    <input
+                                      type="text"
+                                      value={ex.imageCaption || ''}
+                                      onChange={e => handleUpdateEditingExercise(editingCriterionIdx, exIdx, { imageCaption: e.target.value })}
+                                      placeholder="Légende de la carte / figure / image (Titre, Source, Échelle…)"
+                                      className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-purple-400 outline-none"
+                                    />
+                                  </div>
                                 </div>
+                                <p className="text-[10px] text-slate-500">
+                                  💡 Astuce Google Drive : partagez votre image/carte sur Drive (« Tous les utilisateurs disposant du lien ») et collez le lien ici — il est converti automatiquement pour l'affichage élève et l'impression A4.
+                                </p>
                               </div>
 
                               {/* Boutons d'insertion rapide d'oeuvres d'art célèbres */}

@@ -14,19 +14,55 @@ export interface PlanificationData {
 }
 
 /**
- * Récupère les planifications depuis MongoDB pour une matière/classe
+ * Force l'appartenance stricte d'une liste d'unités à une matière et une classe données,
+ * et garantit un identifiant unique par unité.
+ */
+function enforceStrictClassIsolation(plans: UnitPlan[], subject?: string, grade?: string): UnitPlan[] {
+  const cleanSubject = subject?.trim();
+  const cleanGrade = grade?.trim();
+  const usedIds = new Set<string>();
+
+  return (plans || [])
+    .filter(p => {
+      if (!p) return false;
+      if (cleanGrade && p.gradeLevel && p.gradeLevel.trim() !== '' && p.gradeLevel.trim() !== cleanGrade) {
+        return false;
+      }
+      if (cleanSubject && p.subject && p.subject.trim() !== '' && p.subject.trim() !== cleanSubject) {
+        return false;
+      }
+      return true;
+    })
+    .map((p, idx) => {
+      let safeId = String(p.id || '').trim();
+      if (!safeId || usedIds.has(safeId) || /^\d{13}$/.test(safeId)) {
+        safeId = `unit_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 8)}`;
+      }
+      usedIds.add(safeId);
+      return {
+        ...p,
+        id: safeId,
+        subject: cleanSubject || p.subject,
+        gradeLevel: cleanGrade || p.gradeLevel,
+      };
+    });
+}
+
+/**
+ * Récupère les planifications depuis MongoDB pour une matière/classe.
+ * Si MongoDB répond avec les plans actuels, synchronise immédiatement localStorage
+ * pour écraser toute ancienne version locale et éviter qu'elle ne revienne.
  */
 export async function loadPlansFromDatabase(
   subject: string,
   grade: string
 ): Promise<UnitPlan[]> {
+  const cleanSubject = subject.trim();
+  const cleanGrade = grade.trim();
+
   try {
-    // Valider les paramètres avant l'appel API
-    const cleanSubject = subject.trim();
-    const cleanGrade = grade.trim();
-    
     if (!cleanSubject || !cleanGrade || cleanSubject.startsWith('_') || /^[_\s]+$/.test(cleanSubject)) {
-      return deduplicatePlans(loadPlansFromLocalStorage(subject, grade));
+      return deduplicatePlans(enforceStrictClassIsolation(loadPlansFromLocalStorage(cleanSubject, cleanGrade), cleanSubject, cleanGrade));
     }
     
     const response = await fetch(
@@ -34,76 +70,82 @@ export async function loadPlansFromDatabase(
     );
 
     if (!response.ok) {
-      return deduplicatePlans(loadPlansFromLocalStorage(subject, grade));
+      return deduplicatePlans(enforceStrictClassIsolation(loadPlansFromLocalStorage(cleanSubject, cleanGrade), cleanSubject, cleanGrade));
     }
 
     const data: PlanificationData = await response.json();
-    const serverPlans = data.plans || [];
+    const serverPlans = deduplicatePlans(enforceStrictClassIsolation(data.plans || [], cleanSubject, cleanGrade));
     
-    // Si le serveur n'a pas de données, vérifier si localStorage en a
-    if (serverPlans.length === 0) {
-      const localPlans = loadPlansFromLocalStorage(subject, grade);
-      if (localPlans.length > 0) return deduplicatePlans(localPlans);
+    // Si le serveur possède un document (même mis à jour récemment), écraser localStorage avec la version serveur
+    if (data.lastUpdated || serverPlans.length > 0) {
+      savePlansToLocalStorage(cleanSubject, cleanGrade, serverPlans);
+      return serverPlans;
     }
-    
-    return deduplicatePlans(serverPlans);
+
+    // Si jamais le serveur n'a jamais reçu de document pour cette classe, vérifier localStorage une seule fois
+    const localPlans = deduplicatePlans(enforceStrictClassIsolation(loadPlansFromLocalStorage(cleanSubject, cleanGrade), cleanSubject, cleanGrade));
+    return localPlans;
   } catch (error) {
     // Fallback vers localStorage si l'API échoue
-    return deduplicatePlans(loadPlansFromLocalStorage(subject, grade));
+    return deduplicatePlans(enforceStrictClassIsolation(loadPlansFromLocalStorage(cleanSubject, cleanGrade), cleanSubject, cleanGrade));
   }
 }
 
 /**
- * Récupère TOUTES les planifications pour une classe donnée (toutes les matières)
+ * Récupère TOUTES les planifications pour une classe donnée (toutes les matières de cette classe strictement)
  */
 export async function loadAllPlansForGrade(grade: string): Promise<UnitPlan[]> {
+  const cleanGrade = grade.trim();
   try {
     const response = await fetch(
-      `${API_BASE_URL}/planifications?grade=${encodeURIComponent(grade)}`
+      `${API_BASE_URL}/planifications?grade=${encodeURIComponent(cleanGrade)}`
     );
 
     if (!response.ok) {
-      return deduplicatePlans(loadAllPlansForGradeFromLocalStorage(grade));
+      return deduplicatePlans(enforceStrictClassIsolation(loadAllPlansForGradeFromLocalStorage(cleanGrade), undefined, cleanGrade));
     }
 
     const data = await response.json();
     
-    // L'API retourne un tableau de planifications
     if (Array.isArray(data) && data.length > 0) {
       const allPlans: UnitPlan[] = [];
       data.forEach((planData: PlanificationData) => {
         if (planData.plans && Array.isArray(planData.plans)) {
-          allPlans.push(...planData.plans);
+          allPlans.push(...enforceStrictClassIsolation(planData.plans, undefined, cleanGrade));
         }
       });
       if (allPlans.length > 0) return deduplicatePlans(allPlans);
     }
     
-    return deduplicatePlans(loadAllPlansForGradeFromLocalStorage(grade));
+    return deduplicatePlans(enforceStrictClassIsolation(loadAllPlansForGradeFromLocalStorage(cleanGrade), undefined, cleanGrade));
   } catch (error) {
-    return deduplicatePlans(loadAllPlansForGradeFromLocalStorage(grade));
+    return deduplicatePlans(enforceStrictClassIsolation(loadAllPlansForGradeFromLocalStorage(cleanGrade), undefined, cleanGrade));
   }
 }
 
 /**
- * Sauvegarde les planifications dans MongoDB
+ * Sauvegarde les planifications dans MongoDB en effaçant intégralement
+ * les versions précédentes de cette classe/matière dans localStorage et MongoDB.
  */
 export async function savePlansToDatabase(
   subject: string,
   grade: string,
   plans: UnitPlan[]
 ): Promise<boolean> {
+  const cleanSubject = subject.trim();
+  const cleanGrade = grade.trim();
+
+  if (!cleanSubject || !cleanGrade || cleanSubject.startsWith('_') || /^[_\s]+$/.test(cleanSubject)) {
+    console.error(`❌ Paramètres invalides pour la sauvegarde: subject="${cleanSubject}", grade="${cleanGrade}"`);
+    return false;
+  }
+
+  const cleanPlans = deduplicatePlans(enforceStrictClassIsolation(plans, cleanSubject, cleanGrade));
+
+  // 1. Écraser immédiatement toutes les versions précédentes dans localStorage
+  savePlansToLocalStorage(cleanSubject, cleanGrade, cleanPlans);
+
   try {
-    // Valider les paramètres avant l'appel API
-    const cleanSubject = subject.trim();
-    const cleanGrade = grade.trim();
-    const cleanPlans = deduplicatePlans(plans);
-    
-    if (!cleanSubject || !cleanGrade || cleanSubject.startsWith('_') || /^[_\s]+$/.test(cleanSubject)) {
-      console.error(`❌ Paramètres invalides pour la sauvegarde: subject="${cleanSubject}", grade="${cleanGrade}"`);
-      return false;
-    }
-    
     const response = await fetch(`${API_BASE_URL}/planifications`, {
       method: 'POST',
       headers: {
@@ -121,19 +163,10 @@ export async function savePlansToDatabase(
     }
 
     const result = await response.json();
-    console.log('✅ Planifications sauvegardées dans MongoDB:', result);
-    
-    // Sauvegarder aussi dans localStorage comme backup
-    savePlansToLocalStorage(subject, grade, cleanPlans);
-    
+    console.log('✅ Planifications sauvegardées dans MongoDB (anciennes versions effacées):', result);
     return true;
   } catch (error) {
     console.error('Erreur lors de la sauvegarde dans MongoDB:', error);
-    
-    // Fallback vers localStorage si l'API échoue
-    console.warn('Sauvegarde dans localStorage comme fallback');
-    savePlansToLocalStorage(subject, grade, deduplicatePlans(plans));
-    
     return false;
   }
 }
@@ -310,98 +343,59 @@ function loadAllPlansForGradeFromLocalStorage(grade: string): UnitPlan[] {
 
 // ===== MIGRATION AUTOMATIQUE localStorage → MongoDB =====
 
+const MIGRATION_COMPLETED_KEY = 'myp_migration_completed_v2';
+
 /**
- * Migre automatiquement toutes les planifications de localStorage vers MongoDB
- * Appelé au démarrage de l'application pour synchroniser les données locales
+ * Migre une seule fois les planifications de localStorage vers MongoDB
+ * sans jamais écraser les planifications existantes ni réinjecter d'anciennes unités.
  */
 export async function migrateLocalStorageToMongoDB(): Promise<{
   success: boolean;
   migrated: number;
   errors: number;
 }> {
-  console.log('🔄 Vérification des données localStorage à migrer vers MongoDB...');
-  
+  if (typeof window !== 'undefined' && localStorage.getItem(MIGRATION_COMPLETED_KEY) === 'true') {
+    return { success: true, migrated: 0, errors: 0 };
+  }
+
   const localPlanifications = loadSharedPlanifications();
   const keys = Object.keys(localPlanifications);
   
   if (keys.length === 0) {
-    console.log('ℹ️ Aucune donnée localStorage à migrer');
+    try { localStorage.setItem(MIGRATION_COMPLETED_KEY, 'true'); } catch {}
     return { success: true, migrated: 0, errors: 0 };
   }
-  
-  console.log(`📦 ${keys.length} planification(s) trouvée(s) dans localStorage`);
   
   let migrated = 0;
   let errors = 0;
   
-  // Migrer chaque planification
   for (const key of keys) {
     try {
-      // Extraire subject et grade depuis la clé (format: "Mathématiques_PEI 3" ou "Acquisition de langues_PEI 5")
-      // La clé est construite avec getPlanningKey qui fait: `${subject}_${grade}`
-      // Le grade peut contenir un espace (ex: "PEI 3")
-      // On cherche le dernier underscore pour séparer subject et grade
       const lastUnderscoreIndex = key.lastIndexOf('_');
+      if (lastUnderscoreIndex === -1) continue;
       
-      if (lastUnderscoreIndex === -1) {
-        console.warn(`⚠️ Clé invalide ignorée (pas de _): ${key}`);
-        continue;
-      }
+      const subject = key.substring(0, lastUnderscoreIndex).trim();
+      const grade = key.substring(lastUnderscoreIndex + 1).trim();
       
-      const subject = key.substring(0, lastUnderscoreIndex).trim(); // Tout avant le dernier _
-      const grade = key.substring(lastUnderscoreIndex + 1).trim(); // Tout après le dernier _
-      
-      // Valider que subject et grade ne sont pas vides ou invalides
-      if (!subject || subject.startsWith('_') || !grade) {
-        console.warn(`⚠️ Clé invalide ignorée (subject ou grade vide/invalide): "${key}" -> subject="${subject}", grade="${grade}"`);
-        continue;
-      }
-      
-      // Vérifier que le subject ne contient que des underscores ou espaces (clé corrompue)
-      if (/^[_\s]+$/.test(subject)) {
-        console.warn(`⚠️ Clé invalide ignorée (subject ne contient que des underscores/espaces): "${key}"`);
+      if (!subject || subject.startsWith('_') || !grade || /^[_\s]+$/.test(subject)) {
         continue;
       }
       
       const localPlans = localPlanifications[key];
+      if (!Array.isArray(localPlans) || localPlans.length === 0) continue;
       
-      if (!Array.isArray(localPlans) || localPlans.length === 0) {
-        console.log(`⏭️ Planification vide ignorée: ${key}`);
-        continue;
-      }
-      
-      console.log(`🔄 Migration de ${key} (${localPlans.length} plan(s))...`);
-      
-      // Vérifier si des données existent déjà dans MongoDB
       const existingPlans = await loadPlansFromDatabase(subject, grade);
+      if (existingPlans.length > 0) continue;
       
-      if (existingPlans.length > 0) {
-        console.log(`ℹ️ ${key} existe déjà dans MongoDB (${existingPlans.length} plan(s)), ignoré`);
-        continue;
-      }
-      
-      // Sauvegarder dans MongoDB
       const success = await savePlansToDatabase(subject, grade, localPlans);
-      
-      if (success) {
-        migrated++;
-        console.log(`✅ ${key} migré avec succès (${localPlans.length} plan(s))`);
-      } else {
-        errors++;
-        console.error(`❌ Échec de la migration de ${key}`);
-      }
-      
-    } catch (error) {
+      if (success) migrated++;
+      else errors++;
+    } catch {
       errors++;
-      console.error(`❌ Erreur lors de la migration de ${key}:`, error);
     }
   }
   
-  console.log(`\n📊 Résumé de la migration:`);
-  console.log(`   ✅ Migrés: ${migrated}`);
-  console.log(`   ❌ Erreurs: ${errors}`);
-  console.log(`   ⏭️ Ignorés: ${keys.length - migrated - errors}`);
-  
+  try { localStorage.setItem(MIGRATION_COMPLETED_KEY, 'true'); } catch {}
   return {
     success: errors === 0,
     migrated,
@@ -410,9 +404,12 @@ export async function migrateLocalStorageToMongoDB(): Promise<{
 }
 
 /**
- * Vérifie si une migration est nécessaire
+ * Vérifie si une migration initiale est nécessaire
  */
 export function needsMigration(): boolean {
+  try {
+    if (localStorage.getItem(MIGRATION_COMPLETED_KEY) === 'true') return false;
+  } catch {}
   const localPlanifications = loadSharedPlanifications();
   return Object.keys(localPlanifications).length > 0;
 }

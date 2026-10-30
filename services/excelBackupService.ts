@@ -170,29 +170,34 @@ export const normalizeTextForComparison = (str: string | undefined | null): stri
 
 /**
  * Détermine si deux plans d'unité représentent exactement la même unité pédagogique.
- * Ne fusionne QUE si l'ID est identique ou si (Matière + Classe + Titre exact) sont identiques.
- * Deux unités avec des titres différents ne sont JAMAIS fusionnées.
+ * RÈGLE CRITIQUE : Deux unités ayant des titres différents ne sont JAMAIS fusionnées ni supprimées,
+ * même si un ancien horodatage Date.now() leur avait attribué le même ID.
  */
 export const isSameUnitPlan = (a: UnitPlan, b: UnitPlan): boolean => {
   if (!a || !b) return false;
-
-  // 1. Même identifiant strict non-vide
-  if (a.id && b.id && String(a.id).trim() === String(b.id).trim()) return true;
 
   const subjA = normalizeSubject(a.subject);
   const subjB = normalizeSubject(b.subject);
   const gradeA = normalizeGrade(a.gradeLevel);
   const gradeB = normalizeGrade(b.gradeLevel);
 
-  // Doivent impérativement appartenir à la même matière et au même niveau
-  if (subjA !== subjB || gradeA !== gradeB) {
+  // Doivent impérativement appartenir à la même matière et à la même classe (indépendance stricte des classes)
+  if (subjA && subjB && subjA !== subjB) return false;
+  if (gradeA && gradeB && gradeA !== gradeB) return false;
+
+  const normTitleA = normalizeTextForComparison(a.title);
+  const normTitleB = normalizeTextForComparison(b.title);
+
+  // Si les deux unités ont des titres non vides et DIFFÉRENTS, ce sont deux unités distinctes !
+  if (normTitleA && normTitleB && normTitleA !== normTitleB) {
     return false;
   }
 
-  // 2. Titre normalisé identique (non vide)
-  const normTitleA = normalizeTextForComparison(a.title);
-  const normTitleB = normalizeTextForComparison(b.title);
-  if (normTitleA && normTitleB && normTitleA === normTitleB) {
+  // 1. Même identifiant strict non-vide (et titres compatibles)
+  if (a.id && b.id && String(a.id).trim() === String(b.id).trim()) return true;
+
+  // 2. Même matière + même classe + même titre normalisé (non vide)
+  if (subjA === subjB && gradeA === gradeB && normTitleA && normTitleB && normTitleA === normTitleB) {
     return true;
   }
 
@@ -201,26 +206,37 @@ export const isSameUnitPlan = (a: UnitPlan, b: UnitPlan): boolean => {
 
 /**
  * Fusionne une liste entrante dans une liste existante en REMPLAÇANT
- * les unités strictement identiques sans créer de doublons.
+ * les unités strictement identiques sans créer de doublons ni supprimer d'unités distinctes.
  */
 export const mergePlansWithReplacement = (
   existingList: UnitPlan[],
   incomingList: UnitPlan[]
 ): UnitPlan[] => {
   const result: UnitPlan[] = [...existingList];
+  const usedIds = new Set<string>(result.map(p => String(p?.id || '').trim()).filter(Boolean));
 
-  for (const incoming of incomingList) {
+  for (let i = 0; i < incomingList.length; i++) {
+    const incoming = incomingList[i];
     if (!incoming) continue;
     const matchIdx = result.findIndex(existing => isSameUnitPlan(existing, incoming));
 
     if (matchIdx !== -1) {
-      const existingId = result[matchIdx].id;
+      const existingId = result[matchIdx].id || `unit_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}`;
+      usedIds.add(existingId);
       result[matchIdx] = {
         ...incoming,
-        id: existingId || incoming.id,
+        id: existingId,
       };
     } else {
-      result.push(incoming);
+      let safeId = String(incoming.id || '').trim();
+      if (!safeId || usedIds.has(safeId)) {
+        safeId = `unit_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}`;
+      }
+      usedIds.add(safeId);
+      result.push({
+        ...incoming,
+        id: safeId,
+      });
     }
   }
 
@@ -228,7 +244,7 @@ export const mergePlansWithReplacement = (
 };
 
 /**
- * Dédoublonne un tableau de plans en remplaçant les doublons stricts
+ * Dédoublonne un tableau de plans en préservant toutes les unités distinctes avec des IDs uniques
  */
 export const deduplicatePlans = (plans: UnitPlan[]): UnitPlan[] => {
   return mergePlansWithReplacement([], plans);

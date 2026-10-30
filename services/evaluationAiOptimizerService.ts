@@ -1,6 +1,7 @@
 import { AssessmentData, AssessmentExercise, AssessmentSubQuestion, UnitPlan } from '../types';
 import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
 import { resolveArtworkOrImage } from './artworkService';
+import { getCriteriaSync, isLanguageAcquisitionSubject } from './ibCriteriaService';
 
 /**
  * Convertit les tableaux au format Markdown (| entête 1 | entête 2 |) en balises HTML <table> propres.
@@ -329,15 +330,22 @@ export async function optimizeEvaluationWithAI(params: OptimizeEvaluationParams)
     return existingAssessments;
   }
 
-  const isEn = /english|anglais|acquisition/i.test(subject);
+  const isEn = isLanguageAcquisitionSubject(subject) || /english|anglais|acquisition/i.test(subject);
+  const savedCriteriaConfig = getCriteriaSync(subject, gradeLevel);
 
-  // Préparation du résumé des évaluations existantes à optimiser
+  // Préparation du résumé des évaluations existantes à optimiser en injectant les objectifs IB sauvegardés par les enseignants
   const existingSummary = filteredExisting.map(crit => {
+    const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.id === crit.criterion);
+    const officialCriterionName = savedCrit?.name || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`);
+    const officialStrands = savedCrit?.strands?.length
+      ? savedCrit.strands.map(s => `${s.id}. ${s.description}`)
+      : crit.strands;
+
     return {
       criterion: crit.criterion,
-      criterionName: crit.criterionName,
+      criterionName: officialCriterionName,
       maxPoints: crit.maxPoints || 8,
-      strands: crit.strands,
+      strands: officialStrands,
       exercises: (crit.exercises || []).map((ex, idx) => ({
         index: idx + 1,
         title: ex.title,
@@ -359,9 +367,11 @@ export async function optimizeEvaluationWithAI(params: OptimizeEvaluationParams)
 
   const systemInstruction = `
 Tu es un inspecteur et expert international du Programme d'Éducation Intermédiaire (PEI / MYP) de l'IB.
-Ta mission est de RESTRUCTURER, PURIFIER, OPTIMISER et REFORMULER l'évaluation critériée existante pour une unité donnée.
+Ta mission est de RESTRUCTURER, PURIFIER, OPTIMISER et REFORMULER l'évaluation critériée existante pour une unité donnée, en respectant STRICTEMENT les objectifs spécifiques de l'IB enregistrés par l'enseignant.
 
 DIRECTIVES CRITIQUES :
+${isEn ? `0. LANGUAGE REQUIREMENT (100% ENGLISH MANDATORY):
+   - Because this subject is Language Acquisition (English), EVERY SINGLE WORD of the output (criterionName, strands, rubricRows descriptors, exercise titles like "Task 1: ...", content, instructions, subQuestions, options, and model answers) MUST BE WRITTEN 100% IN ENGLISH. Never use French words like "Tâche", "Critère", "Mise en situation", or "Consigne". Use "Task", "Criterion", "Context", "Instructions".` : ''}
 1. SUPPRESSION IMPÉRATIVE DES DOUBLONS ET RÉPÉTITIONS :
    - Analyse minutieusement toutes les questions fournies.
    - Si deux questions évaluent la même compétence ou notion de façon redondante, fusionne-les ou SUPPRIME la moins bonne.
@@ -370,40 +380,41 @@ DIRECTIVES CRITIQUES :
 2. CORRECTION DES QUESTIONS ILLOGIQUES OU IMPRÉCISES :
    - Si une question manque de données nécessaires à sa résolution, ajoute les données claires et cohérentes.
    - Si une question est illogique ou trop vague, réécris-la avec rigueur et clarté.
-   - Les consignes doivent être explicites et utiliser des termes directifs IB précis (ex: Identifier, Déterminer, Calculer, Expliquer, Justifier, Évaluer, Comparer).
+   - Les consignes doivent être explicites et utiliser des termes directifs IB précis (${isEn ? 'e.g. Identify, Determine, Explain, Justify, Evaluate, Analyze, Compare' : 'ex: Identifier, Déterminer, Calculer, Expliquer, Justifier, Évaluer, Comparer'}).
 
-3. PROGRESSION PÉDAGOGIQUE PAR SOUS-ASPECT (STRANDS) :
-   - Ordonne les questions de manière fluide et progressive (du niveau accessible au niveau approfondi).
-   - Chaque question ou sous-question doit être expressément alignée avec un sous-aspect officiel du critère (aspect i, ii, iii...).
+3. RESPECT STRICT DES OBJECTIFS SPÉCIFIQUES DE L'IB ENREGISTRÉS :
+   - Conserve intégralement les intitulés officiels des critères ("criterionName") et les sous-aspects ("strands" i, ii, iii, iv) fournis dans l'entrée.
+   - Ordonne les questions de manière fluide et progressive (du niveau 1-2 au niveau 7-8).
+   - Chaque question ou sous-question doit être expressément alignée avec un sous-aspect officiel du critère (aspect i, ii, iii, iv).
    - Pour un critère donné, prévois 2 à 4 tâches/exercices majeurs bien construits (ou 1 tâche progressive à 3-4 sous-questions).
 
 4. FORMAT HTML SOIGNÉ ET PROFESSIONNEL AVEC TABLEAUX (<p>, <strong>, <ul>, <table>...) :
    - Rédige chaque énoncé, mise en situation et consigne dans un format HTML propre, moderne et structuré.
    - Utilise judicieusement les balises sémantiques :
      * <p> pour séparer chaque paragraphe de manière aérée.
-     * <strong> pour mettre en relief les termes directifs IB (Identifier, Déterminer, Calculer, Justifier...) et données clés.
+     * <strong> pour mettre en relief les termes directifs IB et données clés.
      * <ul> et <li> pour les listes de données chiffrées, hypothèses ou consignes par étapes.
-     * <table> avec <thead>, <tbody>, <tr>, <th>, <td> pour les tableaux de données scientifiques, protocoles, relevés d'expériences ou tableaux comparatifs.
+     * <table> avec <thead>, <tbody>, <tr>, <th>, <td> pour les tableaux de données, textes supports ou tableaux comparatifs.
    - Le balisage doit être du HTML pur et propre (sans classes polluantes comme class="mb-2", sans styles inline).
 
 5. COURBES, FIGURES, SCHÉMAS & DIAGRAMMES SUR-MESURE (EXIGENCE STRICTE DE COMPATIBILITÉ) :
-   - RÈGLE ESSENTIELLE : Si et seulement si un exercice exploite ou fait référence à un schéma, une figure géométrique ou une courbe (ex: "D'après la figure...", "Soit la fonction représentée ci-contre...", "Observer le schéma du circuit..."), LA FIGURE DOIT ÊTRE ENTIÈREMENT ET STRICTEMENT COMPATIBLE avec le texte de l'exercice (mêmes lettres de sommets, mêmes cotes, même formule mathématique, même contexte).
+   - RÈGLE ESSENTIELLE : Si et seulement si un exercice exploite ou fait référence à un schéma, une figure géométrique ou une courbe, LA FIGURE DOIT ÊTRE ENTIÈREMENT ET STRICTEMENT COMPATIBLE avec le texte de l'exercice.
    - N'invente JAMAIS de figure déconnectée ou contradictoire avec l'énoncé.
-   - Si la question se résout par le calcul, la démonstration ou l'argumentation textuelle sans nécessiter de dessin, laisse "imageUrl" et "imageCaption" VIDES ("").
+   - Si la question se résout sans nécessiter de dessin, laisse "imageUrl" et "imageCaption" VIDES ("").
 
 6. VARIÉTÉ ET PRATICITÉ DES QUESTIONS :
    - Utilise une alternance équilibrée de :
-     * Sous-questions progressives 1), 2), 3) ciblant chacune un sous-aspect (avec tableau de données ou schéma support).
+     * Sous-questions progressives 1), 2), 3) ciblant chacune un sous-aspect.
      * Questions à choix multiples (QCM) stimulantes avec 4 propositions bien distinctes (A, B, C, D) et une seule bonne réponse argumentée.
-     * Questions vrai/faux avec justification obligatoire.
+     * Questions vrai/faux (${isEn ? 'True / False' : 'Vrai / Faux'}) avec justification.
      * Questions de rédaction ou résolution méthodique avec espace de réponse structuré.
 
 7. CORRIGÉS DÉTAILLÉS POUR CHAQUE QUESTION :
-   - Rédige pour chaque tâche le corrigé type complet ("answer") avec les éléments de réponse attendus et les critères de notation.
+   - Rédige pour chaque tâche le corrigé type complet ("answer") avec les éléments de réponse attendus et les critères de notation IB.
 
 8. CONSERVATION DE LA MATIÈRE ET DE L'UNITÉ :
    - Conserve scrupuleusement la matière ("${subject}"), le niveau scolaire ("${gradeLevel}") et le thème de l'unité ("${unitTitle}").
-   - Langue de rédaction : ${isEn ? 'English' : 'Français soigné et irréprochable'}.
+   - Langue de rédaction : ${isEn ? '100% English (strictly no French)' : 'Français soigné et irréprochable'}.
 `.trim();
 
   const userPrompt = `
@@ -418,7 +429,7 @@ Transforme et optimise l'évaluation critériée existante suivante pour l'unit�
 - Chapitres / Notions : "${chapters || ''}"
 ${customInstructions ? `- Instruction particulière de l'enseignant : "${customInstructions}"` : ''}
 
-Voici l'évaluation existante brute à restructurer, purger des doublons et rédiger en format HTML professionnel (<p>, <strong>, <ul>, <table>...) :
+Voici l'évaluation existante brute à restructurer, purger des doublons et rédiger en format HTML professionnel (<p>, <strong>, <ul>, <table>...) tout en respectant strictement les objectifs spécifiques IB fournis :
 ${JSON.stringify(existingSummary, null, 2)}
 
 FORMAT DE SORTIE ATTENDU :
@@ -426,12 +437,11 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
 [
   {
     "criterion": "A",
-    "criterionName": "Connaissances et compréhension",
+    "criterionName": "${isEn ? 'Listening / Comprehending spoken and visual text' : 'Connaissances et compréhension'}",
     "maxPoints": 8,
     "strands": [
-      "i. Sélectionner les concepts et techniques appropriés",
-      "ii. Appliquer les méthodes pour résoudre des problèmes",
-      "iii. Justifier et expliquer la démarche de résolution"
+      "${isEn ? 'i. Identify explicit and implicit information (facts, opinions, messages and supporting details)' : 'i. Sélectionner les concepts et techniques appropriés'}",
+      "${isEn ? 'ii. Analyze conventions and connections' : 'ii. Appliquer les méthodes pour résoudre des problèmes'}"
     ],
     "rubricRows": [
       { "level": "1-2", "descriptor": "..." },
@@ -441,30 +451,22 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
     ],
     "exercises": [
       {
-        "title": "Tâche 1 : [Titre explicite]",
-        "content": "<p><strong>Mise en situation :</strong> [Contexte concret structuré]</p><p><strong>Consigne :</strong> [Consigne claire avec termes directifs IB]</p>",
-        "criterionReference": "Critère A : i.",
+        "title": "${isEn ? 'Task 1: [Explicit Title]' : 'Tâche 1 : [Titre explicite]'}",
+        "content": "${isEn ? '<p><strong>Context:</strong> [Structured context]</p><p><strong>Instructions:</strong> [Clear instruction with IB command terms]</p>' : '<p><strong>Mise en situation :</strong> [Contexte concret structuré]</p><p><strong>Consigne :</strong> [Consigne claire avec termes directifs IB]</p>'}",
+        "criterionReference": "${isEn ? 'Criterion A: i.' : 'Critère A : i.'}",
         "strandIndex": "i",
-        "strandText": "Sélectionner les concepts et techniques appropriés",
+        "strandText": "...",
         "type": "open",
-        "answer": "<p>[Corrigé type détaillé pour le professeur avec étapes et justification]</p>",
+        "answer": "<p>[${isEn ? 'Detailed model answer and marking scheme' : 'Corrigé type détaillé pour le professeur avec étapes et justification'}]</p>",
         "imageUrl": "",
         "imageCaption": "",
         "subQuestions": [
           {
             "id": "sub_1",
             "label": "1)",
-            "content": "<p><strong>Calculer</strong> la valeur de...</p>",
+            "content": "<p><strong>${isEn ? 'Identify' : 'Calculer'}</strong> ...</p>",
             "strandIndex": "i",
-            "strandText": "Identifier et sélectionner la méthode",
-            "type": "open"
-          },
-          {
-            "id": "sub_2",
-            "label": "2)",
-            "content": "<p><strong>Justifier</strong> le résultat obtenu...</p>",
-            "strandIndex": "ii",
-            "strandText": "Appliquer la formule et calculer",
+            "strandText": "...",
             "type": "open"
           }
         ]
@@ -505,17 +507,42 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
     const parsed = JSON.parse(cleaned);
 
     if (Array.isArray(parsed) && parsed.length > 0) {
-      // Nettoyage et formatage HTML professionnel soigné, attachement des schémas si nécessaire
+      // Nettoyage et formatage HTML professionnel soigné, respect strict des objectifs IB sauvegardés
       const validated: AssessmentData[] = parsed.map((item: any, idx: number) => {
         const original = filteredExisting.find(o => o.criterion === item.criterion) || filteredExisting[idx];
+        const critCode = (item.criterion || original?.criterion || 'A') as 'A' | 'B' | 'C' | 'D';
+        const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.id === critCode);
+
+        const officialCriterionName = savedCrit?.name
+          || item.criterionName
+          || original?.criterionName
+          || (isEn ? `Criterion ${critCode}` : `Critère ${critCode}`);
+
+        const officialStrands = savedCrit?.strands?.length
+          ? savedCrit.strands.map(s => `${s.id}. ${s.description}`)
+          : (Array.isArray(item.strands) && item.strands.length > 0 ? item.strands : original?.strands || []);
+
+        const officialRubricRows = Array.isArray(item.rubricRows) && item.rubricRows.length > 0
+          ? item.rubricRows
+          : (original?.rubricRows && original.rubricRows.length > 0
+              ? original.rubricRows
+              : [
+                  { level: '0', descriptor: isEn ? 'The student does not reach a standard described by any of the descriptors below.' : "L'élève n'atteint aucun des niveaux décrits ci-dessous." },
+                  { level: '1-2', descriptor: officialStrands.map(s => `${s} (${isEn ? 'limited level' : 'niveau limité'})`).join(' ; ') },
+                  { level: '3-4', descriptor: officialStrands.map(s => `${s} (${isEn ? 'adequate level' : 'niveau satisfaisant'})`).join(' ; ') },
+                  { level: '5-6', descriptor: officialStrands.map(s => `${s} (${isEn ? 'substantial level' : 'niveau substantiel'})`).join(' ; ') },
+                  { level: '7-8', descriptor: officialStrands.map(s => `${s} (${isEn ? 'excellent level' : 'niveau excellent'})`).join(' ; ') },
+                ]);
+
         return {
-          criterion: item.criterion || original?.criterion || 'A',
-          criterionName: item.criterionName || original?.criterionName || `Critère ${item.criterion || 'A'}`,
+          criterion: critCode,
+          criterionName: officialCriterionName,
           maxPoints: typeof item.maxPoints === 'number' ? item.maxPoints : 8,
-          strands: Array.isArray(item.strands) && item.strands.length > 0 ? item.strands : original?.strands || [],
-          rubricRows: Array.isArray(item.rubricRows) && item.rubricRows.length > 0 ? item.rubricRows : original?.rubricRows || [],
+          strands: officialStrands,
+          rubricRows: officialRubricRows,
           exercises: (Array.isArray(item.exercises) && item.exercises.length > 0 ? item.exercises : original?.exercises || []).map((ex: any, eIdx: number) => {
-            const cleanTitle = stripHtmlTags(ex.title) || `Tâche ${eIdx + 1}`;
+            const rawTitle = stripHtmlTags(ex.title) || (isEn ? `Task ${eIdx + 1}` : `Tâche ${eIdx + 1}`);
+            const cleanTitle = isEn ? rawTitle.replace(/^Tâche\s+/i, 'Task ').replace(/^Exercice\s+/i, 'Task ') : rawTitle;
             const cleanContent = formatProfessionalHtml(ex.content) || `<p>${cleanTitle}</p>`;
             const cleanAnswer = ex.answer ? formatProfessionalHtml(ex.answer) : undefined;
 
@@ -535,29 +562,39 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
               }
             }
 
+            const sIdx = ex.strandIndex || 'i';
+            const matchedSavedStrand = savedCrit?.strands?.find(s => s.id === sIdx);
+            const officialStrandText = matchedSavedStrand?.description || ex.strandText || '';
+
             return {
               title: cleanTitle,
               content: cleanContent,
               imageUrl: imageUrl || undefined,
               imageCaption: imageCaption || undefined,
-              criterionReference: ex.criterionReference || `Critère ${item.criterion || 'A'} : i.`,
-              strandIndex: ex.strandIndex || 'i',
-              strandText: ex.strandText || '',
+              criterionReference: ex.criterionReference
+                ? (isEn ? String(ex.criterionReference).replace(/^Critère/i, 'Criterion') : ex.criterionReference)
+                : (isEn ? `Criterion ${critCode}: ${sIdx}.` : `Critère ${critCode} : ${sIdx}.`),
+              strandIndex: sIdx,
+              strandText: officialStrandText,
               type: ex.type || 'open',
               options: Array.isArray(ex.options) ? ex.options.map((o: any) => stripHtmlTags(String(o))) : undefined,
               correctAnswer: ex.correctAnswer ? stripHtmlTags(String(ex.correctAnswer)) : undefined,
               answer: cleanAnswer,
               subQuestions: Array.isArray(ex.subQuestions) && ex.subQuestions.length > 0
-                ? ex.subQuestions.map((sq: any, sIdx: number) => ({
-                    id: sq.id || `sub_${sIdx + 1}`,
-                    label: sq.label || `${sIdx + 1})`,
-                    content: formatProfessionalHtml(sq.content) || '',
-                    strandIndex: sq.strandIndex || 'i',
-                    strandText: sq.strandText || '',
-                    type: sq.type || 'open',
-                    options: Array.isArray(sq.options) ? sq.options.map((o: any) => stripHtmlTags(String(o))) : undefined,
-                    correctAnswer: sq.correctAnswer ? stripHtmlTags(String(sq.correctAnswer)) : undefined,
-                  }))
+                ? ex.subQuestions.map((sq: any, sqIdx: number) => {
+                    const sqStrand = sq.strandIndex || 'i';
+                    const matchedSqStrand = savedCrit?.strands?.find(s => s.id === sqStrand);
+                    return {
+                      id: sq.id || `sub_${sqIdx + 1}`,
+                      label: sq.label || `${sqIdx + 1})`,
+                      content: formatProfessionalHtml(sq.content) || '',
+                      strandIndex: sqStrand,
+                      strandText: matchedSqStrand?.description || sq.strandText || '',
+                      type: sq.type || 'open',
+                      options: Array.isArray(sq.options) ? sq.options.map((o: any) => stripHtmlTags(String(o))) : undefined,
+                      correctAnswer: sq.correctAnswer ? stripHtmlTags(String(sq.correctAnswer)) : undefined,
+                    };
+                  })
                 : undefined,
             };
           }),
@@ -566,32 +603,44 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
 
       return validated;
     }
-    return filteredExisting;
+    return sanitizeAndFormatLocalAssessments(filteredExisting, subject, unitTitle, gradeLevel);
   } catch (error) {
     console.warn('optimizeEvaluationWithAI: Erreur lors de l\'appel API, utilisation du repli structuré local:', error);
     // En cas d'erreur réseau, fallback local de mise en forme propre sans doublons
-    return sanitizeAndFormatLocalAssessments(filteredExisting, subject, unitTitle);
+    return sanitizeAndFormatLocalAssessments(filteredExisting, subject, unitTitle, gradeLevel);
   }
 }
 
 /**
  * Nettoyage et formatage local de sécurité :
  * Élimine les doublons exacts, applique le format HTML soigné,
+ * respecte les objectifs spécifiques IB sauvegardés par les enseignants,
  * et associe si opportun un document/diagramme éducatif.
  */
 export function sanitizeAndFormatLocalAssessments(
   assessments: AssessmentData[],
   subject: string = '',
-  unitTitle: string = ''
+  unitTitle: string = '',
+  gradeLevel: string = ''
 ): AssessmentData[] {
+  const isEn = isLanguageAcquisitionSubject(subject) || /english|anglais|acquisition/i.test(subject);
+  const savedCriteriaConfig = gradeLevel ? getCriteriaSync(subject, gradeLevel) : null;
+
   return assessments.map(crit => {
+    const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.id === crit.criterion);
+    const officialCriterionName = savedCrit?.name || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`);
+    const officialStrands = savedCrit?.strands?.length
+      ? savedCrit.strands.map(s => `${s.id}. ${s.description}`)
+      : crit.strands;
+
     const seenTitles = new Set<string>();
     const seenContents = new Set<string>();
     const uniqueExercises: AssessmentExercise[] = [];
 
     (crit.exercises || []).forEach((ex, idx) => {
       const cleanContent = formatProfessionalHtml(ex.content);
-      const cleanTitle = stripHtmlTags(ex.title) || `Tâche ${idx + 1}`;
+      const rawTitle = stripHtmlTags(ex.title) || (isEn ? `Task ${idx + 1}` : `Tâche ${idx + 1}`);
+      const cleanTitle = isEn ? rawTitle.replace(/^Tâche\s+/i, 'Task ').replace(/^Exercice\s+/i, 'Task ') : rawTitle;
       const simpleContentKey = cleanContent.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 80);
       const simpleTitleKey = cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -622,25 +671,40 @@ export function sanitizeAndFormatLocalAssessments(
         }
       }
 
+      const sIdx = ex.strandIndex || 'i';
+      const matchedSavedStrand = savedCrit?.strands?.find(s => s.id === sIdx);
+
       uniqueExercises.push({
         ...ex,
         title: cleanTitle,
         content: cleanContent,
+        criterionReference: ex.criterionReference
+          ? (isEn ? String(ex.criterionReference).replace(/^Critère/i, 'Criterion') : ex.criterionReference)
+          : (isEn ? `Criterion ${crit.criterion}: ${sIdx}.` : `Critère ${crit.criterion} : ${sIdx}.`),
+        strandText: matchedSavedStrand?.description || ex.strandText || '',
         imageUrl: imageUrl || undefined,
         imageCaption: imageCaption || undefined,
         answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
         options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
-        subQuestions: ex.subQuestions?.map(sq => ({
-          ...sq,
-          content: formatProfessionalHtml(sq.content),
-          options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
-        })),
+        subQuestions: ex.subQuestions?.map(sq => {
+          const sqStrand = sq.strandIndex || 'i';
+          const matchedSqStrand = savedCrit?.strands?.find(s => s.id === sqStrand);
+          return {
+            ...sq,
+            strandText: matchedSqStrand?.description || sq.strandText || '',
+            content: formatProfessionalHtml(sq.content),
+            options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
+          };
+        }),
       });
     });
 
     return {
       ...crit,
+      criterionName: officialCriterionName,
+      strands: officialStrands,
       exercises: uniqueExercises,
     };
   });
 }
+

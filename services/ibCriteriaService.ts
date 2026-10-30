@@ -114,7 +114,11 @@ export async function loadCriteriaFromDatabase(
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    return data.config ?? null;
+    if (data?.config && Array.isArray(data.config.criteria) && data.config.criteria.length > 0) {
+      saveCriteriaToLocalStorage(data.config);
+      return data.config;
+    }
+    return loadCriteriaFromLocalStorage(subject, grade);
   } catch (e) {
     console.warn('Fallback localStorage pour ib-criteria:', e);
     return loadCriteriaFromLocalStorage(subject, grade);
@@ -140,18 +144,18 @@ export async function saveCriteriaToDatabase(config: IbCriteriaConfig): Promise<
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main public API — load with fallback chain: MongoDB → localStorage → null
+// Main public API — load with fallback chain: MongoDB (syncs to localStorage) → localStorage → null
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function loadCriteria(
   subject: string,
   grade: string
 ): Promise<IbCriteriaConfig | null> {
-  // 1. Try localStorage first (instant, no network cost)
-  const local = loadCriteriaFromLocalStorage(subject, grade);
-  if (local) return local;
-  // 2. Try MongoDB
-  return loadCriteriaFromDatabase(subject, grade);
+  // 1. Try MongoDB first so any teacher-saved IB criteria are synced into localStorage
+  const remote = await loadCriteriaFromDatabase(subject, grade);
+  if (remote) return remote;
+  // 2. Fallback to localStorage
+  return loadCriteriaFromLocalStorage(subject, grade);
 }
 
 export async function saveCriteria(config: IbCriteriaConfig): Promise<void> {
@@ -162,8 +166,7 @@ export async function saveCriteria(config: IbCriteriaConfig): Promise<void> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Synchronous reader used inside geminiService (no async needed there since
-// we cache to localStorage on save; generation always happens after the editor
-// has been saved at least once).
+// we cache to localStorage on save and on session load).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getCriteriaSync(subject: string, grade: string): IbCriteriaConfig | null {

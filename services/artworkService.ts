@@ -976,14 +976,40 @@ export function findMatchingArtwork(text: string): ArtworkItem | null {
 }
 
 /**
- * Résout une source d'image (URL, data URI, nom textuel d'oeuvre) et son contexte textuel.
+ * Convertit automatiquement un lien de partage Google Drive (ex: https://drive.google.com/file/d/ID/view?usp=sharing)
+ * en URL d'affichage direct d'image compatible avec le proxy et les balises <img>.
+ */
+export function convertGoogleDriveUrl(rawUrl: string): string {
+  const trimmed = (rawUrl || '').trim();
+  if (!trimmed) return '';
+  // Format 1 : https://drive.google.com/file/d/FILE_ID/view...
+  const fileMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch && fileMatch[1]) {
+    return `https://drive.google.com/uc?export=view&id=${fileMatch[1]}`;
+  }
+  // Format 2 : https://drive.google.com/open?id=FILE_ID
+  const openMatch = trimmed.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+  if (openMatch && openMatch[1]) {
+    return `https://drive.google.com/uc?export=view&id=${openMatch[1]}`;
+  }
+  // Format 3 : https://drive.google.com/uc?id=FILE_ID...
+  const ucMatch = trimmed.match(/drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/);
+  if (ucMatch && ucMatch[1]) {
+    return `https://drive.google.com/uc?export=view&id=${ucMatch[1]}`;
+  }
+  return trimmed;
+}
+
+/**
+ * Résout une source d'image (URL, lien Google Drive, data URI, nom textuel d'oeuvre) et son contexte textuel.
  * Si une oeuvre d'art est reconnue, renvoie sa représentation vectorielle SVG garantie ou son URL proxy.
  */
 export function resolveArtworkOrImage(
   sourceUrl?: string,
   textContext?: string
 ): { imageUrl: string; imageCaption: string; artwork?: ArtworkItem } | null {
-  const src = (sourceUrl || '').trim();
+  const srcRaw = (sourceUrl || '').trim();
+  const src = srcRaw.includes('drive.google.com') ? convertGoogleDriveUrl(srcRaw) : srcRaw;
   const context = (textContext || '').trim();
 
   // 1. Si sourceUrl est déjà un SVG data URI ou SVG brut, il est parfait
@@ -1007,7 +1033,7 @@ export function resolveArtworkOrImage(
     return { imageUrl: src, imageCaption: context || 'Document visuel' };
   }
 
-  // 4. Si sourceUrl est une URL HTTP/HTTPS externe
+  // 4. Si sourceUrl est une URL HTTP/HTTPS externe (incluant Google Drive converti)
   if (src.startsWith('http://') || src.startsWith('https://')) {
     return {
       // Utiliser le proxy sécurisé pour éviter 403 / CORS

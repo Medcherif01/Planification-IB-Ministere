@@ -13,7 +13,8 @@ import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './Scie
 import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import EvaluationPrintView from './EvaluationPrintView';
-import { resolveArtworkOrImage } from '../services/artworkService';
+import { resolveArtworkOrImage, convertGoogleDriveUrl } from '../services/artworkService';
+import { generateDiagramOrMapWithGeminiAI } from '../services/educationalDiagramService';
 
 interface StudentViewLayoutEditorModalProps {
   evaluation: OnlineEvaluation;
@@ -64,6 +65,8 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
     initialStrand: string;
     initialType: GenerateQuestionOptions['questionType'];
   } | null>(null);
+  const [geminiDiagramPromptMap, setGeminiDiagramPromptMap] = useState<Record<string, string>>({});
+  const [isGeneratingDiagramKey, setIsGeneratingDiagramKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (evaluation) {
@@ -647,7 +650,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                         placeholder="Titre de l'évaluation..."
                       />
                       <div className="flex items-center gap-1.5 bg-white/10 border border-white/25 rounded-xl px-3 py-1 text-xs">
-                        <span className="text-purple-200 font-bold">Durée (min) :</span>
+                        <span className="text-purple-200 font-bold">{isEn ? 'Duration (min):' : 'Durée (min) :'}</span>
                         <input
                           type="number"
                           value={draftEval.durationMinutes || 45}
@@ -670,6 +673,14 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                   <span className="bg-amber-400/20 border border-amber-300/40 px-3 py-1 rounded-xl font-black text-amber-200">
                     ⏱️ {draftEval.durationMinutes || 45} min
                   </span>
+                  <span className="bg-white/15 px-3 py-1 rounded-xl font-bold text-emerald-200">
+                    👨‍🏫 {draftEval.teacherName || 'Enseignant'}
+                  </span>
+                  {draftEval.createdAt && (
+                    <span className="bg-white/15 px-3 py-1 rounded-xl font-bold text-indigo-200">
+                      📅 {new Date(draftEval.createdAt).toLocaleDateString(isEn ? 'en-GB' : 'fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -678,7 +689,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-purple-50/70 border border-purple-200 rounded-xl p-3">
                     <div>
                       <span className="font-black uppercase text-[10px] text-purple-800 mr-2">
-                        🔎 Énoncé de recherche :
+                        🔎 {isEn ? 'Statement of Inquiry:' : 'Énoncé de recherche :'}
                       </span>
                       <span className="italic font-semibold text-purple-950">"{draftEval.statementOfInquiry}"</span>
                     </div>
@@ -688,19 +699,23 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                 {/* Consignes générales éditables directement en mode Organisation */}
                 <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-amber-950">
                   <span className="font-black uppercase text-[10px] text-amber-800 block mb-1">
-                    📌 Consignes générales pour l'élève :
+                    📌 {isEn ? 'General Instructions for Students:' : 'Consignes générales pour l\'élève :'}
                   </span>
                   {viewMode === 'organize' ? (
                     <textarea
                       value={draftEval.instructions || ''}
                       onChange={e => setDraftEval(prev => ({ ...prev, instructions: e.target.value }))}
                       rows={2}
-                      placeholder="Ajoutez vos consignes générales pour les élèves (ex: L'usage de la calculatrice intégrée est autorisé, détaillez toutes les étapes de vos calculs...)"
+                      placeholder={
+                        isEn
+                          ? 'Add general instructions for students (e.g., Read all prompts carefully and justify your answers in full sentences...)'
+                          : 'Ajoutez vos consignes générales pour les élèves (ex: L\'usage de la calculatrice intégrée est autorisé, détaillez toutes les étapes de vos calculs...)'
+                      }
                       className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-purple-500 font-medium"
                     />
                   ) : (
                     <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                      {draftEval.instructions || 'Répondez de manière structurée et détaillée à chaque question.'}
+                      {draftEval.instructions || (isEn ? 'Answer each task in a structured and detailed manner.' : 'Répondez de manière structurée et détaillée à chaque question.')}
                     </p>
                   )}
                 </div>
@@ -1045,6 +1060,101 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                             )
                           )}
 
+                          {/* Insertion / Modification de Diagramme Gemini AI ou Lien Google Drive en mode Organisation */}
+                          {viewMode === 'organize' && (
+                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <span className="text-[11px] font-black text-slate-700 uppercase">
+                                  🖼️ {isEn ? 'Diagram / Map / Image (Gemini AI or Google Drive Link):' : 'Diagramme / Carte / Image (Gemini AI ou Lien Google Drive) :'}
+                                </span>
+                                {ex.imageUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateExerciseField(critIdx, exIdx, { imageUrl: '', imageCaption: '' })}
+                                    className="text-[10px] font-bold text-rose-600 hover:text-rose-800 px-2 py-0.5 bg-rose-50 rounded border border-rose-200"
+                                  >
+                                    ✕ {isEn ? 'Remove visual' : 'Supprimer le visuel'}
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="flex flex-col sm:flex-row gap-2">
+                                <input
+                                  type="text"
+                                  value={geminiDiagramPromptMap[`${critIdx}_${exIdx}`] ?? ''}
+                                  onChange={e =>
+                                    setGeminiDiagramPromptMap(prev => ({
+                                      ...prev,
+                                      [`${critIdx}_${exIdx}`]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder={
+                                    isEn
+                                      ? 'Describe the diagram/map to generate with Gemini AI (or leave empty to use the question prompt)...'
+                                      : 'Décrivez le diagramme/schéma/carte à générer avec Gemini AI (ou laissez vide pour utiliser l\'énoncé)...'
+                                  }
+                                  className="flex-1 p-2 bg-white border border-purple-200 rounded-xl text-xs focus:outline-none focus:border-purple-500"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={isGeneratingDiagramKey === `${critIdx}_${exIdx}`}
+                                  onClick={async () => {
+                                    const key = `${critIdx}_${exIdx}`;
+                                    setIsGeneratingDiagramKey(key);
+                                    try {
+                                      const customPrompt = (geminiDiagramPromptMap[key] || '').trim();
+                                      const generated = await generateDiagramOrMapWithGeminiAI({
+                                        subject: draftEval.subject || '',
+                                        grade: draftEval.grade || '',
+                                        exerciseTitle: ex.title,
+                                        exerciseContent: customPrompt || `${ex.title} - ${ex.content}`,
+                                      });
+                                      if (generated) {
+                                        handleUpdateExerciseField(critIdx, exIdx, {
+                                          imageUrl: generated.imageUrl,
+                                          imageCaption: generated.imageCaption,
+                                        });
+                                      }
+                                    } finally {
+                                      setIsGeneratingDiagramKey(null);
+                                    }
+                                  }}
+                                  className="px-3 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 shadow-2xs disabled:opacity-60 whitespace-nowrap"
+                                >
+                                  <Sparkles size={13} className="text-yellow-300" />
+                                  <span>
+                                    {isGeneratingDiagramKey === `${critIdx}_${exIdx}`
+                                      ? isEn ? 'Generating...' : 'Génération...'
+                                      : isEn ? 'Generate Diagram (Gemini AI)' : 'Générer Schéma / Carte (Gemini AI)'}
+                                  </span>
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <input
+                                  type="text"
+                                  value={ex.imageUrl || ''}
+                                  onChange={e => {
+                                    const rawVal = e.target.value;
+                                    const converted = rawVal.includes('drive.google.com')
+                                      ? convertGoogleDriveUrl(rawVal)
+                                      : rawVal;
+                                    handleUpdateExerciseField(critIdx, exIdx, { imageUrl: converted });
+                                  }}
+                                  placeholder={isEn ? 'Paste Google Drive share link or image URL...' : 'Collez un lien Google Drive (https://drive.google.com/...) ou URL...'}
+                                  className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-purple-500"
+                                />
+                                <input
+                                  type="text"
+                                  value={ex.imageCaption || ''}
+                                  onChange={e => handleUpdateExerciseField(critIdx, exIdx, { imageCaption: e.target.value })}
+                                  placeholder={isEn ? 'Caption / Title of the figure or map...' : 'Légende de la figure, carte ou photo...'}
+                                  className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-purple-500"
+                                />
+                              </div>
+                            </div>
+                          )}
+
                           {/* Image si présente */}
                           {ex.imageUrl && (() => {
                             if (ex.imageUrl.startsWith('<svg')) {
@@ -1250,7 +1360,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
 
                                     {subQType === 'true_false' && (
                                       <div className="grid grid-cols-2 gap-3 max-w-xs pt-1">
-                                        {['Vrai', 'Faux'].map(opt => (
+                                        {(isEn ? ['True', 'False'] : ['Vrai', 'Faux']).map(opt => (
                                           <button
                                             key={opt}
                                             type="button"
@@ -1434,7 +1544,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
 
                               {ex.type === 'true_false' && (
                                 <div className="grid grid-cols-2 gap-3 max-w-md pt-1">
-                                  {['Vrai', 'Faux'].map(opt => (
+                                  {(isEn ? ['True', 'False'] : ['Vrai', 'Faux']).map(opt => (
                                     <button
                                       key={opt}
                                       type="button"
