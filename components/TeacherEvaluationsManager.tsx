@@ -357,7 +357,14 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const text = `📝 ÉVALUATION CRITÉRÉE EN LIGNE : ${ev.title} (${ev.subject} - ${ev.grade})\n\n🔗 Lien direct à ouvrir sur votre tablette ou ordinateur :\n${url}\n\n🔑 Code d'accès unique de la classe : ${ev.accessCode}\n🔒 Important : Saisissez obligatoirement votre N° de Matricule personnel fourni par votre enseignant pour déverrouiller l'accès à l'évaluation.`;
     navigator.clipboard.writeText(text);
     setCopiedCode(`classroom_${ev.accessCode}`);
-    setTimeout(() => setCopiedCode(null), 3000);
+    setTimeout(() => setCopiedCode(null), 3500);
+  };
+
+  // Lien direct qui emmène l'enseignant vers Google Classroom avec le lien et le message prêts à coller/publier
+  const getGoogleClassroomShareUrl = (ev: OnlineEvaluation): string => {
+    const url = `${window.location.origin}?mode=student&code=${encodeURIComponent(ev.accessCode)}`;
+    const text = `📝 ÉVALUATION CRITÉRÉE EN LIGNE : ${ev.title} (${ev.subject} - ${ev.grade})\n\n🔗 Lien direct à ouvrir sur votre tablette ou ordinateur :\n${url}\n\n🔑 Code d'accès unique de la classe : ${ev.accessCode}\n🔒 Important : Saisissez obligatoirement votre N° de Matricule personnel fourni par votre enseignant pour déverrouiller l'accès à l'évaluation.`;
+    return `https://classroom.google.com/share?url=${encodeURIComponent(url)}&title=${encodeURIComponent(`${ev.title} (${ev.subject} - ${ev.grade})`)}&body=${encodeURIComponent(text)}`;
   };
 
   // Supprimer une évaluation
@@ -2061,17 +2068,34 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                       </div>
 
                       <div className="pt-3 border-t border-slate-100 space-y-2">
-                        {/* BOUTON PRIORITAIRE 1 : VISUALISER LA VERSION DE L'ÉLÈVE */}
+                        {/* BOUTON PRIORITAIRE 1 : VISUALISER LA COPIE EXEMPLAIRE DE L'ÉLÈVE (SANS COMPTEUR & MODIFIABLE) */}
                         <button
                           onClick={() => setStudentPreviewEvaluation(JSON.parse(JSON.stringify(ev)))}
                           className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black transition shadow-sm"
-                          title="Visualiser l'évaluation exactement comme l'élève la voit et ajuster les questions ou la mise en page"
+                          title="Visualiser la copie exemplaire de l'élève (sans compteur) et modifier les questions manuellement ou avec IA"
                         >
                           <Eye size={15} />
-                          <span>👁️ Visualiser la Version Élève & Mise en page</span>
+                          <span>👁️ Copie Exemplaire Élève (Modifiable)</span>
                         </button>
 
-                        {/* BOUTON PRIORITAIRE 2 : OUVRIR & CORRIGER LES COPIES DES ÉLÈVES */}
+                        {/* BOUTON PRIORITAIRE 2 : LIEN DIRECT GOOGLE CLASSROOM (COPIE LE MESSAGE + OUVRE CLASSROOM) */}
+                        <a
+                          href={getGoogleClassroomShareUrl(ev)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => handleCopyClassroomPost(ev)}
+                          className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-black transition shadow-xs"
+                          title="Copie automatiquement le message + lien élève et ouvre Google Classroom directement pour le coller"
+                        >
+                          <ExternalLink size={14} />
+                          <span>
+                            {copiedCode === `classroom_${ev.accessCode}`
+                              ? '✓ Message copié ! Google Classroom ouvert'
+                              : '🎓 Ouvrir Google Classroom & Coller le lien'}
+                          </span>
+                        </a>
+
+                        {/* BOUTON PRIORITAIRE 3 : OUVRIR & CORRIGER LES COPIES DES ÉLÈVES */}
                         <button
                           onClick={() => handleOpenSubmissions(ev)}
                           className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-black transition shadow-xs ${
@@ -2097,7 +2121,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                               setEditingCriterionIdx(0);
                             }}
                             className="flex items-center justify-center gap-1 py-2 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-[11px] font-extrabold transition"
-                            title="Modifier les questions, ajouter un diagramme Gemini AI ou un lien Drive"
+                            title="Modifier les questions manuellement ou avec IA, ou remplacer une figure par une photo Google Drive 4:3"
                           >
                             <Edit3 size={12} />
                             <span>Éditer / IA</span>
@@ -2132,10 +2156,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           <button
                             onClick={() => handleCopyStudentLink(ev.accessCode)}
                             className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
-                            title="Copier le lien direct élève"
+                            title="Copier uniquement le lien direct élève"
                           >
-                            {isLinkCopied ? <Check size={11} className="text-emerald-600" /> : <ExternalLink size={11} />}
-                            <span>{isLinkCopied ? 'Lien copié !' : 'Copier lien élève'}</span>
+                            {isLinkCopied ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
+                            <span>{isLinkCopied ? 'Lien copié !' : 'Copier lien seul'}</span>
                           </button>
                           <button
                             onClick={() => handleCopyClassroomPost(ev)}
@@ -2143,7 +2167,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                             title="Copier le message complet pour Google Classroom"
                           >
                             {copiedCode === `classroom_${ev.accessCode}` ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
-                            <span>{copiedCode === `classroom_${ev.accessCode}` ? 'Copié !' : 'Message Classroom'}</span>
+                            <span>{copiedCode === `classroom_${ev.accessCode}` ? 'Message copié !' : 'Copier message'}</span>
                           </button>
                         </div>
                       </div>
@@ -4035,20 +4059,22 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                 </div>
                               </div>
 
-                              {/* Aperçu de l'image */}
+                              {/* Aperçu de l'image / Photo Google Drive (Format 4:3 très clair et bien visible) */}
                               {ex.imageUrl && (() => {
                                 const resolved = resolveArtworkOrImage(ex.imageUrl, ex.imageCaption);
-                                const previewSrc = resolved?.imageUrl || ex.imageUrl;
+                                const previewSrc = resolved?.imageUrl || convertGoogleDriveUrl(ex.imageUrl) || ex.imageUrl;
                                 return (
-                                  <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-700 text-center max-w-sm mx-auto shadow-sm">
-                                    <img
-                                      src={previewSrc}
-                                      alt={ex.imageCaption || 'Aperçu'}
-                                      referrerPolicy="no-referrer"
-                                      className="max-h-44 mx-auto object-contain rounded-lg"
-                                    />
+                                  <div className="p-3 bg-white rounded-2xl border-2 border-slate-200 text-center max-w-md mx-auto shadow-sm">
+                                    <div className="w-full aspect-[4/3] bg-slate-50 rounded-xl border border-slate-200 p-2 flex items-center justify-center overflow-hidden">
+                                      <img
+                                        src={previewSrc}
+                                        alt={ex.imageCaption || 'Aperçu Photo Google Drive 4:3'}
+                                        referrerPolicy="no-referrer"
+                                        className="w-full h-full object-contain rounded-lg"
+                                      />
+                                    </div>
                                     {ex.imageCaption && (
-                                      <p className="text-[10.5px] text-slate-300 italic mt-1.5 font-medium">{ex.imageCaption}</p>
+                                      <p className="text-xs text-slate-700 italic mt-2 font-bold">🖼️ {ex.imageCaption}</p>
                                     )}
                                   </div>
                                 );

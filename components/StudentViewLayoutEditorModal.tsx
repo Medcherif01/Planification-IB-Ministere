@@ -13,6 +13,7 @@ import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './Scie
 import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import EvaluationPrintView from './EvaluationPrintView';
+import RichExerciseContent from './RichExerciseContent';
 import { resolveArtworkOrImage, convertGoogleDriveUrl } from '../services/artworkService';
 import { generateDiagramOrMapWithGeminiAI } from '../services/educationalDiagramService';
 
@@ -597,10 +598,18 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                 </button>
               )}
 
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-purple-100 text-purple-900 border border-purple-200">
-                <Clock size={14} className="text-purple-600" />
-                <span>{draftEval.durationMinutes || 45}:00</span>
-              </div>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-indigo-50 text-indigo-900 border border-indigo-200">
+                <span>📋 Copie Exemplaire Élève (Sans compteur · Modifiable)</span>
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setViewMode(prev => (prev === 'organize' ? 'pure_student' : 'organize'))}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow-xs transition"
+              >
+                <Edit3 size={13} />
+                <span>{viewMode === 'organize' ? 'Masquer zones d\'édition' : '✏️ Modifier (Manuel ou IA)'}</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1016,48 +1025,80 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                             </div>
                           </div>
 
-                          {/* Énoncé de l'exercice : directement modifiable en mode 'organize' */}
-                          {viewMode === 'organize' ? (
-                            <div className="space-y-1.5">
-                              <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
-                                <span>
-                                  {hasSubQuestions ? 'Contexte / Énoncé général du problème :' : 'Consigne / Énoncé de la question :'}
+                          {/* Énoncé de l'exercice : rendu riche identique à l'élève (avec gras, tableaux, listes) + édition manuelle ou IA */}
+                          {ex.content && (
+                            <div className="bg-slate-50/90 p-4 rounded-2xl border border-slate-200/80">
+                              <RichExerciseContent content={ex.content} />
+                            </div>
+                          )}
+
+                          {viewMode === 'organize' && (
+                            <div className="space-y-1.5 bg-indigo-50/50 p-3 rounded-2xl border border-indigo-200/80">
+                              <div className="flex items-center justify-between text-[11px] font-bold text-indigo-950 flex-wrap gap-2">
+                                <span className="flex items-center gap-1.5">
+                                  <Edit3 size={12} className="text-indigo-600" />
+                                  <span>
+                                    {hasSubQuestions ? '✏️ Modification manuelle du contexte / énoncé (utilisez **texte** pour mettre en gras) :' : '✏️ Modification manuelle de la consigne (utilisez **texte** pour mettre en gras) :'}
+                                  </span>
                                 </span>
-                                {!hasSubQuestions && (!ex.type || ex.type === 'open') && (
-                                  <div className="flex items-center gap-1.5">
-                                    <span>Hauteur zone de réponse :</span>
-                                    <select
-                                      value={ex.expectedLines || layout.answerBoxRows || 4}
-                                      onChange={e =>
-                                        handleUpdateExerciseField(critIdx, exIdx, {
-                                          expectedLines: parseInt(e.target.value) || 4,
-                                        })
-                                      }
-                                      className="p-1 bg-slate-100 border border-slate-300 rounded font-bold text-xs text-slate-800"
-                                    >
-                                      {[2, 3, 4, 5, 6, 8, 10].map(n => (
-                                        <option key={n} value={n}>
-                                          {n} lignes
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                )}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleUpdateExerciseField(critIdx, exIdx, {
+                                        content: `${ex.content || ''} **texte en gras**`,
+                                      })
+                                    }
+                                    className="px-2 py-0.5 bg-white hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded font-black text-[11px]"
+                                    title="Ajouter du texte en gras"
+                                  >
+                                    <strong>B</strong> Gras
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setAiModalTarget({
+                                        critIdx,
+                                        exIdx,
+                                        initialStrand: ex.strandIndex || 'i',
+                                        initialType: hasSubQuestions ? 'subquestions' : (ex.type || 'open'),
+                                      })
+                                    }
+                                    className="px-2.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-black text-[11px] flex items-center gap-1"
+                                  >
+                                    <Sparkles size={11} className="text-yellow-300" />
+                                    <span>Modifier cette question avec IA</span>
+                                  </button>
+                                  {!hasSubQuestions && (!ex.type || ex.type === 'open') && (
+                                    <div className="flex items-center gap-1">
+                                      <span>Lignes :</span>
+                                      <select
+                                        value={ex.expectedLines || layout.answerBoxRows || 4}
+                                        onChange={e =>
+                                          handleUpdateExerciseField(critIdx, exIdx, {
+                                            expectedLines: parseInt(e.target.value) || 4,
+                                          })
+                                        }
+                                        className="p-0.5 bg-white border border-slate-300 rounded font-bold text-xs text-slate-800"
+                                      >
+                                        {[2, 3, 4, 5, 6, 8, 10].map(n => (
+                                          <option key={n} value={n}>
+                                            {n}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                               <textarea
                                 value={ex.content}
                                 onChange={e => handleUpdateExerciseField(critIdx, exIdx, { content: e.target.value })}
                                 rows={hasSubQuestions ? 2 : 3}
-                                placeholder="Saisissez l'énoncé de la question ici..."
-                                className="w-full p-3.5 bg-slate-50/90 hover:bg-white focus:bg-white border border-slate-300 focus:border-purple-500 rounded-2xl text-sm text-slate-900 font-medium leading-relaxed focus:outline-none transition"
+                                placeholder="Saisissez ou modifiez l'énoncé de la question ici..."
+                                className="w-full p-3 bg-white border border-indigo-200 focus:border-purple-500 rounded-xl text-sm text-slate-900 font-medium leading-relaxed focus:outline-none transition"
                               />
                             </div>
-                          ) : (
-                            ex.content && (
-                              <div className="bg-slate-50/90 p-4 rounded-2xl text-sm text-slate-800 whitespace-pre-wrap leading-relaxed border border-slate-200/80 font-medium">
-                                {ex.content}
-                              </div>
-                            )
                           )}
 
                           {/* Insertion / Modification de Diagramme Gemini AI ou Lien Google Drive en mode Organisation */}
@@ -1155,33 +1196,35 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                             </div>
                           )}
 
-                          {/* Image si présente */}
+                          {/* Image / Figure / Photo Google Drive (Format 4:3 très clair et bien visible) */}
                           {ex.imageUrl && (() => {
                             if (ex.imageUrl.startsWith('<svg')) {
                               return (
-                                <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
+                                <div className="my-3 p-3.5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-center shadow-xs">
                                   <div
-                                    className="max-h-60 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-60 [&>svg]:max-w-full [&>svg]:mx-auto"
+                                    className="w-full max-w-xl mx-auto aspect-[4/3] bg-white rounded-xl border border-slate-200 p-2 flex items-center justify-center overflow-hidden [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain"
                                     dangerouslySetInnerHTML={{ __html: ex.imageUrl }}
                                   />
                                   {ex.imageCaption && (
-                                    <p className="text-xs text-slate-600 italic mt-2">{ex.imageCaption}</p>
+                                    <p className="text-xs text-slate-700 font-bold italic mt-2">🖼️ {ex.imageCaption}</p>
                                   )}
                                 </div>
                               );
                             }
                             const resolved = resolveArtworkOrImage(ex.imageUrl, ex.imageCaption);
-                            const src = resolved?.imageUrl || ex.imageUrl;
+                            const src = resolved?.imageUrl || convertGoogleDriveUrl(ex.imageUrl) || ex.imageUrl;
                             return (
-                              <div className="my-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-center">
-                                <img
-                                  src={src}
-                                  alt={ex.imageCaption || 'Illustration'}
-                                  referrerPolicy="no-referrer"
-                                  className="max-h-60 max-w-full mx-auto object-contain rounded-xl"
-                                />
+                              <div className="my-3 p-3.5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-center shadow-xs">
+                                <div className="w-full max-w-xl mx-auto aspect-[4/3] bg-white rounded-xl border border-slate-200 p-2 flex items-center justify-center overflow-hidden shadow-2xs">
+                                  <img
+                                    src={src}
+                                    alt={ex.imageCaption || 'Figure / Photo Google Drive (4:3)'}
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-contain"
+                                  />
+                                </div>
                                 {ex.imageCaption && (
-                                  <p className="text-xs text-slate-600 italic mt-2">{ex.imageCaption}</p>
+                                  <p className="text-xs text-slate-700 font-bold italic mt-2">🖼️ {ex.imageCaption}</p>
                                 )}
                               </div>
                             );
@@ -1201,27 +1244,28 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                     className="bg-slate-50/70 border-2 border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3"
                                   >
                                     <div className="flex items-start justify-between gap-2">
-                                      <div className="flex items-center gap-2.5 flex-1">
+                                      <div className="flex items-start gap-2.5 flex-1">
                                         <span className="font-black text-sm text-white bg-purple-700 px-2.5 py-1 rounded-lg flex-shrink-0">
                                           {sub.label || `${sIdx + 1})`}
                                         </span>
-                                        {viewMode === 'organize' ? (
-                                          <input
-                                            type="text"
-                                            value={sub.content}
-                                            onChange={e =>
-                                              handleUpdateSubQuestionField(critIdx, exIdx, sIdx, {
-                                                content: e.target.value,
-                                              })
-                                            }
-                                            placeholder={`Énoncé de la sous-question ${sub.label || `${sIdx + 1})`}...`}
-                                            className="flex-1 p-2 bg-white border border-slate-300 focus:border-purple-500 rounded-xl text-sm font-bold text-slate-900 focus:outline-none"
-                                          />
-                                        ) : (
-                                          <h5 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
-                                            {sub.content}
-                                          </h5>
-                                        )}
+                                        <div className="flex-1 space-y-2">
+                                          <div className="font-bold text-sm sm:text-base text-slate-900 leading-snug">
+                                            <RichExerciseContent content={sub.content || `Sous-question ${sIdx + 1}`} />
+                                          </div>
+                                          {viewMode === 'organize' && (
+                                            <input
+                                              type="text"
+                                              value={sub.content}
+                                              onChange={e =>
+                                                handleUpdateSubQuestionField(critIdx, exIdx, sIdx, {
+                                                  content: e.target.value,
+                                                })
+                                              }
+                                              placeholder={`✏️ Modifier l'énoncé de la sous-question ${sub.label || `${sIdx + 1})`} (**gras**)...`}
+                                              className="w-full p-2 bg-white border border-indigo-200 focus:border-purple-500 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none"
+                                            />
+                                          )}
+                                        </div>
                                       </div>
 
                                       {/* Réorganisation et suppression des sous-questions */}

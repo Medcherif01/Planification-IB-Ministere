@@ -195,14 +195,14 @@ const SafeExerciseImage: React.FC<{
   // 1. Si c'est du SVG brut
   if (activeUrl.startsWith('<svg')) {
     return (
-      <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center shadow-xs">
+      <div className="my-3 p-3.5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-center shadow-xs">
         <div
           onClick={() => onZoom?.(activeUrl, imageCaption)}
-          className="max-h-72 max-w-full mx-auto flex items-center justify-center [&>svg]:max-h-72 [&>svg]:max-w-full [&>svg]:mx-auto [&>svg]:rounded-xl cursor-zoom-in"
-          title="Cliquer pour zoomer ce schéma vectoriel"
+          className="w-full max-w-xl mx-auto aspect-[4/3] bg-white rounded-xl border border-slate-200 p-2 flex items-center justify-center overflow-hidden [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain cursor-zoom-in"
+          title="Cliquer pour zoomer ce schéma vectoriel (Format 4:3)"
           dangerouslySetInnerHTML={{ __html: activeUrl }}
         />
-        <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+        <div className="mt-2.5 flex items-center justify-center gap-2 flex-wrap">
           {imageCaption && (
             <span className="text-xs text-slate-700 italic font-bold">
               🖼️ {imageCaption}
@@ -214,7 +214,7 @@ const SafeExerciseImage: React.FC<{
               onClick={() => onZoom(activeUrl, imageCaption)}
               className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
             >
-              🔍 Zoomer le document
+              🔍 Agrandir (Plein écran)
             </button>
           )}
         </div>
@@ -225,15 +225,17 @@ const SafeExerciseImage: React.FC<{
   // 2. Si c'est un SVG data URI
   if (activeUrl.startsWith('data:image/svg+xml')) {
     return (
-      <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center shadow-xs">
-        <img
-          src={activeUrl}
-          alt={imageCaption || 'Illustration vectorielle'}
-          onClick={() => onZoom?.(activeUrl, imageCaption)}
-          className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white cursor-zoom-in"
-          title="Cliquer pour zoomer"
-        />
-        <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+      <div className="my-3 p-3.5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-center shadow-xs">
+        <div className="w-full max-w-xl mx-auto aspect-[4/3] bg-white rounded-xl border border-slate-200 p-2 flex items-center justify-center overflow-hidden">
+          <img
+            src={activeUrl}
+            alt={imageCaption || 'Illustration vectorielle'}
+            onClick={() => onZoom?.(activeUrl, imageCaption)}
+            className="w-full h-full object-contain cursor-zoom-in"
+            title="Cliquer pour zoomer (Format 4:3)"
+          />
+        </div>
+        <div className="mt-2.5 flex items-center justify-center gap-2 flex-wrap">
           {imageCaption && (
             <span className="text-xs text-slate-700 italic font-bold">
               🖼️ {imageCaption}
@@ -245,7 +247,7 @@ const SafeExerciseImage: React.FC<{
               onClick={() => onZoom(activeUrl, imageCaption)}
               className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
             >
-              🔍 Zoomer le document
+              🔍 Agrandir (Plein écran)
             </button>
           )}
         </div>
@@ -330,27 +332,29 @@ const SafeExerciseImage: React.FC<{
     );
   }
 
-  // 5. Source normale avec retry par proxy en cas de blocage CORS/Referer
+  // 5. Source normale (notamment Photo Google Drive haute définition 4:3) avec retry par proxy
   const finalSrc = tryProxy ? `/api/image-proxy?url=${encodeURIComponent(activeUrl)}` : activeUrl;
 
   return (
-    <div className="my-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center">
-      <img
-        src={finalSrc}
-        alt={imageCaption || 'Illustration'}
-        referrerPolicy="no-referrer"
-        onClick={() => onZoom?.(finalSrc, imageCaption)}
-        onError={() => {
-          if (!tryProxy && (activeUrl.startsWith('http://') || activeUrl.startsWith('https://'))) {
-            setTryProxy(true);
-          } else {
-            setLoadFailed(true);
-          }
-        }}
-        className="max-h-80 max-w-full mx-auto object-contain rounded-xl shadow-xs bg-white cursor-zoom-in"
-        title="Cliquer pour zoomer en haute résolution"
-      />
-      <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+    <div className="my-3 p-3.5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-center shadow-xs">
+      <div className="w-full max-w-xl mx-auto aspect-[4/3] bg-white rounded-xl border border-slate-200 p-2 flex items-center justify-center overflow-hidden shadow-2xs">
+        <img
+          src={finalSrc}
+          alt={imageCaption || 'Figure / Photo Google Drive (4:3)'}
+          referrerPolicy="no-referrer"
+          onClick={() => onZoom?.(finalSrc, imageCaption)}
+          onError={() => {
+            if (!tryProxy && (activeUrl.startsWith('http://') || activeUrl.startsWith('https://'))) {
+              setTryProxy(true);
+            } else {
+              setLoadFailed(true);
+            }
+          }}
+          className="w-full h-full object-contain cursor-zoom-in"
+          title="Cliquer pour zoomer en haute résolution (Format 4:3)"
+        />
+      </div>
+      <div className="mt-2.5 flex items-center justify-center gap-2 flex-wrap">
         {imageCaption && (
           <span className="text-xs text-slate-700 italic font-bold">
             🖼️ {imageCaption}
@@ -1306,17 +1310,21 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     handleResponseChange(activeTextareaKey, updated);
   };
 
-  // ── Protection contre la mise en veille & Sauvegarde continue (SANS clôture automatique) ──
-  // RÈGLE : Si l'ordinateur ou la tablette de l'élève tombe en veille, sort du plein écran ou perd le focus,
-  // l'évaluation NE DOIT JAMAIS se clôturer automatiquement ni afficher d'écran blanc.
-  // Le temps reste actif et les réponses sont sauvegardées automatiquement en brouillon.
+  // ── PLEIN ÉCRAN PERSISTANT & CLÔTURE AUTOMATIQUE SUR TOUCHE ÉCHAP (ESCAPE) ──
+  // RÈGLE :
+  // - L'évaluation se déclenche automatiquement en plein écran persistant.
+  // - Le plein écran ne se quitte que lorsque l'élève clique sur "Soumettre ma copie" ou que le temps est écoulé.
+  // - Si l'élève appuie sur Échap (Escape) pour quitter le plein écran, l'évaluation se clôture et est soumise automatiquement.
   useEffect(() => {
     if (!isTakingExam) return;
 
     examStartTimeRef.current = Date.now();
     hasTriggeredViolationRef.current = false;
 
-    // 1. Suivi de l'état plein écran (sans jamais clôturer l'évaluation si la tablette/PC quitte le plein écran ou passe en veille)
+    // Activer immédiatement le plein écran dès le lancement de l'épreuve
+    enterFullscreen();
+
+    // 1. Suivi de l'état plein écran : si l'élève sort du plein écran via Échap (Escape), clôturer automatiquement l'évaluation
     const handleFullscreenChange = () => {
       const activeFs = Boolean(
         document.fullscreenElement ||
@@ -1327,8 +1335,22 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setIsFullscreen(activeFs);
       if (activeFs) {
         fullscreenEngagedRef.current = true;
+      } else if (
+        fullscreenEngagedRef.current &&
+        !isSubmittingRef.current &&
+        !isLockedAlreadyRef.current &&
+        !hasTriggeredViolationRef.current &&
+        document.visibilityState === 'visible'
+      ) {
+        // L'élève a pressé Échap pour sortir du plein écran navigateur -> Clôture automatique immédiate
+        hasTriggeredViolationRef.current = true;
+        autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
+        handleSubmitRef.current?.(
+          true,
+          "Sortie du mode plein écran (touche Échap) — Évaluation clôturée automatiquement."
+        );
+        return;
       }
-      // Sauvegarder le brouillon par sécurité lors d'une transition d'écran
       autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
     };
 
@@ -1338,16 +1360,29 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       const isInput = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || (target as any).isContentEditable);
       const hasSelection = Boolean(window.getSelection()?.toString().trim());
       if (isInput || hasSelection) {
-        return true; // Autoriser copier/coller dans l'évaluation
+        return true;
       }
       e.preventDefault();
       return false;
     };
 
-    // 3. Raccourcis clavier : autoriser le copier-coller (Ctrl+C, Ctrl+V, Cmd+C, Cmd+V), éviter le rechargement accidentel
+    // 3. Touche Échap (Escape) : clôture automatique immédiate de l'évaluation
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.code === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!isSubmittingRef.current && !isLockedAlreadyRef.current && !hasTriggeredViolationRef.current) {
+          hasTriggeredViolationRef.current = true;
+          autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
+          handleSubmitRef.current?.(
+            true,
+            "Touche Échap pressée — Évaluation clôturée automatiquement."
+          );
+        }
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'x', 'a', 'C', 'V', 'X', 'A'].includes(e.key)) {
-        return; // Ne jamais bloquer le copier-coller !
+        return;
       }
       if (
         (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) ||
@@ -1358,17 +1393,29 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       }
     };
 
-    // 4. Mise en veille / Changement de visibilité : sauvegarder le brouillon SANS clôturer l'examen
+    // Maintenir le plein écran persistant au moindre clic si le navigateur attendait un geste utilisateur
+    const handleEnsureFullscreen = () => {
+      if (isSubmittingRef.current || isLockedAlreadyRef.current || hasTriggeredViolationRef.current) return;
+      const activeFs = Boolean(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      if (!activeFs && !fullscreenEngagedRef.current) {
+        enterFullscreen();
+      }
+    };
+
+    // 4. Sauvegarde continue en brouillon
     const handleVisibilityChange = () => {
       autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
     };
 
-    // 5. Perte de focus / Mise en veille : sauvegarder le brouillon SANS clôturer l'examen
     const handleWindowBlur = () => {
       autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
     };
 
-    // 6. Fermeture accidentelle d'onglet : sauvegarder le brouillon localement sans verrouiller l'examen
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (isLockedAlreadyRef.current || isSubmittingRef.current) return;
       autoSaveDraftAnswers(answersRef.current, drawingsRef.current);
@@ -1387,9 +1434,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
     document.addEventListener('mozfullscreenchange', handleFullscreenChange);
     document.addEventListener('msfullscreenchange', handleFullscreenChange);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('pointerdown', handleEnsureFullscreen);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('contextmenu', handleContextMenu);
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
     window.addEventListener('beforeunload', handleBeforeUnload);
     window.addEventListener('pagehide', handlePageHide);
 
@@ -1399,9 +1447,10 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
       document.removeEventListener('msfullscreenchange', handleFullscreenChange);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('pointerdown', handleEnsureFullscreen);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('contextmenu', handleContextMenu);
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleKeyDown, true);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('pagehide', handlePageHide);
     };
@@ -2002,23 +2051,25 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       : safeAssessments.map((c, idx) => ({ crit: c, critIdx: idx }));
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col select-text">
-      {/* 🛡️ BANNIÈRE MODE CONFORT & PROTECTION MISE EN VEILLE */}
-      {!isFullscreen && isTakingExam && (
-        <div className="bg-indigo-900 text-white px-4 py-2 flex items-center justify-between gap-3 text-xs shadow-sm border-b border-indigo-700">
+    <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-100 text-slate-900 flex flex-col select-text">
+      {/* 🛡️ BANNIÈRE MODE PLEIN ÉCRAN PERSISTANT */}
+      {isTakingExam && (
+        <div className="bg-slate-900 text-white px-4 py-1.5 flex items-center justify-between gap-3 text-[11px] shadow-sm border-b border-slate-800">
           <div className="flex items-center gap-2">
-            <ShieldCheck size={16} className="text-emerald-300 flex-shrink-0" />
+            <ShieldCheck size={15} className="text-emerald-400 flex-shrink-0" />
             <span>
-              <strong>Sauvegarde continue active :</strong> Si votre ordinateur ou tablette se met en veille, l'évaluation <strong>ne se clôture pas</strong> (vos réponses sont préservées et le temps reste actif).
+              <strong>Mode Plein Écran Sécurisé Actif :</strong> Ne touchez pas la touche <strong>Échap (Esc)</strong> avant d'avoir terminé (la touche Échap clôture et remet automatiquement votre copie).
             </span>
           </div>
-          <button
-            type="button"
-            onClick={enterFullscreen}
-            className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-indigo-950 font-black rounded-xl text-xs transition shadow-sm flex-shrink-0"
-          >
-            Mode plein écran
-          </button>
+          {!isFullscreen && (
+            <button
+              type="button"
+              onClick={enterFullscreen}
+              className="px-3 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-lg text-[11px] transition shadow-xs flex-shrink-0"
+            >
+               Plein écran intégral
+            </button>
+          )}
         </div>
       )}
 

@@ -1009,36 +1009,60 @@ export function resolveArtworkOrImage(
   textContext?: string
 ): { imageUrl: string; imageCaption: string; artwork?: ArtworkItem } | null {
   const srcRaw = (sourceUrl || '').trim();
+  const isGoogleDriveLink =
+    srcRaw.includes('drive.google.com') ||
+    srcRaw.includes('lh3.googleusercontent.com') ||
+    srcRaw.includes('docs.google.com') ||
+    srcRaw.startsWith('/api/image-proxy');
+
   const src = srcRaw.includes('drive.google.com') ? convertGoogleDriveUrl(srcRaw) : srcRaw;
   const context = (textContext || '').trim();
 
-  // 1. Si sourceUrl est déjà un SVG data URI ou SVG brut, il est parfait
+  // 1. PRIORITÉ ABSOLUE : Si l'enseignant a inséré un lien Google Drive (photo/figure Drive), toujours afficher la photo Drive !
+  if (isGoogleDriveLink) {
+    const finalUrl = srcRaw.startsWith('/api/image-proxy')
+      ? srcRaw
+      : `/api/image-proxy?url=${encodeURIComponent(srcRaw)}`;
+    return {
+      imageUrl: finalUrl,
+      imageCaption: context || ''
+    };
+  }
+
+  // 2. Si sourceUrl est déjà un SVG data URI ou SVG brut, il est parfait
   if (src.startsWith('data:image/svg+xml') || src.startsWith('<svg')) {
     return { imageUrl: src, imageCaption: context || 'Schéma / Figure vectorielle' };
   }
 
-  // 2. Vérifier si sourceUrl ou textContext correspond à une oeuvre d'art du catalogue
+  // 3. Si sourceUrl est une image data:image/ standard ou chemin relatif local
+  if (src.startsWith('data:image/') || src.startsWith('/')) {
+    return { imageUrl: src, imageCaption: context || '' };
+  }
+
+  // 4. Si sourceUrl est une URL HTTP/HTTPS externe personnalisée (qui n'est pas une URL Wikimedia par défaut du catalogue)
+  const isCatalogueUrl = FAMOUS_ARTWORKS.some(art => art.url === src);
+  if ((src.startsWith('http://') || src.startsWith('https://')) && !isCatalogueUrl) {
+    return {
+      imageUrl: `/api/image-proxy?url=${encodeURIComponent(src)}`,
+      imageCaption: context || ''
+    };
+  }
+
+  // 5. Sinon, vérifier si sourceUrl ou textContext correspond à une oeuvre d'art du catalogue
   const matched = findMatchingArtwork(`${src} ${context}`);
   if (matched) {
     return {
-      // Priorité au SVG autonome : zéro échec réseau, qualité rétina parfaite
       imageUrl: matched.svgDataUri,
       imageCaption: matched.caption,
       artwork: matched
     };
   }
 
-  // 3. Si sourceUrl est une image data:image/ standard ou chemin relatif local
-  if (src.startsWith('data:image/') || src.startsWith('/')) {
-    return { imageUrl: src, imageCaption: context || 'Document visuel' };
-  }
-
-  // 4. Si sourceUrl est une URL HTTP/HTTPS externe (incluant Google Drive converti)
+  // 6. Fallback URL HTTP/HTTPS externe
   if (src.startsWith('http://') || src.startsWith('https://')) {
     return {
-      // Utiliser le proxy sécurisé pour éviter 403 / CORS
       imageUrl: `/api/image-proxy?url=${encodeURIComponent(src)}`,
-      imageCaption: context || 'Document visuel d\'accompagnement'
+      imageCaption: context || ''
     };
   }
 
