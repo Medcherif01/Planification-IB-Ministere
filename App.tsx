@@ -491,21 +491,30 @@ const App: React.FC = () => {
 
   if (view === AppView.TEACHER_EVALUATIONS) {
     return (
-      <TeacherEvaluationsManager
-        currentSubject={session?.subject}
-        currentGrade={session?.grade}
-        allUnitPlans={currentPlans}
-        currentUser={currentUser}
-        onClose={() => {
+      <ErrorBoundary
+        fallbackTitle="Erreur d'affichage du gestionnaire d'évaluations électroniques"
+        onReset={() => {
           const nextView = session ? AppView.DASHBOARD : AppView.HOME;
           setView(nextView);
           localStorage.setItem('currentView', nextView);
         }}
-        onOpenStudentPortal={(code) => {
-          setInitialStudentCode(code);
-          setView(AppView.STUDENT_PORTAL);
-        }}
-      />
+      >
+        <TeacherEvaluationsManager
+          currentSubject={session?.subject}
+          currentGrade={session?.grade}
+          allUnitPlans={currentPlans}
+          currentUser={currentUser}
+          onClose={() => {
+            const nextView = session ? AppView.DASHBOARD : AppView.HOME;
+            setView(nextView);
+            localStorage.setItem('currentView', nextView);
+          }}
+          onOpenStudentPortal={(code) => {
+            setInitialStudentCode(code);
+            setView(AppView.STUDENT_PORTAL);
+          }}
+        />
+      </ErrorBoundary>
     );
   }
 

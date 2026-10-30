@@ -1250,7 +1250,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                               const targetKey = hasSubQuestions
                                 ? `${activeAssessment.criterion}_${exIdx}_sub_0`
                                 : `${activeAssessment.criterion}_${exIdx}`;
-                              handleTestResponseChange(targetKey, newVal);
+                              setTestAnswers(prev => ({ ...prev, [targetKey]: newVal }));
                             }}
                           />
 

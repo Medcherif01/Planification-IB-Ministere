@@ -18,6 +18,7 @@ import ChaptersLessonsViewer from './ChaptersLessonsViewer';
 import GradedEvaluationsRecapModal from './GradedEvaluationsRecapModal';
 import DistributeChaptersModal from './DistributeChaptersModal';
 import TeacherEvaluationsManager from './TeacherEvaluationsManager';
+import ErrorBoundary from './ErrorBoundary';
 
 interface DashboardProps {
   currentSubject: string;
@@ -3895,17 +3896,25 @@ Chapitre 4 : Algèbre et équations
     />
 
     {isOnlineEvaluationsOpen && (
-      <TeacherEvaluationsManager
-        currentSubject={currentSubject}
-        currentGrade={currentGrade}
-        currentUnitPlan={onlineEvalTargetPlan}
-        allUnitPlans={plans}
-        currentUser={currentUser}
-        onClose={() => {
+      <ErrorBoundary
+        fallbackTitle="Erreur lors de l'ouverture des évaluations électroniques"
+        onReset={() => {
           setIsOnlineEvaluationsOpen(false);
           setOnlineEvalTargetPlan(null);
         }}
-      />
+      >
+        <TeacherEvaluationsManager
+          currentSubject={currentSubject}
+          currentGrade={currentGrade}
+          currentUnitPlan={onlineEvalTargetPlan}
+          allUnitPlans={plans}
+          currentUser={currentUser}
+          onClose={() => {
+            setIsOnlineEvaluationsOpen(false);
+            setOnlineEvalTargetPlan(null);
+          }}
+        />
+      </ErrorBoundary>
     )}
 
     {/* ═══════════════════════════════════════════════════════════════════

@@ -282,7 +282,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     let withEvals = 0;
     let withoutEvals = 0;
     unitsForSelectedSubject.forEach(unit => {
-      const hasEvals = evaluations.some(e => e.unitId === unit.id || (e.unitTitle && e.unitTitle.toLowerCase() === unit.title.toLowerCase()));
+      const uTitle = (unit.title || '').toLowerCase();
+      const hasEvals = evaluations.some(e => e.unitId === unit.id || (e.unitTitle && uTitle && e.unitTitle.toLowerCase() === uTitle));
       if (hasEvals) withEvals++;
       else withoutEvals++;
     });
@@ -292,7 +293,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   // Unités filtrées selon le filtre de statut (toutes, déjà générées, non encore générées)
   const displayedUnits = useMemo(() => {
     return unitsForSelectedSubject.filter(unit => {
-      const hasEvals = evaluations.some(e => e.unitId === unit.id || (e.unitTitle && e.unitTitle.toLowerCase() === unit.title.toLowerCase()));
+      const uTitle = (unit.title || '').toLowerCase();
+      const hasEvals = evaluations.some(e => e.unitId === unit.id || (e.unitTitle && uTitle && e.unitTitle.toLowerCase() === uTitle));
       if (unitEvalStatusFilter === 'generated') return hasEvals;
       if (unitEvalStatusFilter === 'pending') return !hasEvals;
       return true;
@@ -419,9 +421,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
     const isEn = isEnglishSubject(editingEvaluation.subject);
     const savedCriteria = getCriteriaSync(editingEvaluation.subject, editingEvaluation.grade);
-    const savedCritObj = savedCriteria?.criteria?.find(c => c.letter === targetCrit.criterion);
+    const savedCritObj = savedCriteria?.criteria?.find(c => c.criterion === targetCrit.criterion);
     if (savedCritObj && (!targetCrit.strands || targetCrit.strands.length === 0)) {
-      targetCrit.strands = savedCritObj.strands.map(s => `${s.id}. ${s.description}`);
+      targetCrit.strands = [...savedCritObj.strands];
     }
 
     const count = (targetCrit.exercises || []).length + 1;
@@ -429,7 +431,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const roman = romanNumerals[(count - 1) % romanNumerals.length];
     const defaultStrandText =
       targetCrit.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') ||
-      savedCritObj?.strands?.find(s => s.id === roman)?.description ||
+      savedCritObj?.strands?.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '') ||
       (isEn ? `Objective ${targetCrit.criterion} (${roman})` : `Compétence ${targetCrit.criterion}`);
 
     let newExercise: AssessmentExercise;
@@ -722,16 +724,16 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const existingInParent = parentUnit?.assessments?.find(a => a.criterion === criterionLetter);
     const isEn = isEnglishSubject(editingEvaluation.subject);
     const savedCriteria = getCriteriaSync(editingEvaluation.subject, editingEvaluation.grade);
-    const savedCritObj = savedCriteria?.criteria?.find(c => c.letter === criterionLetter);
+    const savedCritObj = savedCriteria?.criteria?.find(c => c.criterion === criterionLetter);
 
     const newEval = JSON.parse(JSON.stringify(editingEvaluation)) as OnlineEvaluation;
 
     if (existingInParent) {
       const cloned = JSON.parse(JSON.stringify(existingInParent));
       if (savedCritObj) {
-        cloned.criterionName = savedCritObj.name || cloned.criterionName;
+        cloned.criterionName = savedCritObj.criterionName || cloned.criterionName;
         if (savedCritObj.strands?.length) {
-          cloned.strands = savedCritObj.strands.map(s => `${s.id}. ${s.description}`);
+          cloned.strands = [...savedCritObj.strands];
         }
       }
       newEval.assessments.push(cloned);
@@ -750,7 +752,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             D: 'Application dans des contextes réels',
           };
       const officialStrands = savedCritObj?.strands?.length
-        ? savedCritObj.strands.map(s => `${s.id}. ${s.description}`)
+        ? [...savedCritObj.strands]
         : isEn
         ? [
             'i. Identify explicit and implicit information (facts, opinions, messages and supporting details)',
@@ -765,17 +767,17 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       const firstStrandDesc = officialStrands[0]?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
 
       newEval.assessments.push({
-        criterion: criterionLetter,
-        criterionName: savedCritObj?.name || criterionNames[criterionLetter] || (isEn ? `Criterion ${criterionLetter}` : `Critère ${criterionLetter}`),
-        maxPoints: savedCritObj?.maxScore || 8,
+        criterion: criterionLetter as 'A' | 'B' | 'C' | 'D',
+        criterionName: savedCritObj?.criterionName || criterionNames[criterionLetter] || (isEn ? `Criterion ${criterionLetter}` : `Critère ${criterionLetter}`),
+        maxPoints: savedCritObj?.maxPoints || 8,
         strands: officialStrands,
         rubricRows: isEn
           ? [
               { level: '0', descriptor: 'The student does not reach a standard described by any of the descriptors below.' },
-              { level: '1-2', descriptor: `1-2 (i, ii, iii): Limited achievement in ${savedCritObj?.name || criterionLetter}.` },
-              { level: '3-4', descriptor: `3-4 (i, ii, iii): Adequate achievement in ${savedCritObj?.name || criterionLetter}.` },
-              { level: '5-6', descriptor: `5-6 (i, ii, iii): Substantial achievement in ${savedCritObj?.name || criterionLetter}.` },
-              { level: '7-8', descriptor: `7-8 (i, ii, iii): Excellent achievement in ${savedCritObj?.name || criterionLetter}.` },
+              { level: '1-2', descriptor: `1-2 (i, ii, iii): Limited achievement in ${savedCritObj?.criterionName || criterionLetter}.` },
+              { level: '3-4', descriptor: `3-4 (i, ii, iii): Adequate achievement in ${savedCritObj?.criterionName || criterionLetter}.` },
+              { level: '5-6', descriptor: `5-6 (i, ii, iii): Substantial achievement in ${savedCritObj?.criterionName || criterionLetter}.` },
+              { level: '7-8', descriptor: `7-8 (i, ii, iii): Excellent achievement in ${savedCritObj?.criterionName || criterionLetter}.` },
             ]
           : [
               { level: '0', descriptor: 'L\'élève n\'atteint aucun des niveaux décrits ci-dessous.' },
@@ -1514,10 +1516,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     const list = evaluations.filter(e => {
       const q = searchQuery.toLowerCase().trim();
       if (q && !(
-        e.title.toLowerCase().includes(q) ||
-        e.accessCode.toLowerCase().includes(q) ||
-        e.subject.toLowerCase().includes(q) ||
-        e.grade.toLowerCase().includes(q) ||
+        (e.title || '').toLowerCase().includes(q) ||
+        (e.accessCode || '').toLowerCase().includes(q) ||
+        (e.subject || '').toLowerCase().includes(q) ||
+        (e.grade || '').toLowerCase().includes(q) ||
         (e.unitTitle && e.unitTitle.toLowerCase().includes(q))
       )) {
         return false;

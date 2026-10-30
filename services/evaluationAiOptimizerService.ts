@@ -335,10 +335,10 @@ export async function optimizeEvaluationWithAI(params: OptimizeEvaluationParams)
 
   // Préparation du résumé des évaluations existantes à optimiser en injectant les objectifs IB sauvegardés par les enseignants
   const existingSummary = filteredExisting.map(crit => {
-    const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.id === crit.criterion);
-    const officialCriterionName = savedCrit?.name || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`);
+    const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.criterion === crit.criterion);
+    const officialCriterionName = savedCrit?.criterionName || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`);
     const officialStrands = savedCrit?.strands?.length
-      ? savedCrit.strands.map(s => `${s.id}. ${s.description}`)
+      ? [...savedCrit.strands]
       : crit.strands;
 
     return {
@@ -511,15 +511,15 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
       const validated: AssessmentData[] = parsed.map((item: any, idx: number) => {
         const original = filteredExisting.find(o => o.criterion === item.criterion) || filteredExisting[idx];
         const critCode = (item.criterion || original?.criterion || 'A') as 'A' | 'B' | 'C' | 'D';
-        const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.id === critCode);
+        const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.criterion === critCode);
 
-        const officialCriterionName = savedCrit?.name
+        const officialCriterionName = savedCrit?.criterionName
           || item.criterionName
           || original?.criterionName
           || (isEn ? `Criterion ${critCode}` : `Critère ${critCode}`);
 
         const officialStrands = savedCrit?.strands?.length
-          ? savedCrit.strands.map(s => `${s.id}. ${s.description}`)
+          ? [...savedCrit.strands]
           : (Array.isArray(item.strands) && item.strands.length > 0 ? item.strands : original?.strands || []);
 
         const officialRubricRows = Array.isArray(item.rubricRows) && item.rubricRows.length > 0
@@ -563,8 +563,8 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
             }
 
             const sIdx = ex.strandIndex || 'i';
-            const matchedSavedStrand = savedCrit?.strands?.find(s => s.id === sIdx);
-            const officialStrandText = matchedSavedStrand?.description || ex.strandText || '';
+            const matchedSavedStrand = savedCrit?.strands?.find(s => s.toLowerCase().startsWith(`${sIdx.toLowerCase()}.`));
+            const officialStrandText = matchedSavedStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || ex.strandText || '';
 
             return {
               title: cleanTitle,
@@ -583,13 +583,13 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
               subQuestions: Array.isArray(ex.subQuestions) && ex.subQuestions.length > 0
                 ? ex.subQuestions.map((sq: any, sqIdx: number) => {
                     const sqStrand = sq.strandIndex || 'i';
-                    const matchedSqStrand = savedCrit?.strands?.find(s => s.id === sqStrand);
+                    const matchedSqStrand = savedCrit?.strands?.find(s => s.toLowerCase().startsWith(`${sqStrand.toLowerCase()}.`));
                     return {
                       id: sq.id || `sub_${sqIdx + 1}`,
                       label: sq.label || `${sqIdx + 1})`,
                       content: formatProfessionalHtml(sq.content) || '',
                       strandIndex: sqStrand,
-                      strandText: matchedSqStrand?.description || sq.strandText || '',
+                      strandText: matchedSqStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || sq.strandText || '',
                       type: sq.type || 'open',
                       options: Array.isArray(sq.options) ? sq.options.map((o: any) => stripHtmlTags(String(o))) : undefined,
                       correctAnswer: sq.correctAnswer ? stripHtmlTags(String(sq.correctAnswer)) : undefined,
@@ -627,10 +627,10 @@ export function sanitizeAndFormatLocalAssessments(
   const savedCriteriaConfig = gradeLevel ? getCriteriaSync(subject, gradeLevel) : null;
 
   return assessments.map(crit => {
-    const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.id === crit.criterion);
-    const officialCriterionName = savedCrit?.name || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`);
+    const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.criterion === crit.criterion);
+    const officialCriterionName = savedCrit?.criterionName || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`);
     const officialStrands = savedCrit?.strands?.length
-      ? savedCrit.strands.map(s => `${s.id}. ${s.description}`)
+      ? [...savedCrit.strands]
       : crit.strands;
 
     const seenTitles = new Set<string>();
@@ -672,7 +672,7 @@ export function sanitizeAndFormatLocalAssessments(
       }
 
       const sIdx = ex.strandIndex || 'i';
-      const matchedSavedStrand = savedCrit?.strands?.find(s => s.id === sIdx);
+      const matchedSavedStrand = savedCrit?.strands?.find(s => s.toLowerCase().startsWith(`${sIdx.toLowerCase()}.`));
 
       uniqueExercises.push({
         ...ex,
@@ -681,17 +681,17 @@ export function sanitizeAndFormatLocalAssessments(
         criterionReference: ex.criterionReference
           ? (isEn ? String(ex.criterionReference).replace(/^Critère/i, 'Criterion') : ex.criterionReference)
           : (isEn ? `Criterion ${crit.criterion}: ${sIdx}.` : `Critère ${crit.criterion} : ${sIdx}.`),
-        strandText: matchedSavedStrand?.description || ex.strandText || '',
+        strandText: matchedSavedStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || ex.strandText || '',
         imageUrl: imageUrl || undefined,
         imageCaption: imageCaption || undefined,
         answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
         options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
         subQuestions: ex.subQuestions?.map(sq => {
           const sqStrand = sq.strandIndex || 'i';
-          const matchedSqStrand = savedCrit?.strands?.find(s => s.id === sqStrand);
+          const matchedSqStrand = savedCrit?.strands?.find(s => s.toLowerCase().startsWith(`${sqStrand.toLowerCase()}.`));
           return {
             ...sq,
-            strandText: matchedSqStrand?.description || sq.strandText || '',
+            strandText: matchedSqStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || sq.strandText || '',
             content: formatProfessionalHtml(sq.content),
             options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
           };
