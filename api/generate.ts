@@ -326,6 +326,57 @@ async function generateWithGeminiRotation(
   }
 }
 
+// Variable permettant de générer par IA les photos, diagrammes, oeuvres et cartes (Nano Banana par défaut)
+export const AI_IMAGE_MODEL = process.env.AI_IMAGE_MODEL || 'gemini-3.1-flash-lite-image';
+
+async function tryGenerateImageWithNanoBanana(
+  keys: string[],
+  promptText: string,
+  customModel?: string
+): Promise<{ imageDataUri: string; caption?: string } | null> {
+  const modelsToTry = [
+    customModel || AI_IMAGE_MODEL,
+    'gemini-3.1-flash-lite-image',
+    'gemini-2.5-flash-image',
+  ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
+
+  for (const model of modelsToTry) {
+    for (let i = 0; i < Math.min(keys.length, 3); i++) {
+      const apiKey = keys[i];
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: promptText }] }],
+          }),
+        });
+        if (!resp.ok) continue;
+        const json: any = await resp.json();
+        const parts: any[] = json?.candidates?.[0]?.content?.parts || [];
+        let imageDataUri = '';
+        let caption = '';
+        for (const part of parts) {
+          if (part?.inlineData?.data) {
+            const mime = part.inlineData.mimeType || 'image/png';
+            imageDataUri = `data:${mime};base64,${part.inlineData.data}`;
+          } else if (part?.text) {
+            caption += part.text;
+          }
+        }
+        if (imageDataUri) {
+          console.log(`✅ [NanoBanana/${model}] Image IA générée avec succès !`);
+          return { imageDataUri, caption: caption.trim() };
+        }
+      } catch {
+        // Passer à la clé/modèle suivant
+      }
+    }
+  }
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Handler principal Vercel — Gemini UNIQUEMENT avec multi-modèles + retry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,9 +402,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { contents, systemInstruction, generationConfig } = req.body;
-    if (!contents) {
+    const { contents, systemInstruction, generationConfig, generateImage, imagePrompt, imageModel } = req.body;
+    if (!contents && !imagePrompt) {
       return res.status(400).json({ error: 'Missing contents in request body' });
+    }
+
+    // Si une génération d'image IA (ex: Nano Banana) est demandée pour illustrer un exercice
+    if (generateImage) {
+      const promptForImg = typeof imagePrompt === 'string' && imagePrompt.trim()
+        ? imagePrompt
+        : typeof contents === 'string'
+        ? contents
+        : JSON.stringify(contents);
+      const nanoResult = await tryGenerateImageWithNanoBanana(geminiKeys, promptForImg, imageModel);
+      if (nanoResult?.imageDataUri) {
+        return res.status(200).json({
+          imageDataUri: nanoResult.imageDataUri,
+          caption: nanoResult.caption,
+          modelUsed: imageModel || AI_IMAGE_MODEL,
+          text: JSON.stringify({
+            imageDataUri: nanoResult.imageDataUri,
+            caption: nanoResult.caption,
+          }),
+        });
+      }
     }
 
     console.log(`🔑 ${geminiKeys.length} clé(s) Gemini — lancement génération…`);

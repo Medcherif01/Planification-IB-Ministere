@@ -12,6 +12,26 @@ export interface AssessmentSubQuestion {
   expectedLines?: number; // Hauteur de la zone de réponse (nombre de lignes)
 }
 
+export interface InteractiveDropZone {
+  id: string;
+  prompt: string;
+  correctLabel?: string;
+}
+
+export interface InteractiveExerciseModule {
+  type: 'table' | 'drag_labels' | 'virtual_lab';
+  title?: string;
+  instructions?: string;
+  // Pour 'table' (Tableau à remplir par l'élève)
+  tableHeaders?: string[];
+  tableRows?: string[][]; // Les cellules vides "" ou contenant "[...]" sont à remplir par l'élève
+  // Pour 'drag_labels' (Étiquettes à déplacer / Glisser-déposer)
+  labels?: string[];
+  dropZones?: InteractiveDropZone[];
+  // Pour 'virtual_lab' (Manipulation de laboratoire / Expérience virtuelle)
+  labType?: 'circuit' | 'chemistry_ph' | 'optics_mechanics' | 'biology_microscope';
+}
+
 export interface AssessmentExercise {
   title: string;
   content: string;
@@ -27,6 +47,7 @@ export interface AssessmentExercise {
   imageUrl?: string; // Photo / oeuvre d'art / figure géométrique
   imageCaption?: string; // Légende de l'oeuvre (titre, artiste, date)
   subQuestions?: AssessmentSubQuestion[]; // Sous-questions 1), 2), 3)... avec chacune son sous-aspect individuel
+  interactiveModule?: InteractiveExerciseModule; // Tableau à remplir, étiquettes à déplacer ou labo virtuel
 }
 
 export interface AssessmentData {

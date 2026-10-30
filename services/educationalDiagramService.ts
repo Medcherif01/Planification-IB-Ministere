@@ -1321,66 +1321,177 @@ export function detectAndAttachEducationalDiagram(
 }
 
 /**
- * Génère à la demande un schéma, diagramme scientifique, figure géométrique ou carte géographique
- * vectoriel (SVG haute définition) via Gemini AI (/api/generate) parfaitement adapté à la question.
+ * Variable globale définissant le modèle IA pour générer automatiquement les photos,
+ * diagrammes, schémas, oeuvres d'art et cartes géographiques (Nano Banana par défaut).
+ */
+export const AI_IMAGE_GENERATION_MODEL =
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_AI_IMAGE_MODEL) ||
+  'gemini-3.1-flash-lite-image';
+
+/**
+ * Détecte si l'énoncé ou le titre d'un exercice fait référence à un diagramme, une photo,
+ * une oeuvre, une carte, un schéma scientifique ou une figure géométrique qui doit être illustré.
+ */
+export function shouldExerciseHaveVisual(
+  subject: string,
+  exerciseTitle: string,
+  exerciseContent: string
+): boolean {
+  const combined = `${subject || ''} ${exerciseTitle || ''} ${stripHtmlTags(exerciseContent || '')}`.toLowerCase();
+  const visualKeywords = [
+    'diagramme', 'schéma', 'schema', 'carte', 'figure', 'image', 'photo', 'oeuvre', 'œuvre',
+    'tableau artistique', 'peinture', 'sculpture', 'croquis', 'illustration', 'observez',
+    'observer le document', 'ci-dessous', 'ci-contre', 'repère', 'graphique', 'courbe',
+    'circuit', 'cellule', 'anatomie', 'appareil', 'microscope', 'expérience', 'montage',
+    'triangle', 'cercle', 'cylindre', 'cône', 'pyramide', 'polygone', 'vecteur',
+    'diagram', 'map', 'picture', 'figure below', 'chart', 'artwork', 'painting', 'sketch'
+  ];
+  return visualKeywords.some(kw => combined.includes(kw));
+}
+
+/**
+ * Génère automatiquement (ou à la demande) une photo IA (Nano Banana / AI_IMAGE_GENERATION_MODEL),
+ * un diagramme scientifique, une oeuvre d'art, une figure géométrique ou une carte géographique
+ * via Gemini AI (/api/generate) et le place directement dans l'exercice correspondant.
  */
 export async function generateDiagramOrMapWithGeminiAI(params: {
   subject: string;
-  gradeLevel: string;
+  gradeLevel?: string;
+  grade?: string;
   unitTitle?: string;
   exerciseTitle?: string;
   exerciseContent?: string;
   customPrompt?: string;
+  imageModel?: string;
 }): Promise<{ imageUrl: string; imageCaption: string }> {
+  const effectiveGrade = params.gradeLevel || params.grade || 'PEI';
+  const modelToUse = params.imageModel || AI_IMAGE_GENERATION_MODEL;
   const isEn = /english|anglais|acquisition/i.test(params.subject || '');
   const cleanStatement = stripHtmlTags(params.exerciseContent || '');
   const userDescription = (params.customPrompt || '').trim();
 
   const systemInstruction = `You are an expert IB MYP educational illustrator, cartographer, and scientific diagram designer.
-Generate a clean, pedagogically accurate, high-resolution SVG (<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg">...</svg>) and a concise caption.
+Generate a clean, pedagogically accurate, high-resolution SVG (<svg viewBox="0 0 680 510" xmlns="http://www.w3.org/2000/svg">...</svg>) in 4:3 format and a concise caption.
 Rules:
 1. Return ONLY valid JSON with keys: {"svg": "<svg ...>...</svg>", "caption": "..."}
 2. The SVG MUST be self-contained, crisp, legible, with a clean white or soft slate background, clear labels, arrows, legends, or geographic/geometric markers matching the question.
 3. All labels inside the SVG and the caption MUST be in ${isEn ? 'English' : 'French'}.
 4. Do NOT wrap the SVG in markdown code blocks inside the JSON string.`;
 
-  const prompt = `Create an educational diagram, schema, geometric figure, or geographic map for:
-- Subject: ${params.subject} (${params.gradeLevel})
+  const prompt = `Create an educational diagram, schema, artwork illustration, geometric figure, or geographic map for:
+- Subject: ${params.subject} (${effectiveGrade})
 - Unit: ${params.unitTitle || ''}
 - Question Title: ${params.exerciseTitle || ''}
 - Question Context: ${cleanStatement}
 ${userDescription ? `- Teacher's Specific Visual Request: ${userDescription}` : ''}
 
-Return JSON: {"svg": "<svg viewBox=\\"0 0 680 380\\" xmlns=\\"http://www.w3.org/2000/svg\\">...</svg>", "caption": "..."}`;
+Return JSON: {"svg": "<svg viewBox=\\"0 0 680 510\\" xmlns=\\"http://www.w3.org/2000/svg\\">...</svg>", "caption": "..."}`;
 
-  const res = await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: prompt,
-      systemInstruction,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.4,
-      },
-    }),
-  });
+  const imagePrompt = `Educational high-clarity 4:3 illustration, diagram, map or artwork for IB MYP ${params.subject} (${effectiveGrade}): ${userDescription || `${params.exerciseTitle || ''} - ${cleanStatement.slice(0, 350)}`}. Clean pedagogical visual with clear labels in ${isEn ? 'English' : 'French'}.`;
 
-  if (!res.ok) {
-    throw new Error(`Erreur de génération IA (${res.status})`);
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: prompt,
+        systemInstruction,
+        generateImage: true,
+        imagePrompt,
+        imageModel: modelToUse,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.4,
+        },
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      // 1. Si Nano Banana (AI_IMAGE_MODEL) a généré une image bitmap directe :
+      if (data?.imageDataUri && String(data.imageDataUri).startsWith('data:image/')) {
+        return {
+          imageUrl: data.imageDataUri,
+          imageCaption: String(
+            data.caption ||
+              userDescription ||
+              params.exerciseTitle ||
+              (isEn ? 'AI Generated Educational Visual' : 'Illustration / Diagramme généré par IA')
+          ),
+        };
+      }
+
+      // 2. Sinon, lecture du SVG vectoriel haute définition généré par Gemini :
+      let raw = (data?.text || '').trim();
+      raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+      const parsed = JSON.parse(raw);
+      if (parsed?.imageDataUri && String(parsed.imageDataUri).startsWith('data:image/')) {
+        return {
+          imageUrl: parsed.imageDataUri,
+          imageCaption: String(
+            parsed.caption ||
+              userDescription ||
+              params.exerciseTitle ||
+              (isEn ? 'AI Generated Educational Visual' : 'Illustration / Diagramme généré par IA')
+          ),
+        };
+      }
+      const svgCode = String(parsed.svg || '').trim();
+      if (svgCode.startsWith('<svg')) {
+        return {
+          imageUrl: toSvgDataUri(svgCode),
+          imageCaption: String(
+            parsed.caption ||
+              userDescription ||
+              params.exerciseTitle ||
+              (isEn ? 'Educational Diagram' : 'Document visuel')
+          ),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Fallback local diagram after AI generation warning:', err);
   }
 
-  const data = await res.json();
-  let raw = (data?.text || '').trim();
-  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-  const parsed = JSON.parse(raw);
-  const svgCode = String(parsed.svg || '').trim();
-  if (!svgCode.startsWith('<svg')) {
-    throw new Error('Le schéma généré par Gemini AI est invalide.');
+  // 3. Fallback local immédiat 100% garanti si hors-ligne ou quota dépassé
+  const fallback = detectAndAttachEducationalDiagram(
+    params.subject || '',
+    params.unitTitle || '',
+    params.exerciseTitle || '',
+    `${userDescription} ${cleanStatement}`
+  );
+  if (fallback) {
+    return fallback;
   }
+
+  // 4. Schéma synthétique générique sur-mesure à partir du titre de l'exercice
+  const safeTitle = (userDescription || params.exerciseTitle || 'Schéma explicatif').replace(/[<>&"]/g, ' ').slice(0, 65);
+  const safeSub = cleanStatement.replace(/[<>&"]/g, ' ').slice(0, 95);
+  const autoSvg = `<svg viewBox="0 0 680 510" xmlns="http://www.w3.org/2000/svg">
+    <rect width="680" height="510" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="3"/>
+    <rect x="24" y="24" width="632" height="58" rx="12" fill="#4f46e5"/>
+    <text x="340" y="59" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#ffffff">${safeTitle}</text>
+    <rect x="44" y="110" width="260" height="140" rx="14" fill="#eef2ff" stroke="#6366f1" stroke-width="2.5"/>
+    <text x="174" y="155" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#312e81">${isEn ? 'Key Elements & Data' : 'Données & Repères Clés'}</text>
+    <text x="174" y="188" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#4338ca">${params.subject || 'IB MYP'} · ${effectiveGrade}</text>
+    <path d="M 314 180 L 366 180" stroke="#4f46e5" stroke-width="4" marker-end="url(#arrow)"/>
+    <rect x="376" y="110" width="260" height="140" rx="14" fill="#ecfdf5" stroke="#10b981" stroke-width="2.5"/>
+    <text x="506" y="155" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#065f46">${isEn ? 'Analysis & Application' : 'Analyse & Modélisation'}</text>
+    <text x="506" y="188" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#047857">${isEn ? 'Observe and justify' : 'Observer et justifier'}</text>
+    <rect x="44" y="285" width="592" height="175" rx="14" fill="#ffffff" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6,4"/>
+    <circle cx="150" cy="372" r="48" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>
+    <text x="150" y="377" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1e40af">A</text>
+    <line x1="198" y1="372" x2="310" y2="372" stroke="#2563eb" stroke-width="3"/>
+    <polygon points="340,324 400,420 280,420" fill="#fef3c7" stroke="#d97706" stroke-width="3"/>
+    <text x="340" y="395" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#92400e">B</text>
+    <line x1="385" y1="372" x2="480" y2="372" stroke="#10b981" stroke-width="3"/>
+    <rect x="480" y="328" width="110" height="88" rx="10" fill="#f3e8ff" stroke="#9333ea" stroke-width="3"/>
+    <text x="535" y="377" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#6b21a8">C</text>
+    <text x="340" y="485" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-style="italic" fill="#475569">${safeSub}</text>
+  </svg>`;
 
   return {
-    imageUrl: toSvgDataUri(svgCode),
-    imageCaption: String(parsed.caption || userDescription || params.exerciseTitle || (isEn ? 'Educational Diagram' : 'Document visuel')),
+    imageUrl: toSvgDataUri(autoSvg),
+    imageCaption: userDescription || params.exerciseTitle || (isEn ? 'Educational Diagram' : 'Schéma pédagogique illustré'),
   };
 }

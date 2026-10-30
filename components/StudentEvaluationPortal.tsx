@@ -12,6 +12,7 @@ import { ScientificCalculatorModal, MathSymbolsAndBracketsToolbar } from './Scie
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import VirtualTabletKeyboard from './VirtualTabletKeyboard';
 import RichExerciseContent from './RichExerciseContent';
+import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, findMatchingArtwork, generateDynamicMuseumArtCard, getSafeArtworkImageUrl } from '../services/artworkService';
 import { getEvaluationByAccessCode, getStudentSubmission, getLocalSubmissions, createOrUpdateEvaluation, submitStudentEvaluation } from '../services/onlineEvaluationService';
 
@@ -2449,6 +2450,25 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                           <div className="bg-slate-50/90 p-4 rounded-2xl border border-slate-200/80">
                             <RichExerciseContent content={ex.content} />
                           </div>
+                        )}
+
+                        {/* MODULE INTERACTIF ÉLÈVE : TABLEAU À REMPLIR, ÉTIQUETTES À DÉPLACER OU LABORATOIRE VIRTUEL */}
+                        {ex.interactiveModule && (
+                          <InteractiveExerciseWidgets
+                            module={ex.interactiveModule}
+                            subject={evaluation.subject}
+                            currentAnswer={
+                              hasSubQuestions
+                                ? answers[`${activeAssessment.criterion}_${exIdx}_sub_0`] || ''
+                                : answers[`${activeAssessment.criterion}_${exIdx}`] || ''
+                            }
+                            onUpdateAnswer={newVal => {
+                              const targetKey = hasSubQuestions
+                                ? `${activeAssessment.criterion}_${exIdx}_sub_0`
+                                : `${activeAssessment.criterion}_${exIdx}`;
+                              handleResponseChange(targetKey, newVal);
+                            }}
+                          />
                         )}
 
                         {/* ═══════════════════════════════════════════════════════════

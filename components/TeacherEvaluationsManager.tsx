@@ -12,6 +12,7 @@ import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
 import { optimizeEvaluationWithAI, formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
 import RichExerciseContent from './RichExerciseContent';
+import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import {
   EDUCATIONAL_DIAGRAMS,
   detectAndAttachEducationalDiagram,
@@ -20,6 +21,8 @@ import {
   generateDynamicSolid,
   generateDynamicPlantCell,
   generateDiagramOrMapWithGeminiAI,
+  shouldExerciseHaveVisual,
+  AI_IMAGE_GENERATION_MODEL,
   stripHtmlTags,
 } from '../services/educationalDiagramService';
 import {
@@ -89,6 +92,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const [evalSemesterFilter, setEvalSemesterFilter] = useState<string>('');
   const [unitEvalStatusFilter, setUnitEvalStatusFilter] = useState<'all' | 'generated' | 'pending'>('all');
   const [evalSortOrder, setEvalSortOrder] = useState<'newest' | 'oldest'>('newest');
+
+  // Variables de classe et d'enseignant sécurisées pour éviter tout ReferenceError
+  const selectedGrade = currentGrade || unitGradeFilter || '';
+  const currentUserName = currentUser?.displayName || currentUser?.username || 'Enseignant';
 
   // État pour la génération de schémas/cartes via Gemini AI dans l'éditeur de questions (Exigence 6)
   const [geminiDiagramPromptMap, setGeminiDiagramPromptMap] = useState<Record<string, string>>({});
@@ -982,68 +989,96 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         });
       }
 
-      // Nettoyage et formatage HTML professionnel soigné (conservation absolue des tableaux, gras, listes)
-      finalAssessments = finalAssessments.map(crit => ({
-        ...crit,
-        exercises: (crit.exercises || []).map(ex => {
-          const cleanTitle = stripHtmlTags(ex.title);
-          const cleanContent = formatProfessionalHtml(ex.content);
-          let imageUrl = ex.imageUrl || '';
-          let imageCaption = ex.imageCaption || '';
+      // Nettoyage et formatage HTML professionnel + Génération automatique des photos/diagrammes IA (Nano Banana / AI_IMAGE_GENERATION_MODEL)
+      finalAssessments = await Promise.all(
+        finalAssessments.map(async crit => ({
+          ...crit,
+          exercises: await Promise.all(
+            (crit.exercises || []).map(async ex => {
+              const cleanTitle = stripHtmlTags(ex.title);
+              const cleanContent = formatProfessionalHtml(ex.content);
+              let imageUrl = ex.imageUrl || '';
+              let imageCaption = ex.imageCaption || '';
 
-          // 1. Résolution d'oeuvres d'art ou de documents visuels authentiques
-          const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
-          if (resolvedArt) {
-            imageUrl = resolvedArt.imageUrl;
-            imageCaption = resolvedArt.imageCaption;
-          } else {
-            // Valider que imageUrl est bien une source d'image (data URI, url http/https, chemin, svg)
-            const isRealImage = Boolean(
-              imageUrl && (
-                imageUrl.startsWith('data:image/') ||
-                imageUrl.startsWith('http://') ||
-                imageUrl.startsWith('https://') ||
-                imageUrl.startsWith('/') ||
-                imageUrl.startsWith('<svg')
-              )
-            );
-            if (!isRealImage) {
-              if (!imageCaption && imageUrl.length > 5) {
-                imageCaption = imageUrl;
+              // 1. Résolution d'oeuvres d'art ou de documents visuels authentiques
+              const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
+              if (resolvedArt) {
+                imageUrl = resolvedArt.imageUrl;
+                imageCaption = resolvedArt.imageCaption;
+              } else {
+                // Valider que imageUrl est bien une source d'image (data URI, url http/https, chemin, svg)
+                const isRealImage = Boolean(
+                  imageUrl && (
+                    imageUrl.startsWith('data:image/') ||
+                    imageUrl.startsWith('http://') ||
+                    imageUrl.startsWith('https://') ||
+                    imageUrl.startsWith('/') ||
+                    imageUrl.startsWith('<svg')
+                  )
+                );
+                if (!isRealImage) {
+                  if (!imageCaption && imageUrl.length > 5) {
+                    imageCaption = imageUrl;
+                  }
+                  imageUrl = '';
+                }
+
+                const effectiveSubject = selectedPlanForCreate.subject || currentSubject || '';
+                const needsVisual =
+                  insertVisualDiagramsOnCreate ||
+                  Boolean(imageCaption) ||
+                  shouldExerciseHaveVisual(effectiveSubject, cleanTitle, cleanContent);
+
+                if (!imageUrl && needsVisual) {
+                  const detected = detectAndAttachEducationalDiagram(
+                    effectiveSubject,
+                    selectedPlanForCreate.title || '',
+                    cleanTitle,
+                    stripHtmlTags(cleanContent)
+                  );
+                  if (detected) {
+                    imageUrl = detected.imageUrl;
+                    imageCaption = detected.imageCaption;
+                  } else if (shouldExerciseHaveVisual(effectiveSubject, cleanTitle, cleanContent) || imageCaption) {
+                    try {
+                      const aiVisual = await generateDiagramOrMapWithGeminiAI({
+                        subject: effectiveSubject,
+                        gradeLevel: targetGrade,
+                        unitTitle: selectedPlanForCreate.title,
+                        exerciseTitle: cleanTitle,
+                        exerciseContent: stripHtmlTags(cleanContent),
+                        customPrompt: imageCaption || undefined,
+                        imageModel: AI_IMAGE_GENERATION_MODEL,
+                      });
+                      if (aiVisual?.imageUrl) {
+                        imageUrl = aiVisual.imageUrl;
+                        imageCaption = aiVisual.imageCaption;
+                      }
+                    } catch {
+                      // En cas d'erreur réseau, on conserve l'exercice intact
+                    }
+                  }
+                }
               }
-              imageUrl = '';
-            }
 
-            if (!imageUrl && insertVisualDiagramsOnCreate) {
-              const detected = detectAndAttachEducationalDiagram(
-                selectedPlanForCreate.subject || currentSubject || '',
-                selectedPlanForCreate.title || '',
-                cleanTitle,
-                stripHtmlTags(cleanContent)
-              );
-              if (detected) {
-                imageUrl = detected.imageUrl;
-                imageCaption = detected.imageCaption;
-              }
-            }
-          }
-
-          return {
-            ...ex,
-            title: cleanTitle,
-            content: cleanContent,
-            imageUrl: imageUrl || undefined,
-            imageCaption: imageCaption || undefined,
-            answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
-            options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
-            subQuestions: ex.subQuestions?.map(sq => ({
-              ...sq,
-              content: formatProfessionalHtml(sq.content),
-              options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
-            })),
-          };
-        }),
-      }));
+              return {
+                ...ex,
+                title: cleanTitle,
+                content: cleanContent,
+                imageUrl: imageUrl || undefined,
+                imageCaption: imageCaption || undefined,
+                answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
+                options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
+                subQuestions: ex.subQuestions?.map(sq => ({
+                  ...sq,
+                  content: formatProfessionalHtml(sq.content),
+                  options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
+                })),
+              };
+            })
+          ),
+        }))
+      );
 
       const newEval = await createOrUpdateEvaluation({
         accessCode: code,
@@ -2241,15 +2276,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
                           <div className="flex items-center gap-2 flex-shrink-0">
                             <button
-                              onClick={() => {
-                                setSelectedUnitId(unit.id);
-                                setNewTitle(
-                                  isEnglishSubject(unit.subject)
-                                    ? `Summative Assessment — ${unit.title}`
-                                    : `Évaluation Sommative — ${unit.title}`
-                                );
-                                setShowCreateModal(true);
-                              }}
+                              onClick={() => handleLaunchForUnit(unit)}
                               className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl text-xs font-black transition shadow flex items-center gap-1.5"
                             >
                               <Plus size={14} />
@@ -2271,15 +2298,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                 </p>
                               </div>
                               <button
-                                onClick={() => {
-                                  setSelectedUnitId(unit.id);
-                                  setNewTitle(
-                                    isEnglishSubject(unit.subject)
-                                      ? `Summative Assessment — ${unit.title}`
-                                      : `Évaluation Sommative — ${unit.title}`
-                                  );
-                                  setShowCreateModal(true);
-                                }}
+                                onClick={() => handleLaunchForUnit(unit)}
                                 className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition flex-shrink-0"
                               >
                                 + Créer l'évaluation de l'unité
@@ -4080,6 +4099,18 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                 );
                               })()}
                             </div>
+
+                            {/* 🧪 ACTIVITÉS INTERACTIVES ÉLÈVE (TABLEAU À REMPLIR, ÉTIQUETTES À DÉPLACER, LABO VIRTUEL) */}
+                            <InteractiveExerciseWidgets
+                              module={ex.interactiveModule}
+                              subject={editingEvaluation.subject || ''}
+                              isTeacherEditMode={true}
+                              onUpdateModule={newMod =>
+                                handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
+                                  interactiveModule: newMod,
+                                })
+                              }
+                            />
                           </div>
                         );
                       })}

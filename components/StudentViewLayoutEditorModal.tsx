@@ -14,6 +14,7 @@ import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterial
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import EvaluationPrintView from './EvaluationPrintView';
 import RichExerciseContent from './RichExerciseContent';
+import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, convertGoogleDriveUrl } from '../services/artworkService';
 import { generateDiagramOrMapWithGeminiAI } from '../services/educationalDiagramService';
 
@@ -1229,6 +1230,29 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                               </div>
                             );
                           })()}
+
+                          {/* MODULE INTERACTIF ÉLÈVE (TABLEAU À REMPLIR, ÉTIQUETTES À DÉPLACER, LABO VIRTUEL) */}
+                          <InteractiveExerciseWidgets
+                            module={ex.interactiveModule}
+                            subject={draftEval.subject || ''}
+                            isTeacherEditMode={viewMode === 'organize'}
+                            onUpdateModule={newMod =>
+                              handleUpdateExerciseField(critIdx, exIdx, {
+                                interactiveModule: newMod,
+                              })
+                            }
+                            currentAnswer={
+                              hasSubQuestions
+                                ? testAnswers[`${activeAssessment.criterion}_${exIdx}_sub_0`] || ''
+                                : testAnswers[`${activeAssessment.criterion}_${exIdx}`] || ''
+                            }
+                            onUpdateAnswer={newVal => {
+                              const targetKey = hasSubQuestions
+                                ? `${activeAssessment.criterion}_${exIdx}_sub_0`
+                                : `${activeAssessment.criterion}_${exIdx}`;
+                              handleTestResponseChange(targetKey, newVal);
+                            }}
+                          />
 
                           {/* Sous-questions ou Question directe */}
                           {hasSubQuestions ? (
