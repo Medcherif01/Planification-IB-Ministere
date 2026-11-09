@@ -14,7 +14,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.30.0",
+    "@google/genai": "^3.0.0",
     "docx": "^9.5.1",
     "docxtemplater": "3.42.0",
     "esbuild": "^0.28.2",

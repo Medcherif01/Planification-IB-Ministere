@@ -1326,7 +1326,7 @@ export function detectAndAttachEducationalDiagram(
  */
 export const AI_IMAGE_GENERATION_MODEL =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_AI_IMAGE_MODEL) ||
-  'gemini-2.5-flash-image';
+  'gemini-nano-banana-2.1';
 
 export type NanoBananaVisualStyle =
   | 'auto'
@@ -1531,39 +1531,23 @@ export async function generateDiagramOrMapWithGeminiAI(params: {
     isEn,
   });
 
-  const systemInstruction = `You are an expert IB MYP educational illustrator, scientific visualizer, and cartographer.
-Generate a richly detailed, exercise-specific, high-resolution SVG illustration (<svg viewBox="0 0 680 510" xmlns="http://www.w3.org/2000/svg">...</svg>) in 4:3 format and a pedagogical caption directly tied to the exercise scenario.
-CRITICAL RULES:
-1. Return ONLY valid JSON with keys: {"svg": "<svg ...>...</svg>", "caption": "..."}
-2. NEVER draw a generic 3-box flowchart ("A -> B -> C"). Instead, draw the ACTUAL concrete scene, experimental apparatus, anatomical/biological structure, architectural/geometric situation with exact measurements (${measurements.join(', ') || 'from the prompt'}), data chart, or geographic map described in the exercise!
-3. Use rich SVG gradients, detailed shapes, realistic colors, clear annotations, dimension arrows, and legends in ${isEn ? 'English' : 'French'}.
-4. Do NOT wrap the SVG in markdown code blocks inside the JSON string.`;
-
-  const prompt = `Create a rich, detailed, context-specific educational illustration for this exact exercise:
-- Subject: ${params.subject} (${effectiveGrade})
-- Unit: ${params.unitTitle || ''}
-- Exercise Title: ${params.exerciseTitle || ''}
-- Full Exercise Scenario & Data: ${cleanStatement}
-- Extracted Measurements / Values: ${measurements.join(', ') || 'See text'}
-- Visual Style Requested: ${visualStyle}
-${userDescription ? `- Teacher's Specific Visual Request: ${userDescription}` : ''}
-
-Draw the concrete visual scene, apparatus, figure, or map that directly illustrates this exercise so students can observe and analyze it.
-Return JSON: {"svg": "<svg viewBox=\\"0 0 680 510\\" xmlns=\\"http://www.w3.org/2000/svg\\">...</svg>", "caption": "..."}`;
-
   try {
     const res = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: prompt,
-        systemInstruction,
+        contents: imagePrompt,
         generateImage: true,
         imagePrompt,
         imageModel: modelToUse,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.4,
+        exerciseMeta: {
+          subject: params.subject || 'IB MYP',
+          grade: effectiveGrade,
+          unitTitle: params.unitTitle || '',
+          exerciseTitle: params.exerciseTitle || '',
+          exerciseContent: cleanStatement,
+          customPrompt: userDescription,
+          visualStyle,
         },
       }),
     });
@@ -1573,38 +1557,17 @@ Return JSON: {"svg": "<svg viewBox=\\"0 0 680 510\\" xmlns=\\"http://www.w3.org/
       const defaultCaption =
         userDescription ||
         (params.exerciseTitle
-          ? `${isEn ? 'Visual Document — ' : 'Document visuel contextualisé — '}${params.exerciseTitle.replace(/^(?:Tâche|Task|Exercice)\s*\d*\s*[:\-]\s*/i, '')}`
+          ? `${isEn ? 'Visual Document — ' : 'Document photographique — '}${params.exerciseTitle.replace(/^(?:Tâche|Task|Exercice)\s*\d*\s*[:\-]\s*/i, '')}`
           : isEn
           ? 'Contextual Educational Visual (Nano Banana AI)'
-          : 'Illustration pédagogique contextualisée (Nano Banana IA)');
+          : 'Illustration photographique contextualisée (Nano Banana IA)');
 
-      // 1. Si Nano Banana (gemini-2.5-flash-image / gemini-3.1-flash-image-preview) a généré une vraie photo bitmap :
       if (data?.imageDataUri && String(data.imageDataUri).startsWith('data:image/')) {
         const cleanCaption = String(data.caption || '').trim();
         return {
           imageUrl: data.imageDataUri,
-          imageCaption: cleanCaption.length > 5 && cleanCaption.length < 220 ? cleanCaption : defaultCaption,
+          imageCaption: cleanCaption.length > 5 && cleanCaption.length < 240 ? cleanCaption : defaultCaption,
           modelUsed: data.modelUsed || modelToUse,
-        };
-      }
-
-      // 2. Sinon, lecture de l'illustration vectorielle riche générée sur-mesure par Gemini :
-      let raw = (data?.text || '').trim();
-      raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-      const parsed = JSON.parse(raw);
-      if (parsed?.imageDataUri && String(parsed.imageDataUri).startsWith('data:image/')) {
-        return {
-          imageUrl: parsed.imageDataUri,
-          imageCaption: String(parsed.caption || defaultCaption),
-          modelUsed: data.modelUsed || modelToUse,
-        };
-      }
-      const svgCode = String(parsed.svg || '').trim();
-      if (svgCode.startsWith('<svg')) {
-        return {
-          imageUrl: toSvgDataUri(svgCode),
-          imageCaption: String(parsed.caption || defaultCaption),
-          modelUsed: 'gemini-svg-contextual',
         };
       }
     }
@@ -1771,6 +1734,21 @@ export async function generateNanoBananaPhotosForAssessments<T extends {
       });
     });
   });
+
+  // Si tous les exercices avaient déjà une image et que l'enseignant clique explicitement sur le bouton de génération,
+  // on régénère toutes les photos pour remplacer les visuels existants par de nouvelles photos Nano Banana.
+  if (tasksToProcess.length === 0 && !onlyContextualExercises) {
+    cloned.forEach((crit, critIdx) => {
+      (crit.exercises || []).forEach((ex, exIdx) => {
+        tasksToProcess.push({
+          critIdx,
+          exIdx,
+          title: ex.title,
+          content: ex.content,
+        });
+      });
+    });
+  }
 
   let generatedCount = 0;
   for (let i = 0; i < tasksToProcess.length; i++) {

@@ -1038,32 +1038,34 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                   shouldExerciseHaveVisual(effectiveSubject, cleanTitle, cleanContent);
 
                 if (!imageUrl && needsVisual) {
-                  const detected = detectAndAttachEducationalDiagram(
-                    effectiveSubject,
-                    selectedPlanForCreate.title || '',
-                    cleanTitle,
-                    stripHtmlTags(cleanContent)
-                  );
-                  if (detected) {
-                    imageUrl = detected.imageUrl;
-                    imageCaption = detected.imageCaption;
-                  } else if (shouldExerciseHaveVisual(effectiveSubject, cleanTitle, cleanContent) || imageCaption) {
-                    try {
-                      const aiVisual = await generateDiagramOrMapWithGeminiAI({
-                        subject: effectiveSubject,
-                        gradeLevel: targetGrade,
-                        unitTitle: selectedPlanForCreate.title,
-                        exerciseTitle: cleanTitle,
-                        exerciseContent: stripHtmlTags(cleanContent),
-                        customPrompt: imageCaption || undefined,
-                        imageModel: AI_IMAGE_GENERATION_MODEL,
-                      });
-                      if (aiVisual?.imageUrl) {
-                        imageUrl = aiVisual.imageUrl;
-                        imageCaption = aiVisual.imageCaption;
-                      }
-                    } catch {
-                      // En cas d'erreur réseau, on conserve l'exercice intact
+                  try {
+                    const aiVisual = await generateDiagramOrMapWithGeminiAI({
+                      subject: effectiveSubject,
+                      gradeLevel: targetGrade,
+                      unitTitle: selectedPlanForCreate.title,
+                      exerciseTitle: cleanTitle,
+                      exerciseContent: stripHtmlTags(cleanContent),
+                      customPrompt: imageCaption || undefined,
+                      imageModel: AI_IMAGE_GENERATION_MODEL,
+                    });
+                    if (aiVisual?.imageUrl) {
+                      imageUrl = aiVisual.imageUrl;
+                      imageCaption = aiVisual.imageCaption;
+                    }
+                  } catch {
+                    // Repli ci-dessous si besoin
+                  }
+
+                  if (!imageUrl) {
+                    const detected = detectAndAttachEducationalDiagram(
+                      effectiveSubject,
+                      selectedPlanForCreate.title || '',
+                      cleanTitle,
+                      stripHtmlTags(cleanContent)
+                    );
+                    if (detected) {
+                      imageUrl = detected.imageUrl;
+                      imageCaption = detected.imageCaption;
                     }
                   }
                 }
