@@ -21,6 +21,9 @@ import {
   generateDynamicSolid,
   generateDynamicPlantCell,
   generateDiagramOrMapWithGeminiAI,
+  generateNanoBananaPhotosForAssessments,
+  NANO_BANANA_VISUAL_STYLES,
+  NanoBananaVisualStyle,
   shouldExerciseHaveVisual,
   AI_IMAGE_GENERATION_MODEL,
   stripHtmlTags,
@@ -97,9 +100,12 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
   const selectedGrade = currentGrade || unitGradeFilter || '';
   const currentUserName = currentUser?.displayName || currentUser?.username || 'Enseignant';
 
-  // État pour la génération de schémas/cartes via Gemini AI dans l'éditeur de questions (Exigence 6)
+  // État pour la génération de photos/illustrations contextuelles via Nano Banana (Gemini AI) dans l'éditeur de questions
   const [geminiDiagramPromptMap, setGeminiDiagramPromptMap] = useState<Record<string, string>>({});
   const [isGeneratingDiagramKey, setIsGeneratingDiagramKey] = useState<string | null>(null);
+  const [nanoVisualStyle, setNanoVisualStyle] = useState<NanoBananaVisualStyle>('auto');
+  const [batchNanoEvalId, setBatchNanoEvalId] = useState<string | null>(null);
+  const [batchNanoProgressText, setBatchNanoProgressText] = useState<string | null>(null);
 
   // Formattage soigné de la date de génération
   const formatEvaluationDate = (dateStr?: string): string => {
@@ -1551,6 +1557,51 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     });
   }, [evaluations, searchQuery, evalUnitFilter, evalSemesterFilter, evalCompletionFilter, evalSortOrder, allSubmissionsMap]);
 
+  // Générer en 1 clic les photos IA contextuelles (Nano Banana) pour tous les exercices d'une évaluation
+  const handleBatchGenerateNanoPhotosForEval = async (targetEval: OnlineEvaluation, isInsideEditor = false) => {
+    if (!targetEval || !targetEval.assessments || targetEval.assessments.length === 0) return;
+    setBatchNanoEvalId(targetEval.id);
+    setBatchNanoProgressText('🍌 Nano Banana IA : analyse des exercices…');
+    try {
+      const { updatedAssessments, generatedCount } = await generateNanoBananaPhotosForAssessments({
+        assessments: targetEval.assessments,
+        subject: targetEval.subject || currentSubject || '',
+        gradeLevel: targetEval.grade || currentGrade || 'PEI',
+        unitTitle: targetEval.unitTitle || targetEval.title,
+        visualStyle: nanoVisualStyle,
+        overwriteExisting: true,
+        onlyContextualExercises: false,
+        onProgress: (curr, tot, title) => {
+          setBatchNanoProgressText(`🍌 Photo IA (${curr}/${tot}) : ${title.slice(0, 26)}…`);
+        },
+      });
+
+      const updatedEvalObj: OnlineEvaluation = {
+        ...targetEval,
+        assessments: updatedAssessments,
+      };
+
+      if (isInsideEditor) {
+        setEditingEvaluation(updatedEvalObj);
+      }
+
+      const saved = await createOrUpdateEvaluation(updatedEvalObj);
+      setEvaluations(prev => prev.map(item => (item.id === saved.id ? saved : item)));
+      if (selectedEvaluation?.id === saved.id) {
+        setSelectedEvaluation(saved);
+      }
+      if (isInsideEditor) {
+        setEditingEvaluation(saved);
+      }
+      console.log(`✅ ${generatedCount} photo(s) contextuelle(s) Nano Banana générée(s) pour ${saved.title}`);
+    } catch (err) {
+      console.error('Erreur génération Nano Banana par lot:', err);
+    } finally {
+      setBatchNanoEvalId(null);
+      setBatchNanoProgressText(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden my-auto border border-slate-200">
@@ -1571,9 +1622,12 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     🔒 Classe : {selectedGrade}
                   </span>
                 )}
+                <span className="px-2.5 py-0.5 bg-amber-400/20 border border-amber-300/40 text-amber-200 rounded-full text-[11px] font-black">
+                  🍌 Photos IA Nano Banana intégrées
+                </span>
               </div>
               <p className="text-purple-100 text-xs">
-                Organisées par Unité · Visualisation Version Élève · Correction IA selon critères IB · Impression A4
+                Interface simplifiée Enseignant & Élève · Photos IA en lien direct avec chaque exercice · Correction IA IB · Impression A4
               </p>
             </div>
           </div>
@@ -1611,6 +1665,26 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             </button>
           </div>
         </header>
+
+        {/* ── BARRE DE PARCOURS SIMPLIFIÉ EN 4 ÉTAPES POUR L'ENSEIGNANT ── */}
+        <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-amber-50 border-b border-indigo-100 px-5 py-2.5 grid grid-cols-2 lg:grid-cols-4 gap-2 text-[11px] flex-shrink-0">
+          <div className="flex items-center gap-2 bg-white/90 px-3 py-1.5 rounded-xl border border-indigo-200/80 shadow-2xs">
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white font-black text-[10px] flex items-center justify-center flex-shrink-0">1</span>
+            <span className="font-bold text-slate-800 truncate"><strong>Préparer & Illustrer :</strong> Questions + Photos IA 🍌 Nano Banana</span>
+          </div>
+          <div className="flex items-center gap-2 bg-white/90 px-3 py-1.5 rounded-xl border border-teal-200/80 shadow-2xs">
+            <span className="w-5 h-5 rounded-full bg-teal-600 text-white font-black text-[10px] flex items-center justify-center flex-shrink-0">2</span>
+            <span className="font-bold text-slate-800 truncate"><strong>Vérifier :</strong> Aperçu de la Feuille Élève & Sujet A4</span>
+          </div>
+          <div className="flex items-center gap-2 bg-white/90 px-3 py-1.5 rounded-xl border border-amber-200/80 shadow-2xs">
+            <span className="w-5 h-5 rounded-full bg-amber-500 text-white font-black text-[10px] flex items-center justify-center flex-shrink-0">3</span>
+            <span className="font-bold text-slate-800 truncate"><strong>Diffuser :</strong> Lien Google Classroom & Matricules élèves</span>
+          </div>
+          <div className="flex items-center gap-2 bg-white/90 px-3 py-1.5 rounded-xl border border-emerald-200/80 shadow-2xs">
+            <span className="w-5 h-5 rounded-full bg-emerald-600 text-white font-black text-[10px] flex items-center justify-center flex-shrink-0">4</span>
+            <span className="font-bold text-slate-800 truncate"><strong>Corriger :</strong> Réception en direct & Correction IA IB</span>
+          </div>
+        </div>
 
         {/* ── BARRE D'ONGLETS RAPIDES : TOUTES LES LANCÉES VS DÉJÀ FAITES PAR LES ÉLÈVES ── */}
         <div className="bg-slate-100 border-b border-slate-200 px-5 py-3 flex items-center justify-between gap-3 flex-wrap flex-shrink-0">
@@ -1946,10 +2020,15 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               </div>
             </div>
 
-            {/* Fonction de rendu d'une carte d'évaluation électronique */}
+            {/* Fonction de rendu d'une carte d'évaluation électronique bien organisée */}
             {(() => {
               const renderEvaluationCard = (ev: OnlineEvaluation) => {
                 const totalPoints = (ev.assessments || []).reduce((acc, a) => acc + (a.maxPoints || 8), 0);
+                const totalExercises = (ev.assessments || []).reduce((acc, a) => acc + (a.exercises?.length || 0), 0);
+                const totalIllustrated = (ev.assessments || []).reduce(
+                  (acc, a) => acc + (a.exercises || []).filter(ex => Boolean(ex.imageUrl)).length,
+                  0
+                );
                 const isLinkCopied = copiedCode === `link_${ev.accessCode}`;
                 const subsForEv = allSubmissionsMap[ev.id] || [];
                 const gradedCount = subsForEv.filter(s => s.status === 'graded').length;
@@ -1957,10 +2036,10 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 const codes = ev.studentAccessCodes || [];
                 const totalCodes = codes.length;
                 const usedCodes = codes.filter(c => c.isUsed).length;
-                const retakeCodes = codes.filter(c => c.isUsed && c.allowedRetake).length;
                 const isCompletedByStudents = subsForEv.length > 0 || usedCodes > 0;
                 const isCurrentlySelected = selectedEvaluation?.id === ev.id;
                 const matchedUnit = allUnitPlans.find(u => u.id === ev.unitId);
+                const isBatchGeneratingThis = batchNanoEvalId === ev.id;
 
                 return (
                   <div
@@ -1977,34 +2056,35 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     <div className={`px-4 py-2.5 flex items-center justify-between gap-2 border-b ${
                       isCompletedByStudents
                         ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-600'
-                        : 'bg-slate-100 text-slate-700 border-slate-200'
+                        : 'bg-slate-900 text-white border-slate-800'
                     }`}>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`font-mono text-xs font-black px-2.5 py-0.5 rounded-lg tracking-wider ${
-                          isCompletedByStudents ? 'bg-white text-emerald-900' : 'bg-purple-100 text-purple-800'
-                        }`}>
+                        <span className="font-mono text-xs font-black px-2.5 py-0.5 rounded-lg tracking-wider bg-white text-slate-950 shadow-2xs">
                           {ev.accessCode}
                         </span>
                         {isCompletedByStudents ? (
-                          <span className="text-[11px] font-black flex items-center gap-1">
+                          <span className="text-[11px] font-black flex items-center gap-1 bg-white/20 px-2 py-0.5 rounded-full">
                             ✅ {Math.max(subsForEv.length, usedCodes)} copie{Math.max(subsForEv.length, usedCodes) > 1 ? 's' : ''}
                           </span>
                         ) : (
-                          <span className="text-[11px] font-bold text-slate-500">
-                            ⏳ En attente de copies
+                          <span className="text-[11px] font-bold text-slate-300">
+                            ⏳ Prête pour les élèves
                           </span>
                         )}
                       </div>
 
-                      <button
-                        onClick={(e) => handleDeleteEvaluation(ev.id, e)}
-                        className={`p-1 rounded-lg transition ${
-                          isCompletedByStudents ? 'text-white/80 hover:text-white hover:bg-white/15' : 'text-slate-400 hover:text-rose-600'
-                        }`}
-                        title="Supprimer cette évaluation"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-200 border border-amber-300/30">
+                          🖼️ {totalIllustrated}/{totalExercises} illustré(s)
+                        </span>
+                        <button
+                          onClick={(e) => handleDeleteEvaluation(ev.id, e)}
+                          className="p-1 rounded-lg text-white/70 hover:text-white hover:bg-white/15 transition"
+                          title="Supprimer cette évaluation"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="p-5 space-y-3.5 flex-1 flex flex-col justify-between">
@@ -2017,23 +2097,32 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           )}
                           <h3 className="font-black text-sm text-slate-900 line-clamp-2 leading-snug">{ev.title}</h3>
                           <p className="text-xs text-slate-500 mt-1 font-medium">
-                            {ev.subject} · <strong className="text-slate-700">{ev.grade}</strong> · {ev.assessments?.length || 0} critère(s) (/{totalPoints} pts)
+                            {ev.subject} · <strong className="text-slate-700">{ev.grade}</strong> · {ev.assessments?.length || 0} critère(s) · {totalExercises} Q (/{totalPoints} pts)
                           </p>
 
                           {/* Mention obligatoire : Date de génération & Enseignant créateur */}
-                          <div className="mt-2 p-2 rounded-xl bg-slate-50 border border-slate-200/80 text-[11px] text-slate-700 space-y-0.5">
-                            <div className="flex items-center gap-1.5 font-semibold">
-                              <span className="text-purple-700">👨‍🏫 Créée par :</span>
-                              <span className="font-bold text-slate-900">{ev.teacherName || currentUserName || 'Enseignant'}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 font-medium text-slate-600">
-                              <span className="text-indigo-700">📅 Générée le :</span>
-                              <span>{formatEvaluationDate(ev.createdAt)}</span>
-                            </div>
+                          <div className="mt-2 px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-[11px] text-slate-600 flex items-center justify-between gap-2 flex-wrap">
+                            <span>👨‍🏫 <strong className="text-slate-800">{ev.teacherName || currentUserName || 'Enseignant'}</strong></span>
+                            <span>📅 {formatEvaluationDate(ev.createdAt)}</span>
                           </div>
                         </div>
 
-                        {/* ── ENCADRÉ SPÉCIAL : RÉSUMÉ DES COPIES D'ÉLÈVES ── */}
+                        {/* Critères badges */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {ev.assessments.map(a => {
+                            const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
+                            return (
+                              <span
+                                key={a.criterion}
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${col.light} ${col.text}`}
+                              >
+                                Critère {a.criterion} ({a.exercises?.length || 0} Q · /{a.maxPoints || 8})
+                              </span>
+                            );
+                          })}
+                        </div>
+
+                        {/* ── RÉSUMÉ DES COPIES D'ÉLÈVES ── */}
                         {isCompletedByStudents ? (
                           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 space-y-2">
                             <div className="flex items-center justify-between text-xs">
@@ -2053,7 +2142,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                             </div>
 
                             {subsForEv.length > 0 && (
-                              <div className="space-y-1 max-h-28 overflow-y-auto pr-1 pt-1 border-t border-emerald-200/70">
+                              <div className="space-y-1 max-h-24 overflow-y-auto pr-1 pt-1 border-t border-emerald-200/70">
                                 {subsForEv.map(sub => {
                                   const isGraded = sub.status === 'graded';
                                   return (
@@ -2084,84 +2173,97 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                         ) : (
                           <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-500 flex items-center justify-between">
                             <span>Aucune copie remise pour l'instant</span>
-                            <span className="font-mono font-bold text-slate-600">{totalCodes} matricules</span>
+                            <span className="font-mono font-bold text-slate-600">{totalCodes} matricules prêts</span>
                           </div>
                         )}
-
-                        {/* Critères badges */}
-                        <div className="flex gap-1.5 flex-wrap">
-                          {ev.assessments.map(a => {
-                            const col = CRITERION_COLORS[a.criterion] || CRITERION_COLORS.A;
-                            return (
-                              <span
-                                key={a.criterion}
-                                className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${col.light} ${col.text}`}
-                              >
-                                Critère {a.criterion} ({a.exercises?.length || 0} Q · /{a.maxPoints || 8})
-                              </span>
-                            );
-                          })}
-                        </div>
                       </div>
 
+                      {/* ── ACTIONS ORGANISÉES CLAIREMENT PAR GROUPES LOGIQUES ── */}
                       <div className="pt-3 border-t border-slate-100 space-y-2">
-                        {/* BOUTON PRIORITAIRE 1 : VISUALISER LA COPIE EXEMPLAIRE DE L'ÉLÈVE (SANS COMPTEUR & MODIFIABLE) */}
-                        <button
-                          onClick={() => setStudentPreviewEvaluation(JSON.parse(JSON.stringify(ev)))}
-                          className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black transition shadow-sm"
-                          title="Visualiser la copie exemplaire de l'élève (sans compteur) et modifier les questions manuellement ou avec IA"
-                        >
-                          <Eye size={15} />
-                          <span>👁️ Copie Exemplaire Élève (Modifiable)</span>
-                        </button>
+                        {/* GROUPE 1 : SUJET, PHOTOS IA NANO BANANA & APERÇU ÉLÈVE */}
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            onClick={() => setStudentPreviewEvaluation(JSON.parse(JSON.stringify(ev)))}
+                            className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-[11px] font-black transition shadow-2xs"
+                            title="Visualiser et modifier la feuille telle que l'élève la voit"
+                          >
+                            <Eye size={13} />
+                            <span>👁️ Vue Élève</span>
+                          </button>
 
-                        {/* BOUTON PRIORITAIRE 2 : LIEN DIRECT GOOGLE CLASSROOM (COPIE LE MESSAGE + OUVRE CLASSROOM) */}
-                        <a
-                          href={getGoogleClassroomShareUrl(ev)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={() => handleCopyClassroomPost(ev)}
-                          className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-black transition shadow-xs"
-                          title="Copie automatiquement le message + lien élève et ouvre Google Classroom directement pour le coller"
-                        >
-                          <ExternalLink size={14} />
-                          <span>
-                            {copiedCode === `classroom_${ev.accessCode}`
-                              ? '✓ Message copié ! Google Classroom ouvert'
-                              : '🎓 Ouvrir Google Classroom & Coller le lien'}
-                          </span>
-                        </a>
-
-                        {/* BOUTON PRIORITAIRE 3 : OUVRIR & CORRIGER LES COPIES DES ÉLÈVES */}
-                        <button
-                          onClick={() => handleOpenSubmissions(ev)}
-                          className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-black transition shadow-xs ${
-                            isCompletedByStudents
-                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                              : 'bg-purple-600 hover:bg-purple-700 text-white'
-                          }`}
-                          title="Afficher toutes les copies remises par les élèves et lancer la correction"
-                        >
-                          <CheckCircle size={14} />
-                          <span>
-                            {isCompletedByStudents
-                              ? `📂 Gérer & Corriger les copies (${subsForEv.length})`
-                              : `Copies d'élèves reçues (${subsForEv.length})`}
-                          </span>
-                        </button>
-
-                        {/* Actions d'édition, matricules et impression A4 */}
-                        <div className="grid grid-cols-3 gap-1.5">
                           <button
                             onClick={() => {
                               setEditingEvaluation(JSON.parse(JSON.stringify(ev)));
                               setEditingCriterionIdx(0);
                             }}
-                            className="flex items-center justify-center gap-1 py-2 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl text-[11px] font-extrabold transition"
-                            title="Modifier les questions manuellement ou avec IA, ou remplacer une figure par une photo Google Drive 4:3"
+                            className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[11px] font-black transition shadow-2xs"
+                            title="Modifier les questions et générer les photos IA Nano Banana"
                           >
-                            <Edit3 size={12} />
-                            <span>Éditer / IA</span>
+                            <Edit3 size={13} />
+                            <span>✏️ Questions & IA</span>
+                          </button>
+                        </div>
+
+                        {/* BOUTON 1-CLIC : GÉNÉRER LES PHOTOS IA CONTEXTUELLES (NANO BANANA) */}
+                        <button
+                          type="button"
+                          onClick={() => handleBatchGenerateNanoPhotosForEval(ev, false)}
+                          disabled={isBatchGeneratingThis}
+                          className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-[11px] font-black transition shadow-2xs disabled:opacity-60"
+                          title="Générer avec Nano Banana IA des photos et illustrations en relation directe avec chaque exercice de cette évaluation"
+                        >
+                          {isBatchGeneratingThis ? (
+                            <>
+                              <Loader2 size={13} className="animate-spin" />
+                              <span className="truncate">{batchNanoProgressText || 'Nano Banana IA…'}</span>
+                            </>
+                          ) : (
+                            <>
+                              <ImageIcon size={13} />
+                              <span>🍌 Générer Photos IA liées aux exercices (Nano Banana)</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* GROUPE 2 : DIFFUSION ÉLÈVES & GOOGLE CLASSROOM */}
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <a
+                            href={getGoogleClassroomShareUrl(ev)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => handleCopyClassroomPost(ev)}
+                            className="flex items-center justify-center gap-1 py-2 px-2 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 rounded-xl text-[11px] font-extrabold transition"
+                            title="Copie automatiquement le message + lien élève et ouvre Google Classroom"
+                          >
+                            <ExternalLink size={12} />
+                            <span className="truncate">
+                              {copiedCode === `classroom_${ev.accessCode}` ? '✓ Copié !' : '🎓 Classroom'}
+                            </span>
+                          </a>
+
+                          <button
+                            onClick={() => handleCopyStudentLink(ev.accessCode)}
+                            className="flex items-center justify-center gap-1 py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl font-bold transition text-[11px]"
+                            title="Copier le lien direct à envoyer aux élèves"
+                          >
+                            {isLinkCopied ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                            <span className="truncate">{isLinkCopied ? 'Lien copié !' : '🔗 Copier Lien'}</span>
+                          </button>
+                        </div>
+
+                        {/* GROUPE 3 : COPIES, MATRICULES & IMPRESSION A4 */}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button
+                            onClick={() => handleOpenSubmissions(ev)}
+                            className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-[11px] font-black transition shadow-2xs ${
+                              isCompletedByStudents
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                : 'bg-purple-600 hover:bg-purple-700 text-white'
+                            }`}
+                            title="Ouvrir et corriger les copies des élèves"
+                          >
+                            <CheckCircle size={12} />
+                            <span className="truncate">Copies ({subsForEv.length})</span>
                           </button>
 
                           <button
@@ -2171,7 +2273,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           >
                             <Users size={12} className="text-purple-700 flex-shrink-0" />
                             <span className="truncate">
-                              Codes ({usedCodes}/{totalCodes})
+                              Matricules ({usedCodes}/{totalCodes})
                             </span>
                           </button>
 
@@ -2185,26 +2287,6 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           >
                             <Printer size={12} />
                             <span>Sujet A4</span>
-                          </button>
-                        </div>
-
-                        {/* Partage rapide du lien élève / Classroom */}
-                        <div className="grid grid-cols-2 gap-1.5 pt-0.5">
-                          <button
-                            onClick={() => handleCopyStudentLink(ev.accessCode)}
-                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
-                            title="Copier uniquement le lien direct élève"
-                          >
-                            {isLinkCopied ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
-                            <span>{isLinkCopied ? 'Lien copié !' : 'Copier lien seul'}</span>
-                          </button>
-                          <button
-                            onClick={() => handleCopyClassroomPost(ev)}
-                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition text-[10px]"
-                            title="Copier le message complet pour Google Classroom"
-                          >
-                            {copiedCode === `classroom_${ev.accessCode}` ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
-                            <span>{copiedCode === `classroom_${ev.accessCode}` ? 'Message copié !' : 'Copier message'}</span>
                           </button>
                         </div>
                       </div>
@@ -3817,13 +3899,24 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                 )}
                               </div>
 
-                              {/* OPTION 1 : Générer un Diagramme / Carte / Schéma sur-mesure par Gemini AI */}
-                              <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-xl p-3 space-y-2">
+                              {/* OPTION 1 : Générer une Photo / Illustration IA contextuelle avec Nano Banana (en relation directe avec l'exercice) */}
+                              <div className="bg-gradient-to-r from-amber-50 via-orange-50 to-purple-50 border-2 border-amber-300 rounded-xl p-3.5 space-y-2.5">
                                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                                  <span className="text-[11px] font-black text-purple-950 flex items-center gap-1.5">
-                                    <Sparkles size={13} className="text-purple-600" />
-                                    Option 1 — Générer un diagramme, schéma ou carte avec Gemini AI :
+                                  <span className="text-[11px] font-black text-amber-950 flex items-center gap-1.5">
+                                    <span>🍌</span>
+                                    <span>Option 1 — Générer une Photo / Illustration IA en relation avec cet exercice (Nano Banana) :</span>
                                   </span>
+                                  <select
+                                    value={nanoVisualStyle}
+                                    onChange={e => setNanoVisualStyle(e.target.value as NanoBananaVisualStyle)}
+                                    className="px-2.5 py-1 bg-white border border-amber-300 rounded-lg text-[11px] font-bold text-amber-950 outline-none"
+                                  >
+                                    {NANO_BANANA_VISUAL_STYLES.map(st => (
+                                      <option key={st.id} value={st.id}>
+                                        {st.badge} — {st.labelFr}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </div>
                                 <div className="flex flex-col sm:flex-row gap-2">
                                   <input
@@ -3835,8 +3928,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                         [`${editingCriterionIdx}_${exIdx}`]: e.target.value,
                                       }))
                                     }
-                                    placeholder="Décrivez le diagramme, la carte ou la figure à générer par Gemini AI (ou laissez vide pour utiliser l'énoncé)…"
-                                    className="flex-1 p-2 bg-white border border-purple-300 rounded-lg text-xs focus:ring-2 focus:ring-purple-400 outline-none"
+                                    placeholder="Optionnel : précisez la scène souhaitée (ou laissez vide : Nano Banana analyse automatiquement l'énoncé de l'exercice)…"
+                                    className="flex-1 p-2 bg-white border border-amber-300 rounded-lg text-xs focus:ring-2 focus:ring-amber-400 outline-none"
                                   />
                                   <button
                                     type="button"
@@ -3846,39 +3939,38 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                                       setIsGeneratingDiagramKey(key);
                                       try {
                                         const customPrompt = (geminiDiagramPromptMap[key] || '').trim();
-                                        const promptToUse = customPrompt || `${ex.title} - ${stripHtmlTags(ex.content)}`;
                                         const generated = await generateDiagramOrMapWithGeminiAI({
                                           subject: editingEvaluation.subject || '',
                                           grade: editingEvaluation.grade || '',
+                                          unitTitle: editingEvaluation.unitTitle || editingEvaluation.title,
                                           exerciseTitle: ex.title,
-                                          exerciseContent: promptToUse,
+                                          exerciseContent: ex.content,
+                                          customPrompt: customPrompt || undefined,
+                                          visualStyle: nanoVisualStyle,
                                         });
                                         if (generated) {
                                           handleUpdateEditingExercise(editingCriterionIdx, exIdx, {
                                             imageUrl: generated.imageUrl,
                                             imageCaption: generated.imageCaption,
                                           });
-                                        } else {
-                                          alert("Impossible de générer le schéma pour le moment. Réessayez avec une description plus précise.");
                                         }
                                       } catch (err) {
                                         console.error(err);
-                                        alert("Erreur lors de la génération du diagramme par Gemini AI.");
                                       } finally {
                                         setIsGeneratingDiagramKey(null);
                                       }
                                     }}
-                                    className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg text-xs font-black transition flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-60 whitespace-nowrap"
+                                    className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-lg text-xs font-black transition flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-60 whitespace-nowrap"
                                   >
                                     {isGeneratingDiagramKey === `${editingCriterionIdx}_${exIdx}` ? (
                                       <>
                                         <Loader2 size={13} className="animate-spin" />
-                                        <span>Génération Gemini AI…</span>
+                                        <span>Génération Nano Banana…</span>
                                       </>
                                     ) : (
                                       <>
-                                        <Sparkles size={13} className="text-yellow-300" />
-                                        <span>Générer par Gemini AI</span>
+                                        <Sparkles size={13} className="text-yellow-200" />
+                                        <span>🍌 Générer Photo IA liée à l'exercice</span>
                                       </>
                                     )}
                                   </button>

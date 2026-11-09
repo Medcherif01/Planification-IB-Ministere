@@ -327,29 +327,91 @@ async function generateWithGeminiRotation(
 }
 
 // Variable permettant de générer par IA les photos, diagrammes, oeuvres et cartes (Nano Banana par défaut)
-export const AI_IMAGE_MODEL = process.env.AI_IMAGE_MODEL || 'gemini-3.1-flash-lite-image';
+export const AI_IMAGE_MODEL = process.env.AI_IMAGE_MODEL || 'gemini-2.5-flash-image';
 
 async function tryGenerateImageWithNanoBanana(
   keys: string[],
   promptText: string,
   customModel?: string
-): Promise<{ imageDataUri: string; caption?: string } | null> {
+): Promise<{ imageDataUri: string; caption?: string; modelUsed?: string } | null> {
+  // Normaliser les alias Nano Banana vers les modèles officiels Gemini Image
+  const normalizeImageModel = (m?: string): string => {
+    if (!m) return 'gemini-2.5-flash-image';
+    const lower = m.toLowerCase().trim();
+    if (lower.includes('nano-banana-pro') || lower.includes('3-pro-image')) return 'gemini-3-pro-image-preview';
+    if (lower.includes('nano-banana-2') || lower.includes('3.1-flash-image') || lower.includes('3.1-flash-lite-image')) {
+      return 'gemini-3.1-flash-image-preview';
+    }
+    if (lower.includes('nano-banana') || lower.includes('2.5-flash-image')) return 'gemini-2.5-flash-image';
+    return m;
+  };
+
   const modelsToTry = [
-    customModel || AI_IMAGE_MODEL,
-    'gemini-3.1-flash-lite-image',
+    normalizeImageModel(customModel || AI_IMAGE_MODEL),
     'gemini-2.5-flash-image',
+    'gemini-3.1-flash-image-preview',
+    'gemini-3-pro-image-preview',
   ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
   for (const model of modelsToTry) {
-    for (let i = 0; i < Math.min(keys.length, 3); i++) {
-      const apiKey = keys[i];
+    for (let i = 0; i < keys.length; i++) {
+      const apiKey = cleanKey(keys[i]);
+      if (!apiKey) continue;
+
+      // 1. Tentative via le SDK officiel @google/genai
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: { 'User-Agent': 'aistudio-build' },
+          },
+        });
+
+        const response = await ai.models.generateContent({
+          model,
+          contents: {
+            parts: [{ text: promptText }],
+          },
+          config: {
+            imageConfig: {
+              aspectRatio: '4:3',
+            },
+          },
+        });
+
+        const parts: any[] = response?.candidates?.[0]?.content?.parts || [];
+        let imageDataUri = '';
+        let caption = '';
+        for (const part of parts) {
+          if (part?.inlineData?.data) {
+            const mime = part.inlineData.mimeType || 'image/png';
+            imageDataUri = `data:${mime};base64,${part.inlineData.data}`;
+          } else if (part?.text) {
+            caption += part.text;
+          }
+        }
+        if (imageDataUri) {
+          console.log(`✅ [NanoBanana SDK/${model}/KEY_${i + 1}] Photo IA contextuelle générée avec succès !`);
+          return { imageDataUri, caption: caption.trim(), modelUsed: model };
+        }
+      } catch (sdkErr: any) {
+        console.warn(`⚠️ [NanoBanana SDK/${model}/KEY_${i + 1}] ${sdkErr?.message?.slice(0, 120) || sdkErr}`);
+      }
+
+      // 2. Tentative de repli via appel REST direct
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
         const resp = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: promptText }] }],
+            generationConfig: {
+              responseModalities: ['TEXT', 'IMAGE'],
+              imageConfig: {
+                aspectRatio: '4:3',
+              },
+            },
           }),
         });
         if (!resp.ok) continue;
@@ -366,8 +428,8 @@ async function tryGenerateImageWithNanoBanana(
           }
         }
         if (imageDataUri) {
-          console.log(`✅ [NanoBanana/${model}] Image IA générée avec succès !`);
-          return { imageDataUri, caption: caption.trim() };
+          console.log(`✅ [NanoBanana REST/${model}/KEY_${i + 1}] Photo IA contextuelle générée avec succès !`);
+          return { imageDataUri, caption: caption.trim(), modelUsed: model };
         }
       } catch {
         // Passer à la clé/modèle suivant

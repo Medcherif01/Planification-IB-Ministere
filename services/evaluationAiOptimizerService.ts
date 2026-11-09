@@ -1,5 +1,10 @@
 import { AssessmentData, AssessmentExercise, AssessmentSubQuestion, UnitPlan } from '../types';
-import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
+import {
+  stripHtmlTags,
+  detectAndAttachEducationalDiagram,
+  generateDiagramOrMapWithGeminiAI,
+  shouldExerciseHaveVisual,
+} from './educationalDiagramService';
 import { resolveArtworkOrImage } from './artworkService';
 import { getCriteriaSync, isLanguageAcquisitionSubject } from './ibCriteriaService';
 
@@ -600,6 +605,49 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
           }),
         };
       });
+
+      // Enrichissement Nano Banana : générer des photos contextuelles IA pour les exercices pertinents
+      if (insertVisualDiagrams) {
+        const nanoTargets: Array<{ cIdx: number; eIdx: number }> = [];
+        validated.forEach((crit, cIdx) => {
+          crit.exercises.forEach((ex, eIdx) => {
+            const hasRealPhoto = Boolean(
+              ex.imageUrl &&
+                (ex.imageUrl.startsWith('data:image/png') ||
+                  ex.imageUrl.startsWith('data:image/jpeg') ||
+                  ex.imageUrl.startsWith('data:image/webp'))
+            );
+            if (!hasRealPhoto && (shouldExerciseHaveVisual(subject, ex.title, ex.content) || eIdx === 0)) {
+              nanoTargets.push({ cIdx, eIdx });
+            }
+          });
+        });
+
+        // Générer jusqu'à 4 photos contextuelles Nano Banana en parallèle pour illustrer l'évaluation
+        const selectedTargets = nanoTargets.slice(0, 4);
+        await Promise.all(
+          selectedTargets.map(async ({ cIdx, eIdx }) => {
+            const ex = validated[cIdx].exercises[eIdx];
+            try {
+              const generated = await generateDiagramOrMapWithGeminiAI({
+                subject,
+                gradeLevel,
+                unitTitle,
+                exerciseTitle: ex.title,
+                exerciseContent: ex.content,
+                customPrompt: ex.imageCaption,
+                visualStyle: 'auto',
+              });
+              if (generated?.imageUrl) {
+                validated[cIdx].exercises[eIdx].imageUrl = generated.imageUrl;
+                validated[cIdx].exercises[eIdx].imageCaption = generated.imageCaption;
+              }
+            } catch {
+              // Conserver le schéma existant en cas d'erreur
+            }
+          })
+        );
+      }
 
       return validated;
     }

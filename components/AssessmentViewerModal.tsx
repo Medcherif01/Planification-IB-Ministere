@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X, Eye, Edit3, Save, CheckCircle, ChevronLeft, ChevronRight,
   Printer, Send, Copy, Check, Sparkles, Plus, Trash2, HelpCircle,
-  ChevronDown, ChevronUp, Calculator
+  ChevronDown, ChevronUp, Calculator, Image as ImageIcon, Loader2
 } from 'lucide-react';
 import { UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, OnlineEvaluation } from '../types';
 import EvaluationPrintView from './EvaluationPrintView';
@@ -13,6 +13,12 @@ import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterial
 import { generateCleanStudentCodesForEvaluation } from '../services/studentRosterService';
 import RichExerciseContent from './RichExerciseContent';
 import { optimizeEvaluationWithAI } from '../services/evaluationAiOptimizerService';
+import {
+  generateDiagramOrMapWithGeminiAI,
+  generateNanoBananaPhotosForAssessments,
+  NANO_BANANA_VISUAL_STYLES,
+  NanoBananaVisualStyle,
+} from '../services/educationalDiagramService';
 
 interface AssessmentViewerModalProps {
   isOpen: boolean;
@@ -47,6 +53,11 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
   const [showRubric, setShowRubric] = useState(false);
   const [allowCalculatorForOnline, setAllowCalculatorForOnline] = useState(true);
 
+  // États de génération de photos IA contextuelles (Nano Banana)
+  const [generatingNanoKey, setGeneratingNanoKey] = useState<string | null>(null);
+  const [nanoVisualStyle, setNanoVisualStyle] = useState<NanoBananaVisualStyle>('auto');
+  const [batchNanoProgress, setBatchNanoProgress] = useState<string | null>(null);
+
   // Modal de génération de question avec l'IA (soit pour ajouter, soit pour remplacer une question précise)
   const [showAiQuestionModal, setShowAiQuestionModal] = useState(false);
   const [aiTargetQuestionIdx, setAiTargetQuestionIdx] = useState<number | null>(null);
@@ -66,6 +77,8 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
     setShowAiQuestionModal(false);
     setAiTargetQuestionIdx(null);
     setShowRubric(false);
+    setGeneratingNanoKey(null);
+    setBatchNanoProgress(null);
   }, [isOpen, plan?.id]);
 
   if (!isOpen || !plan) return null;
@@ -78,6 +91,69 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
       setHasUnsavedChanges(false);
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2500);
+    }
+  };
+
+  // Générer une photo IA contextuelle (Nano Banana) pour un exercice précis
+  const handleGenerateNanoPhotoForExercise = async (exIdx: number, customStyle?: NanoBananaVisualStyle) => {
+    if (!plan || !assessments[activeIdx]) return;
+    const crit = assessments[activeIdx];
+    const ex = crit.exercises?.[exIdx];
+    if (!ex) return;
+
+    const key = `${activeIdx}_${exIdx}`;
+    setGeneratingNanoKey(key);
+    try {
+      const generated = await generateDiagramOrMapWithGeminiAI({
+        subject: plan.subject || '',
+        gradeLevel: plan.gradeLevel || '',
+        unitTitle: plan.title,
+        exerciseTitle: ex.title,
+        exerciseContent: ex.content,
+        customPrompt: ex.imageCaption,
+        visualStyle: customStyle || nanoVisualStyle,
+      });
+      if (generated?.imageUrl) {
+        const next = assessments.map((a, i) => {
+          if (i !== activeIdx) return a;
+          const exercises = (a.exercises || []).map((item, ei) =>
+            ei === exIdx
+              ? { ...item, imageUrl: generated.imageUrl, imageCaption: generated.imageCaption }
+              : item
+          );
+          return { ...a, exercises };
+        });
+        persistChanges(next);
+      }
+    } catch (e) {
+      console.warn('Erreur génération photo Nano Banana:', e);
+    } finally {
+      setGeneratingNanoKey(null);
+    }
+  };
+
+  // Générer les photos IA contextuelles (Nano Banana) pour toute l'évaluation
+  const handleBatchGenerateNanoPhotos = async () => {
+    if (!plan || assessments.length === 0) return;
+    setBatchNanoProgress(isEn ? 'Starting Nano Banana AI...' : 'Lancement Nano Banana IA...');
+    try {
+      const { updatedAssessments } = await generateNanoBananaPhotosForAssessments({
+        assessments,
+        subject: plan.subject || '',
+        gradeLevel: plan.gradeLevel || '',
+        unitTitle: plan.title,
+        visualStyle: nanoVisualStyle,
+        overwriteExisting: true,
+        onlyContextualExercises: false,
+        onProgress: (curr, tot, title) => {
+          setBatchNanoProgress(`🍌 Nano Banana (${curr}/${tot}) : ${title.slice(0, 28)}...`);
+        },
+      });
+      persistChanges(updatedAssessments);
+    } catch (e) {
+      console.warn('Erreur batch Nano Banana:', e);
+    } finally {
+      setBatchNanoProgress(null);
     }
   };
 
@@ -521,6 +597,25 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
                 </button>
 
                 <button
+                  onClick={handleBatchGenerateNanoPhotos}
+                  disabled={Boolean(batchNanoProgress)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-black shadow transition disabled:opacity-60"
+                  title="Générer des photos IA contextuelles (Nano Banana) en relation directe avec chaque exercice"
+                >
+                  {batchNanoProgress ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin text-white" />
+                      <span>{batchNanoProgress}</span>
+                    </>
+                  ) : (
+                    <>
+                      <ImageIcon size={14} />
+                      <span>{isEn ? '🍌 Generate Exercise Photos (Nano Banana)' : '🍌 Photos IA Exercices (Nano Banana)'}</span>
+                    </>
+                  )}
+                </button>
+
+                <button
                   onClick={() => handleOptimizeWithAi(false)}
                   disabled={isOptimizingAi}
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow transition disabled:opacity-50"
@@ -906,8 +1001,28 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
                               </div>
                             </div>
 
-                            {/* BOUTON IA PAR QUESTION + Actions Monter / Descendre / Dupliquer / Supprimer */}
-                            <div className="flex items-center gap-1.5 ml-auto">
+                            {/* BOUTON IA PAR QUESTION + BOUTON PHOTO NANO BANANA + Actions Monter / Descendre / Dupliquer / Supprimer */}
+                            <div className="flex items-center gap-1.5 ml-auto flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateNanoPhotoForExercise(ei)}
+                                disabled={generatingNanoKey === `${activeIdx}_${ei}`}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50"
+                                title={isEn ? 'Generate a contextual AI photo (Nano Banana) directly related to this exercise' : 'Générer une photo IA contextuelle (Nano Banana) en relation directe avec cet exercice'}
+                              >
+                                {generatingNanoKey === `${activeIdx}_${ei}` ? (
+                                  <>
+                                    <Loader2 size={13} className="animate-spin text-white" />
+                                    <span>Nano Banana...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <ImageIcon size={13} />
+                                    <span>{ex.imageUrl ? (isEn ? '🍌 New AI Photo' : '🍌 Régénérer Photo IA') : (isEn ? '🍌 AI Photo (Nano Banana)' : '🍌 Photo IA (Nano Banana)')}</span>
+                                  </>
+                                )}
+                              </button>
+
                               <button
                                 type="button"
                                 onClick={() => openAiGeneratorForQuestion(ei)}
@@ -999,6 +1114,82 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
                                     {isEn ? 'Student Live Rendering Preview:' : 'Aperçu rendu élève :'}
                                   </span>
                                   <RichExerciseContent content={ex.content} />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* ── BLOC PHOTO IA CONTEXTUELLE (NANO BANANA) ── */}
+                            <div className="bg-amber-50/50 border border-amber-200/80 rounded-2xl p-3.5 space-y-2.5">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                                    🍌 {isEn ? 'Contextual Exercise Photo / Illustration (Nano Banana AI)' : 'Photo / Illustration en relation avec l’exercice (Nano Banana IA)'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <select
+                                    value={nanoVisualStyle}
+                                    onChange={e => setNanoVisualStyle(e.target.value as NanoBananaVisualStyle)}
+                                    className="px-2.5 py-1 bg-white border border-amber-300 rounded-xl text-[11px] font-bold text-amber-950 outline-none"
+                                  >
+                                    {NANO_BANANA_VISUAL_STYLES.map(st => (
+                                      <option key={st.id} value={st.id}>
+                                        {st.badge} — {isEn ? st.labelEn : st.labelFr}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleGenerateNanoPhotoForExercise(ei, nanoVisualStyle)}
+                                    disabled={generatingNanoKey === `${activeIdx}_${ei}`}
+                                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[11px] font-black shadow-2xs transition flex items-center gap-1.5 disabled:opacity-50"
+                                  >
+                                    {generatingNanoKey === `${activeIdx}_${ei}` ? (
+                                      <>
+                                        <Loader2 size={12} className="animate-spin" />
+                                        <span>{isEn ? 'Generating...' : 'Génération Nano Banana...'}</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Sparkles size={12} className="text-yellow-200" />
+                                        <span>{ex.imageUrl ? (isEn ? 'Regenerate Contextual Photo' : 'Régénérer une photo liée à l’exercice') : (isEn ? 'Generate Contextual Photo' : 'Générer une photo liée à l’exercice')}</span>
+                                      </>
+                                    )}
+                                  </button>
+                                  {ex.imageUrl && (
+                                    <button
+                                      type="button"
+                                      onClick={() => updateExerciseFields(ei, { imageUrl: undefined, imageCaption: undefined })}
+                                      className="px-2.5 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-xl text-[11px] font-bold transition"
+                                    >
+                                      {isEn ? 'Remove' : 'Retirer'}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={ex.imageCaption || ''}
+                                  onChange={e => updateExerciseFields(ei, { imageCaption: e.target.value })}
+                                  placeholder={isEn ? 'Optional: describe the exact scene or caption for Nano Banana...' : 'Optionnel : légende ou précision visuelle pour guider Nano Banana (ex: pont suspendu, montage de distillation...)...'}
+                                  className="flex-1 bg-white border border-amber-200 focus:border-amber-400 rounded-xl px-3 py-1.5 text-xs text-slate-800 outline-none"
+                                />
+                              </div>
+
+                              {ex.imageUrl && (
+                                <div className="bg-white rounded-xl p-3 border border-amber-200 flex flex-col items-center gap-2">
+                                  <img
+                                    src={ex.imageUrl}
+                                    alt={ex.imageCaption || ex.title}
+                                    className="max-h-60 w-auto object-contain rounded-lg shadow-2xs"
+                                  />
+                                  {ex.imageCaption && (
+                                    <span className="text-[11px] text-slate-600 italic font-medium text-center">
+                                      {ex.imageCaption}
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </div>

@@ -1326,11 +1326,62 @@ export function detectAndAttachEducationalDiagram(
  */
 export const AI_IMAGE_GENERATION_MODEL =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_AI_IMAGE_MODEL) ||
-  'gemini-3.1-flash-lite-image';
+  'gemini-2.5-flash-image';
+
+export type NanoBananaVisualStyle =
+  | 'auto'
+  | 'photo_realiste'
+  | 'illustration_scientifique'
+  | 'schema_annote'
+  | 'document_historique_carte';
+
+export const NANO_BANANA_VISUAL_STYLES: Array<{
+  id: NanoBananaVisualStyle;
+  labelFr: string;
+  labelEn: string;
+  badge: string;
+  descFr: string;
+}> = [
+  {
+    id: 'auto',
+    labelFr: 'Auto (Adapté à l’exercice)',
+    labelEn: 'Auto (Matched to exercise)',
+    badge: '🍌 Nano Banana Intelligent',
+    descFr: 'Choisit automatiquement entre photo réaliste de mise en situation, illustration scientifique ou figure cotée selon l’énoncé.',
+  },
+  {
+    id: 'photo_realiste',
+    labelFr: 'Photo réaliste contextualisée',
+    labelEn: 'Contextual Realistic Photo',
+    badge: '📸 Photo Réelle',
+    descFr: 'Photographie éducative haute définition illustrant concrètement la situation réelle décrite dans l’exercice (architecture, laboratoire, nature, terrain).',
+  },
+  {
+    id: 'illustration_scientifique',
+    labelFr: 'Illustration scientifique & expérimentale',
+    labelEn: 'Scientific & Lab Illustration',
+    badge: '🔬 Sciences & Labo',
+    descFr: 'Visuel encyclopédique riche montrant le phénomène, le montage expérimental ou l’organisme étudié avec détails visuels précis.',
+  },
+  {
+    id: 'schema_annote',
+    labelFr: 'Figure & Schéma pédagogique annoté',
+    labelEn: 'Annotated Educational Figure',
+    badge: '📐 Schéma & Mesures',
+    descFr: 'Schéma ou figure géométrique/technique reprenant fidèlement les lettres, les grandeurs et les repères de la question.',
+  },
+  {
+    id: 'document_historique_carte',
+    labelFr: 'Carte géographique / Document d’époque',
+    labelEn: 'Geographic Map / Historical Doc',
+    badge: '🗺️ Carte & Histoire',
+    descFr: 'Carte thématique, reconstitution historique ou œuvre visuelle en lien direct avec le sujet d’étude.',
+  },
+];
 
 /**
  * Détecte si l'énoncé ou le titre d'un exercice fait référence à un diagramme, une photo,
- * une oeuvre, une carte, un schéma scientifique ou une figure géométrique qui doit être illustré.
+ * une oeuvre, une carte, un schéma scientifique, une mise en situation concrète ou une figure géométrique.
  */
 export function shouldExerciseHaveVisual(
   subject: string,
@@ -1341,18 +1392,110 @@ export function shouldExerciseHaveVisual(
   const visualKeywords = [
     'diagramme', 'schéma', 'schema', 'carte', 'figure', 'image', 'photo', 'oeuvre', 'œuvre',
     'tableau artistique', 'peinture', 'sculpture', 'croquis', 'illustration', 'observez',
-    'observer le document', 'ci-dessous', 'ci-contre', 'repère', 'graphique', 'courbe',
+    'observer', 'document', 'ci-dessous', 'ci-contre', 'repère', 'graphique', 'courbe',
     'circuit', 'cellule', 'anatomie', 'appareil', 'microscope', 'expérience', 'montage',
     'triangle', 'cercle', 'cylindre', 'cône', 'pyramide', 'polygone', 'vecteur',
-    'diagram', 'map', 'picture', 'figure below', 'chart', 'artwork', 'painting', 'sketch'
+    'mise en situation', 'contexte', 'terrain', 'bâtiment', 'pont', 'rampe', 'échelle',
+    'écosystème', 'réaction', 'laboratoire', 'énergie', 'vitesse', 'trajectoire', 'force',
+    'diagram', 'map', 'picture', 'figure below', 'chart', 'artwork', 'painting', 'sketch', 'context'
   ];
   return visualKeywords.some(kw => combined.includes(kw));
 }
 
 /**
- * Génère automatiquement (ou à la demande) une photo IA (Nano Banana / AI_IMAGE_GENERATION_MODEL),
- * un diagramme scientifique, une oeuvre d'art, une figure géométrique ou une carte géographique
- * via Gemini AI (/api/generate) et le place directement dans l'exercice correspondant.
+ * Extrait les éléments concrets d'un énoncé (nombres avec unités, objets, contexte)
+ * pour enrichir le prompt Nano Banana et garantir que la photo générée est intimement liée à l'exercice.
+ */
+function extractExerciseContextSummary(title: string, cleanContent: string, subject: string): {
+  measurements: string[];
+  keyTerms: string[];
+  scenarioSnippet: string;
+} {
+  const full = `${title} ${cleanContent}`;
+  // Extraire les mesures chiffrées (ex: "12 cm", "45°", "250 m", "20 °C", "9,8 m/s²", "f(x) = 2x + 3")
+  const measureMatches = full.match(/\b\d+(?:[.,]\d+)?\s*(?:cm|mm|m|km|°C|°|%|kg|g|L|mL|s|min|h|V|A|W|Hz|N|J|Pa|mol|€|\$)\b|[A-Z]{1,3}\s*=\s*\d+(?:[.,]\d+)?\s*(?:cm|m|mm)?|(?:f\(x\)|y)\s*=\s*[^\s,;.<]+/gi) || [];
+  const measurements = Array.from(new Set(measureMatches.map(m => m.trim()))).slice(0, 6);
+
+  // Extraire la mise en situation (premières phrases significatives)
+  const cleanLines = cleanContent
+    .replace(/\s+/g, ' ')
+    .trim();
+  const scenarioSnippet = cleanLines.slice(0, 480);
+
+  // Termes clés du titre et du sujet
+  const rawWords = `${title} ${subject}`
+    .replace(/^(?:Tâche|Task|Exercice|Question)\s*\d*\s*[:\-]?\s*/i, '')
+    .split(/[\s,;:().?!]+/)
+    .filter(w => w.length > 3 && !/^(dans|avec|pour|cette|sont|plus|moins|entre|quel|quelle|comment|expliquer|calculer|identifier|justifier)$/i.test(w));
+  const keyTerms = Array.from(new Set(rawWords)).slice(0, 8);
+
+  return { measurements, keyTerms, scenarioSnippet };
+}
+
+/**
+ * Construit un prompt riche et ultra-spécifique pour Nano Banana afin de générer
+ * une vraie photo ou illustration pédagogique en relation directe avec l'exercice (jamais une image générique simple).
+ */
+export function buildContextualNanoBananaPrompt(params: {
+  subject: string;
+  gradeLevel: string;
+  unitTitle?: string;
+  exerciseTitle?: string;
+  cleanStatement: string;
+  customPrompt?: string;
+  visualStyle?: NanoBananaVisualStyle;
+  isEn?: boolean;
+}): string {
+  const { subject, gradeLevel, unitTitle, exerciseTitle, cleanStatement, customPrompt, visualStyle = 'auto', isEn = false } = params;
+  const { measurements, scenarioSnippet } = extractExerciseContextSummary(exerciseTitle || '', cleanStatement, subject);
+
+  let styleDirective = '';
+  const subjLower = (subject || '').toLowerCase();
+
+  if (visualStyle === 'photo_realiste') {
+    styleDirective = 'High-resolution, hyper-detailed realistic educational photography (National Geographic / editorial textbook photography style), natural lighting, clear depth of field, authentic real-world setting directly depicting the exact scenario of the exercise.';
+  } else if (visualStyle === 'illustration_scientifique') {
+    styleDirective = 'Detailed scientific textbook & laboratory visual illustration (Dorling Kindersley / encyclopedic scientific visualization style), cutaway or close-up view showing the exact physical, chemical, or biological mechanism described in the exercise, crisp educational annotations.';
+  } else if (visualStyle === 'schema_annote') {
+    styleDirective = 'High-precision educational diagram & geometric/technical illustration on a clean bright background, showing the exact setup, shapes, vectors, or apparatus from the exercise with clear visual proportions and callouts.';
+  } else if (visualStyle === 'document_historique_carte') {
+    styleDirective = 'Rich thematic cartographic map, historical archival document illustration, or museum-grade cultural artwork directly illustrating the period, region, or work analyzed in the exercise.';
+  } else {
+    // Mode 'auto' : adapte intelligemment selon la matière et le contenu de l'exercice
+    if (subjLower.includes('science') || subjLower.includes('physique') || subjLower.includes('chimie') || subjLower.includes('svt') || subjLower.includes('biolog')) {
+      styleDirective = 'Rich, realistic scientific educational photo-illustration combining a real-world or laboratory photographic scene with clear visual focus on the exact phenomenon, experiment, organism, or apparatus described in the exercise.';
+    } else if (subjLower.includes('math')) {
+      styleDirective = 'Contextual real-world architectural/engineering photograph or high-clarity 3D/2D visual scene directly illustrating the concrete problem situation and geometric/mathematical structure described in the exercise.';
+    } else if (subjLower.includes('individu') || subjLower.includes('histoire') || subjLower.includes('géographie') || subjLower.includes('geographie')) {
+      styleDirective = 'Authentic editorial documentary photograph, historical scene reconstruction, or detailed thematic map directly depicting the historical/geographical situation described in the exercise.';
+    } else {
+      styleDirective = 'High-resolution realistic editorial photograph or rich textbook visual scene directly illustrating the specific context, characters, environment, and subject of the exercise.';
+    }
+  }
+
+  const measureNote = measurements.length > 0
+    ? `Key quantities/elements from the exercise to reflect visually: ${measurements.join(', ')}.`
+    : '';
+
+  return [
+    `Generate a rich, context-specific 4:3 educational visual for an IB MYP (${gradeLevel}) ${subject} assessment exercise.`,
+    `IMPORTANT: Do NOT generate a simple abstract icon or generic stock placeholder. The image MUST directly depict the concrete objects, environment, experiment, or real-world situation described in this specific exercise:`,
+    `- Unit Theme: "${unitTitle || subject}"`,
+    `- Exercise Title: "${exerciseTitle || ''}"`,
+    `- Exercise Scenario & Details: "${scenarioSnippet}"`,
+    customPrompt ? `- Teacher's Specific Visual Request: "${customPrompt}"` : '',
+    measureNote,
+    `- Visual Style: ${styleDirective}`,
+    `- Ensure high visual clarity, pedagogical relevance for students examining the image during an exam, and any visible labels in ${isEn ? 'English' : 'French'}.`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Génère automatiquement (ou à la demande) une photo IA contextuelle (Nano Banana / gemini-2.5-flash-image),
+ * une illustration scientifique, une oeuvre d'art, une figure géométrique ou une carte géographique
+ * via Gemini AI (/api/generate) en relation directe avec l'exercice.
  */
 export async function generateDiagramOrMapWithGeminiAI(params: {
   subject: string;
@@ -1363,31 +1506,50 @@ export async function generateDiagramOrMapWithGeminiAI(params: {
   exerciseContent?: string;
   customPrompt?: string;
   imageModel?: string;
-}): Promise<{ imageUrl: string; imageCaption: string }> {
+  visualStyle?: NanoBananaVisualStyle;
+}): Promise<{ imageUrl: string; imageCaption: string; modelUsed?: string }> {
   const effectiveGrade = params.gradeLevel || params.grade || 'PEI';
   const modelToUse = params.imageModel || AI_IMAGE_GENERATION_MODEL;
   const isEn = /english|anglais|acquisition/i.test(params.subject || '');
   const cleanStatement = stripHtmlTags(params.exerciseContent || '');
   const userDescription = (params.customPrompt || '').trim();
+  const visualStyle = params.visualStyle || 'auto';
+  const { measurements, keyTerms, scenarioSnippet } = extractExerciseContextSummary(
+    params.exerciseTitle || '',
+    cleanStatement,
+    params.subject || ''
+  );
 
-  const systemInstruction = `You are an expert IB MYP educational illustrator, cartographer, and scientific diagram designer.
-Generate a clean, pedagogically accurate, high-resolution SVG (<svg viewBox="0 0 680 510" xmlns="http://www.w3.org/2000/svg">...</svg>) in 4:3 format and a concise caption.
-Rules:
+  const imagePrompt = buildContextualNanoBananaPrompt({
+    subject: params.subject || 'IB MYP',
+    gradeLevel: effectiveGrade,
+    unitTitle: params.unitTitle,
+    exerciseTitle: params.exerciseTitle,
+    cleanStatement,
+    customPrompt: userDescription,
+    visualStyle,
+    isEn,
+  });
+
+  const systemInstruction = `You are an expert IB MYP educational illustrator, scientific visualizer, and cartographer.
+Generate a richly detailed, exercise-specific, high-resolution SVG illustration (<svg viewBox="0 0 680 510" xmlns="http://www.w3.org/2000/svg">...</svg>) in 4:3 format and a pedagogical caption directly tied to the exercise scenario.
+CRITICAL RULES:
 1. Return ONLY valid JSON with keys: {"svg": "<svg ...>...</svg>", "caption": "..."}
-2. The SVG MUST be self-contained, crisp, legible, with a clean white or soft slate background, clear labels, arrows, legends, or geographic/geometric markers matching the question.
-3. All labels inside the SVG and the caption MUST be in ${isEn ? 'English' : 'French'}.
+2. NEVER draw a generic 3-box flowchart ("A -> B -> C"). Instead, draw the ACTUAL concrete scene, experimental apparatus, anatomical/biological structure, architectural/geometric situation with exact measurements (${measurements.join(', ') || 'from the prompt'}), data chart, or geographic map described in the exercise!
+3. Use rich SVG gradients, detailed shapes, realistic colors, clear annotations, dimension arrows, and legends in ${isEn ? 'English' : 'French'}.
 4. Do NOT wrap the SVG in markdown code blocks inside the JSON string.`;
 
-  const prompt = `Create an educational diagram, schema, artwork illustration, geometric figure, or geographic map for:
+  const prompt = `Create a rich, detailed, context-specific educational illustration for this exact exercise:
 - Subject: ${params.subject} (${effectiveGrade})
 - Unit: ${params.unitTitle || ''}
-- Question Title: ${params.exerciseTitle || ''}
-- Question Context: ${cleanStatement}
+- Exercise Title: ${params.exerciseTitle || ''}
+- Full Exercise Scenario & Data: ${cleanStatement}
+- Extracted Measurements / Values: ${measurements.join(', ') || 'See text'}
+- Visual Style Requested: ${visualStyle}
 ${userDescription ? `- Teacher's Specific Visual Request: ${userDescription}` : ''}
 
+Draw the concrete visual scene, apparatus, figure, or map that directly illustrates this exercise so students can observe and analyze it.
 Return JSON: {"svg": "<svg viewBox=\\"0 0 680 510\\" xmlns=\\"http://www.w3.org/2000/svg\\">...</svg>", "caption": "..."}`;
-
-  const imagePrompt = `Educational high-clarity 4:3 illustration, diagram, map or artwork for IB MYP ${params.subject} (${effectiveGrade}): ${userDescription || `${params.exerciseTitle || ''} - ${cleanStatement.slice(0, 350)}`}. Clean pedagogical visual with clear labels in ${isEn ? 'English' : 'French'}.`;
 
   try {
     const res = await fetch('/api/generate', {
@@ -1408,52 +1570,49 @@ Return JSON: {"svg": "<svg viewBox=\\"0 0 680 510\\" xmlns=\\"http://www.w3.org/
 
     if (res.ok) {
       const data = await res.json();
-      // 1. Si Nano Banana (AI_IMAGE_MODEL) a généré une image bitmap directe :
+      const defaultCaption =
+        userDescription ||
+        (params.exerciseTitle
+          ? `${isEn ? 'Visual Document — ' : 'Document visuel contextualisé — '}${params.exerciseTitle.replace(/^(?:Tâche|Task|Exercice)\s*\d*\s*[:\-]\s*/i, '')}`
+          : isEn
+          ? 'Contextual Educational Visual (Nano Banana AI)'
+          : 'Illustration pédagogique contextualisée (Nano Banana IA)');
+
+      // 1. Si Nano Banana (gemini-2.5-flash-image / gemini-3.1-flash-image-preview) a généré une vraie photo bitmap :
       if (data?.imageDataUri && String(data.imageDataUri).startsWith('data:image/')) {
+        const cleanCaption = String(data.caption || '').trim();
         return {
           imageUrl: data.imageDataUri,
-          imageCaption: String(
-            data.caption ||
-              userDescription ||
-              params.exerciseTitle ||
-              (isEn ? 'AI Generated Educational Visual' : 'Illustration / Diagramme généré par IA')
-          ),
+          imageCaption: cleanCaption.length > 5 && cleanCaption.length < 220 ? cleanCaption : defaultCaption,
+          modelUsed: data.modelUsed || modelToUse,
         };
       }
 
-      // 2. Sinon, lecture du SVG vectoriel haute définition généré par Gemini :
+      // 2. Sinon, lecture de l'illustration vectorielle riche générée sur-mesure par Gemini :
       let raw = (data?.text || '').trim();
       raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
       const parsed = JSON.parse(raw);
       if (parsed?.imageDataUri && String(parsed.imageDataUri).startsWith('data:image/')) {
         return {
           imageUrl: parsed.imageDataUri,
-          imageCaption: String(
-            parsed.caption ||
-              userDescription ||
-              params.exerciseTitle ||
-              (isEn ? 'AI Generated Educational Visual' : 'Illustration / Diagramme généré par IA')
-          ),
+          imageCaption: String(parsed.caption || defaultCaption),
+          modelUsed: data.modelUsed || modelToUse,
         };
       }
       const svgCode = String(parsed.svg || '').trim();
       if (svgCode.startsWith('<svg')) {
         return {
           imageUrl: toSvgDataUri(svgCode),
-          imageCaption: String(
-            parsed.caption ||
-              userDescription ||
-              params.exerciseTitle ||
-              (isEn ? 'Educational Diagram' : 'Document visuel')
-          ),
+          imageCaption: String(parsed.caption || defaultCaption),
+          modelUsed: 'gemini-svg-contextual',
         };
       }
     }
   } catch (err) {
-    console.warn('Fallback local diagram after AI generation warning:', err);
+    console.warn('Fallback contextual illustration after AI generation warning:', err);
   }
 
-  // 3. Fallback local immédiat 100% garanti si hors-ligne ou quota dépassé
+  // 3. Fallback local intelligent si un schéma spécialisé correspond exactement aux données de l'exercice
   const fallback = detectAndAttachEducationalDiagram(
     params.subject || '',
     params.unitTitle || '',
@@ -1464,34 +1623,180 @@ Return JSON: {"svg": "<svg viewBox=\\"0 0 680 510\\" xmlns=\\"http://www.w3.org/
     return fallback;
   }
 
-  // 4. Schéma synthétique générique sur-mesure à partir du titre de l'exercice
-  const safeTitle = (userDescription || params.exerciseTitle || 'Schéma explicatif').replace(/[<>&"]/g, ' ').slice(0, 65);
-  const safeSub = cleanStatement.replace(/[<>&"]/g, ' ').slice(0, 95);
-  const autoSvg = `<svg viewBox="0 0 680 510" xmlns="http://www.w3.org/2000/svg">
-    <rect width="680" height="510" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="3"/>
-    <rect x="24" y="24" width="632" height="58" rx="12" fill="#4f46e5"/>
-    <text x="340" y="59" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#ffffff">${safeTitle}</text>
-    <rect x="44" y="110" width="260" height="140" rx="14" fill="#eef2ff" stroke="#6366f1" stroke-width="2.5"/>
-    <text x="174" y="155" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#312e81">${isEn ? 'Key Elements & Data' : 'Données & Repères Clés'}</text>
-    <text x="174" y="188" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#4338ca">${params.subject || 'IB MYP'} · ${effectiveGrade}</text>
-    <path d="M 314 180 L 366 180" stroke="#4f46e5" stroke-width="4" marker-end="url(#arrow)"/>
-    <rect x="376" y="110" width="260" height="140" rx="14" fill="#ecfdf5" stroke="#10b981" stroke-width="2.5"/>
-    <text x="506" y="155" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#065f46">${isEn ? 'Analysis & Application' : 'Analyse & Modélisation'}</text>
-    <text x="506" y="188" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#047857">${isEn ? 'Observe and justify' : 'Observer et justifier'}</text>
-    <rect x="44" y="285" width="592" height="175" rx="14" fill="#ffffff" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6,4"/>
-    <circle cx="150" cy="372" r="48" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>
-    <text x="150" y="377" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1e40af">A</text>
-    <line x1="198" y1="372" x2="310" y2="372" stroke="#2563eb" stroke-width="3"/>
-    <polygon points="340,324 400,420 280,420" fill="#fef3c7" stroke="#d97706" stroke-width="3"/>
-    <text x="340" y="395" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#92400e">B</text>
-    <line x1="385" y1="372" x2="480" y2="372" stroke="#10b981" stroke-width="3"/>
-    <rect x="480" y="328" width="110" height="88" rx="10" fill="#f3e8ff" stroke="#9333ea" stroke-width="3"/>
-    <text x="535" y="377" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#6b21a8">C</text>
-    <text x="340" y="485" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-style="italic" fill="#475569">${safeSub}</text>
+  // 4. Illustration contextuelle riche extraite des données réelles de l'exercice (jamais un simple bloc A-B-C)
+  const safeTitle = (userDescription || params.exerciseTitle || 'Document d’étude contextualisé')
+    .replace(/[<>&"]/g, ' ')
+    .slice(0, 72);
+  const snippetLines: string[] = [];
+  const cleanWords = scenarioSnippet.replace(/[<>&"]/g, ' ').split(/\s+/);
+  let currentLine = '';
+  for (const w of cleanWords) {
+    if ((currentLine + ' ' + w).trim().length > 68) {
+      snippetLines.push(currentLine.trim());
+      currentLine = w;
+      if (snippetLines.length >= 3) break;
+    } else {
+      currentLine = (currentLine + ' ' + w).trim();
+    }
+  }
+  if (currentLine && snippetLines.length < 3) snippetLines.push(currentLine.trim());
+
+  const badgesToRender = (measurements.length > 0 ? measurements : keyTerms.slice(0, 4)).slice(0, 4);
+
+  const autoSvg = `<svg viewBox="0 0 680 510" xmlns="http://www.w3.org/2000/svg" style="font-family:system-ui,-apple-system,sans-serif;">
+    <defs>
+      <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#f8fafc"/>
+        <stop offset="100%" stop-color="#eef2ff"/>
+      </linearGradient>
+      <linearGradient id="hdrGrad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#1e1b4b"/>
+        <stop offset="50%" stop-color="#4338ca"/>
+        <stop offset="100%" stop-color="#0f766e"/>
+      </linearGradient>
+      <pattern id="fineGrid" width="24" height="24" patternUnits="userSpaceOnUse">
+        <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+      </pattern>
+    </defs>
+    <rect width="680" height="510" rx="18" fill="url(#bgGrad)" stroke="#cbd5e1" stroke-width="2.5"/>
+    <rect x="20" y="20" width="640" height="64" rx="14" fill="url(#hdrGrad)"/>
+    <text x="42" y="46" font-size="11" font-weight="bold" fill="#a5b4fc" letter-spacing="1">${(params.subject || 'IB MYP').toUpperCase()} • ${effectiveGrade.toUpperCase()} • DOCUMENT D'ANALYSE</text>
+    <text x="42" y="68" font-size="16" font-weight="bold" fill="#ffffff">${safeTitle}</text>
+
+    <!-- Zone de scène visuelle contextualisée -->
+    <rect x="24" y="100" width="632" height="265" rx="14" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+    <rect x="26" y="102" width="628" height="261" rx="12" fill="url(#fineGrid)"/>
+
+    <!-- Illustration centrale dynamique (Système étudié + Repères) -->
+    <ellipse cx="220" cy="295" rx="145" ry="26" fill="#dbeafe" opacity="0.65"/>
+    <path d="M 85,295 L 215,145 L 345,295 Z" fill="#e0e7ff" stroke="#4338ca" stroke-width="3"/>
+    <line x1="215" y1="145" x2="215" y2="295" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="5,4"/>
+    <circle cx="215" cy="145" r="6" fill="#4338ca"/>
+    <circle cx="85" cy="295" r="6" fill="#0f766e"/>
+    <circle cx="345" cy="295" r="6" fill="#dc2626"/>
+    <text x="215" y="132" text-anchor="middle" font-size="12" font-weight="bold" fill="#1e1b4b">${keyTerms[0] || 'Sommet / Source'}</text>
+    <text x="215" y="318" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f766e">${measurements[0] || keyTerms[1] || 'Grandeur mesurée'}</text>
+
+    <!-- Cartouche des données et paramètres extraits de l'exercice -->
+    <rect x="385" y="122" width="250" height="220" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8"/>
+    <rect x="385" y="122" width="250" height="34" rx="10" fill="#e0e7ff"/>
+    <text x="510" y="144" text-anchor="middle" font-size="12" font-weight="bold" fill="#312e81">${isEn ? 'Exercise Parameters & Clues' : 'Données & Repères de l’énoncé'}</text>
+    ${badgesToRender
+      .map(
+        (b, i) => `
+      <rect x="400" y="${168 + i * 40}" width="220" height="30" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <circle cx="418" cy="${183 + i * 40}" r="9" fill="#4f46e5"/>
+      <text x="418" y="${187 + i * 40}" text-anchor="middle" font-size="10" font-weight="bold" fill="#ffffff">${i + 1}</text>
+      <text x="436" y="${187 + i * 40}" font-size="12" font-weight="bold" fill="#1e293b">${String(b).replace(/[<>&"]/g, '').slice(0, 26)}</text>`
+      )
+      .join('')}
+
+    <!-- Bandeau de mise en situation en bas -->
+    <rect x="24" y="380" width="632" height="106" rx="14" fill="#0f172a"/>
+    <text x="44" y="404" font-size="11" font-weight="bold" fill="#38bdf8" letter-spacing="0.8">${isEn ? 'CONTEXTUAL SCENARIO EXTRACTED FROM EXERCISE :' : 'EXTRAIT DE LA MISE EN SITUATION DE L’EXERCICE :'}</text>
+    ${snippetLines
+      .map(
+        (line, idx) =>
+          `<text x="44" y="${428 + idx * 20}" font-size="12" fill="#e2e8f0">${line}</text>`
+      )
+      .join('')}
   </svg>`;
 
   return {
     imageUrl: toSvgDataUri(autoSvg),
-    imageCaption: userDescription || params.exerciseTitle || (isEn ? 'Educational Diagram' : 'Schéma pédagogique illustré'),
+    imageCaption: userDescription || params.exerciseTitle || (isEn ? 'Contextual Exercise Document' : 'Document visuel en lien avec l’exercice'),
   };
 }
+
+/**
+ * Génère par lot (batch) des photos IA contextuelles Nano Banana pour tous les exercices
+ * d'une évaluation critériée qui n'ont pas encore de vraie photo IA (ou pour régénérer toutes les illustrations).
+ */
+export async function generateNanoBananaPhotosForAssessments<T extends {
+  criterion: string;
+  exercises: Array<{
+    title: string;
+    content: string;
+    imageUrl?: string;
+    imageCaption?: string;
+    [key: string]: any;
+  }>;
+}>(params: {
+  assessments: T[];
+  subject: string;
+  gradeLevel: string;
+  unitTitle?: string;
+  visualStyle?: NanoBananaVisualStyle;
+  overwriteExisting?: boolean;
+  onlyContextualExercises?: boolean;
+  onProgress?: (current: number, total: number, exerciseTitle: string) => void;
+}): Promise<{ updatedAssessments: T[]; generatedCount: number }> {
+  const {
+    assessments,
+    subject,
+    gradeLevel,
+    unitTitle,
+    visualStyle = 'auto',
+    overwriteExisting = false,
+    onlyContextualExercises = false,
+    onProgress,
+  } = params;
+
+  const cloned: T[] = JSON.parse(JSON.stringify(assessments));
+  const tasksToProcess: Array<{ critIdx: number; exIdx: number; title: string; content: string }> = [];
+
+  cloned.forEach((crit, critIdx) => {
+    (crit.exercises || []).forEach((ex, exIdx) => {
+      const hasBitmapPhoto = Boolean(
+        ex.imageUrl &&
+          (ex.imageUrl.startsWith('data:image/png') ||
+            ex.imageUrl.startsWith('data:image/jpeg') ||
+            ex.imageUrl.startsWith('data:image/webp') ||
+            ex.imageUrl.startsWith('http'))
+      );
+
+      if (!overwriteExisting && hasBitmapPhoto) {
+        return;
+      }
+
+      if (onlyContextualExercises && !shouldExerciseHaveVisual(subject, ex.title, ex.content)) {
+        return;
+      }
+
+      tasksToProcess.push({
+        critIdx,
+        exIdx,
+        title: ex.title,
+        content: ex.content,
+      });
+    });
+  });
+
+  let generatedCount = 0;
+  for (let i = 0; i < tasksToProcess.length; i++) {
+    const t = tasksToProcess[i];
+    if (onProgress) {
+      onProgress(i + 1, tasksToProcess.length, t.title || `Exercice ${i + 1}`);
+    }
+    try {
+      const res = await generateDiagramOrMapWithGeminiAI({
+        subject,
+        gradeLevel,
+        unitTitle,
+        exerciseTitle: t.title,
+        exerciseContent: t.content,
+        visualStyle,
+      });
+      if (res && res.imageUrl) {
+        cloned[t.critIdx].exercises[t.exIdx].imageUrl = res.imageUrl;
+        cloned[t.critIdx].exercises[t.exIdx].imageCaption = res.imageCaption;
+        generatedCount++;
+      }
+    } catch (e) {
+      console.warn(`Erreur génération photo Nano Banana pour "${t.title}":`, e);
+    }
+  }
+
+  return { updatedAssessments: cloned, generatedCount };
+}
+

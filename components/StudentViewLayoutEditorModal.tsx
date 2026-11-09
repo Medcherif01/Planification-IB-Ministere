@@ -16,7 +16,12 @@ import EvaluationPrintView from './EvaluationPrintView';
 import RichExerciseContent from './RichExerciseContent';
 import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, convertGoogleDriveUrl } from '../services/artworkService';
-import { generateDiagramOrMapWithGeminiAI } from '../services/educationalDiagramService';
+import {
+  generateDiagramOrMapWithGeminiAI,
+  generateNanoBananaPhotosForAssessments,
+  NANO_BANANA_VISUAL_STYLES,
+  NanoBananaVisualStyle,
+} from '../services/educationalDiagramService';
 
 interface StudentViewLayoutEditorModalProps {
   evaluation: OnlineEvaluation;
@@ -68,7 +73,10 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
     initialType: GenerateQuestionOptions['questionType'];
   } | null>(null);
   const [geminiDiagramPromptMap, setGeminiDiagramPromptMap] = useState<Record<string, string>>({});
+  const [geminiDiagramStyleMap, setGeminiDiagramStyleMap] = useState<Record<string, NanoBananaVisualStyle>>({});
   const [isGeneratingDiagramKey, setIsGeneratingDiagramKey] = useState<string | null>(null);
+  const [isBatchGeneratingPhotos, setIsBatchGeneratingPhotos] = useState<boolean>(false);
+  const [batchPhotoProgress, setBatchPhotoProgress] = useState<string>('');
 
   useEffect(() => {
     if (evaluation) {
@@ -119,6 +127,32 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
       alert(`Erreur lors de l'enregistrement : ${err?.message || 'Impossible de sauvegarder'}`);
     } finally {
       setSavingInternal(false);
+    }
+  };
+
+  const handleBatchGenerateNanoPhotos = async () => {
+    if (isBatchGeneratingPhotos) return;
+    setIsBatchGeneratingPhotos(true);
+    setBatchPhotoProgress('Analyse des exercices...');
+    try {
+      const { updatedAssessments } = await generateNanoBananaPhotosForAssessments({
+        subject: draftEval.subject || '',
+        gradeLevel: draftEval.grade || '',
+        unitTitle: draftEval.unitTitle || draftEval.title,
+        assessments: draftEval.assessments || [],
+        overwriteExisting: false,
+        visualStyle: 'auto',
+        onProgress: (done, total, title) => {
+          setBatchPhotoProgress(`${done}/${total} : ${title}`);
+        },
+      });
+      setDraftEval(prev => ({
+        ...prev,
+        assessments: updatedAssessments as any,
+      }));
+    } finally {
+      setIsBatchGeneratingPhotos(false);
+      setBatchPhotoProgress('');
     }
   };
 
@@ -427,6 +461,21 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
               <span>Éditeur Détaillé</span>
             </button>
           )}
+
+          <button
+            type="button"
+            disabled={isBatchGeneratingPhotos}
+            onClick={handleBatchGenerateNanoPhotos}
+            className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-xl text-xs transition flex items-center gap-1.5 shadow-sm disabled:opacity-60"
+            title="Générer automatiquement avec Nano Banana des photos/illustrations IA en relation directe avec chaque exercice"
+          >
+            <span>🍌</span>
+            <span>
+              {isBatchGeneratingPhotos
+                ? batchPhotoProgress || 'Photos IA...'
+                : 'Photos IA Exercices (Nano Banana)'}
+            </span>
+          </button>
 
           <button
             type="button"
@@ -1102,12 +1151,17 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                             </div>
                           )}
 
-                          {/* Insertion / Modification de Diagramme Gemini AI ou Lien Google Drive en mode Organisation */}
+                          {/* Insertion / Modification de Photo IA Contextuelle (Nano Banana) ou Lien Google Drive en mode Organisation */}
                           {viewMode === 'organize' && (
-                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2">
+                            <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-3 space-y-2">
                               <div className="flex items-center justify-between gap-2 flex-wrap">
-                                <span className="text-[11px] font-black text-slate-700 uppercase">
-                                  🖼️ {isEn ? 'Diagram / Map / Image (Gemini AI or Google Drive Link):' : 'Diagramme / Carte / Image (Gemini AI ou Lien Google Drive) :'}
+                                <span className="text-[11px] font-black text-amber-950 uppercase flex items-center gap-1.5">
+                                  <span>🍌</span>
+                                  <span>
+                                    {isEn
+                                      ? 'Contextual AI Exercise Photo (Nano Banana) or Google Drive Link:'
+                                      : 'Photo / Illustration IA liée à cet exercice (Nano Banana) ou Lien Google Drive :'}
+                                  </span>
                                 </span>
                                 {ex.imageUrl && (
                                   <button
@@ -1121,6 +1175,23 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                               </div>
 
                               <div className="flex flex-col sm:flex-row gap-2">
+                                <select
+                                  value={geminiDiagramStyleMap[`${critIdx}_${exIdx}`] || 'auto'}
+                                  onChange={e =>
+                                    setGeminiDiagramStyleMap(prev => ({
+                                      ...prev,
+                                      [`${critIdx}_${exIdx}`]: e.target.value as NanoBananaVisualStyle,
+                                    }))
+                                  }
+                                  className="sm:w-56 p-2 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-amber-500"
+                                  title="Choisir le style visuel Nano Banana"
+                                >
+                                  {NANO_BANANA_VISUAL_STYLES.map(s => (
+                                    <option key={s.id} value={s.id}>
+                                      {isEn ? s.labelEn : s.labelFr}
+                                    </option>
+                                  ))}
+                                </select>
                                 <input
                                   type="text"
                                   value={geminiDiagramPromptMap[`${critIdx}_${exIdx}`] ?? ''}
@@ -1132,10 +1203,10 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                   }
                                   placeholder={
                                     isEn
-                                      ? 'Describe the diagram/map to generate with Gemini AI (or leave empty to use the question prompt)...'
-                                      : 'Décrivez le diagramme/schéma/carte à générer avec Gemini AI (ou laissez vide pour utiliser l\'énoncé)...'
+                                      ? 'Optional: specify details for Nano Banana (leave blank to automatically illustrate this exercise)...'
+                                      : 'Optionnel : précisez un détail (laissez vide pour illustrer automatiquement les données et la situation de cet exercice)...'
                                   }
-                                  className="flex-1 p-2 bg-white border border-purple-200 rounded-xl text-xs focus:outline-none focus:border-purple-500"
+                                  className="flex-1 p-2 bg-white border border-amber-300 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                 />
                                 <button
                                   type="button"
@@ -1145,11 +1216,18 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                     setIsGeneratingDiagramKey(key);
                                     try {
                                       const customPrompt = (geminiDiagramPromptMap[key] || '').trim();
+                                      const selectedStyle = geminiDiagramStyleMap[key] || 'auto';
+                                      const subQuestionsText = (ex.subQuestions || [])
+                                        .map((sq, idx) => `${sq.label || `${idx + 1})`} ${sq.content}`)
+                                        .join(' | ');
                                       const generated = await generateDiagramOrMapWithGeminiAI({
                                         subject: draftEval.subject || '',
                                         grade: draftEval.grade || '',
+                                        unitTitle: draftEval.unitTitle || draftEval.title,
                                         exerciseTitle: ex.title,
-                                        exerciseContent: customPrompt || `${ex.title} - ${ex.content}`,
+                                        exerciseContent: `${ex.content || ''}\n${subQuestionsText}`.trim(),
+                                        customPrompt: customPrompt || undefined,
+                                        visualStyle: selectedStyle,
                                       });
                                       if (generated) {
                                         handleUpdateExerciseField(critIdx, exIdx, {
@@ -1161,13 +1239,15 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                       setIsGeneratingDiagramKey(null);
                                     }
                                   }}
-                                  className="px-3 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 shadow-2xs disabled:opacity-60 whitespace-nowrap"
+                                  className="px-3.5 py-2 bg-gradient-to-r from-amber-500 via-orange-500 to-purple-600 hover:from-amber-600 hover:via-orange-600 hover:to-purple-700 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 shadow-2xs disabled:opacity-60 whitespace-nowrap"
                                 >
-                                  <Sparkles size={13} className="text-yellow-300" />
+                                  <span>🍌</span>
                                   <span>
                                     {isGeneratingDiagramKey === `${critIdx}_${exIdx}`
-                                      ? isEn ? 'Generating...' : 'Génération...'
-                                      : isEn ? 'Generate Diagram (Gemini AI)' : 'Générer Schéma / Carte (Gemini AI)'}
+                                      ? isEn ? 'Nano Banana generating...' : 'Nano Banana génère...'
+                                      : ex.imageUrl
+                                      ? isEn ? 'Regenerate Contextual AI Photo' : 'Regénérer Photo IA liée'
+                                      : isEn ? 'Generate Contextual AI Photo (Nano Banana)' : 'Générer Photo IA liée (Nano Banana)'}
                                   </span>
                                 </button>
                               </div>

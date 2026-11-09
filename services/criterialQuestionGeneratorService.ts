@@ -1,5 +1,11 @@
 import { AssessmentExercise, AssessmentSubQuestion } from '../types';
-import { stripHtmlTags, detectAndAttachEducationalDiagram } from './educationalDiagramService';
+import {
+  stripHtmlTags,
+  detectAndAttachEducationalDiagram,
+  generateDiagramOrMapWithGeminiAI,
+  shouldExerciseHaveVisual,
+  NanoBananaVisualStyle,
+} from './educationalDiagramService';
 import { formatProfessionalHtml } from './evaluationAiOptimizerService';
 import { resolveArtworkOrImage, findMatchingArtwork } from './artworkService';
 
@@ -20,6 +26,8 @@ export interface GenerateQuestionOptions {
   difficulty?: 'facile' | 'moyen' | 'difficile' | 'approfondi';
   customGuidance?: string; // Consigne libre optionnelle de l'enseignant
   taskNumber?: number; // e.g. 1, 2, 3...
+  generateNanoBananaPhoto?: boolean; // Générer automatiquement une photo contextuelle Nano Banana liée à l'exercice
+  visualStyle?: NanoBananaVisualStyle;
 }
 
 export interface QuestionTypeOption {
@@ -280,21 +288,51 @@ Schéma JSON attendu :
     const cleanTitle = stripHtmlTags(parsed.title) || defaultTitle;
     const cleanContent = formatProfessionalHtml(parsed.content) || (isEn ? '<p>Complete the task described above.</p>' : '<p>Répondez à la consigne ci-dessus.</p>');
 
-    // Détection et attachement d'oeuvre d'art, figure géométrique ou document visuel
+    // Détection et génération de photo IA contextuelle (Nano Banana), oeuvre d'art ou figure géométrique
     let imageUrl = parsed.imageUrl || '';
     let imageCaption = parsed.imageCaption || '';
 
-    // 1. Résolution d'oeuvres d'art citées dans le titre, l'énoncé ou le champ image
-    const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
-    if (resolvedArt) {
-      imageUrl = resolvedArt.imageUrl;
-      imageCaption = resolvedArt.imageCaption;
-    } else if (!imageUrl) {
-      // 2. Détection de figures géométriques cotées, courbes mathématiques ou schémas SVT/Physique
-      const detected = detectAndAttachEducationalDiagram(options.subject, options.unitTitle || '', cleanTitle, stripHtmlTags(cleanContent));
-      if (detected) {
-        imageUrl = detected.imageUrl;
-        imageCaption = detected.imageCaption;
+    const shouldUseNanoBanana =
+      options.generateNanoBananaPhoto !== false &&
+      (Boolean(options.generateNanoBananaPhoto) ||
+        options.questionType === 'geometry' ||
+        options.questionType === 'art' ||
+        options.questionType === 'subquestions' ||
+        shouldExerciseHaveVisual(options.subject, cleanTitle, cleanContent));
+
+    if (shouldUseNanoBanana) {
+      try {
+        const nanoGenerated = await generateDiagramOrMapWithGeminiAI({
+          subject: options.subject,
+          gradeLevel: options.gradeLevel,
+          unitTitle: options.unitTitle,
+          exerciseTitle: cleanTitle,
+          exerciseContent: cleanContent,
+          customPrompt: imageCaption || options.customGuidance,
+          visualStyle: options.visualStyle || 'auto',
+        });
+        if (nanoGenerated?.imageUrl) {
+          imageUrl = nanoGenerated.imageUrl;
+          imageCaption = nanoGenerated.imageCaption;
+        }
+      } catch {
+        // Repli sur détection locale ci-dessous
+      }
+    }
+
+    if (!imageUrl) {
+      // 1. Résolution d'oeuvres d'art citées dans le titre, l'énoncé ou le champ image
+      const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
+      if (resolvedArt) {
+        imageUrl = resolvedArt.imageUrl;
+        imageCaption = resolvedArt.imageCaption;
+      } else {
+        // 2. Détection de figures géométriques cotées, courbes mathématiques ou schémas SVT/Physique
+        const detected = detectAndAttachEducationalDiagram(options.subject, options.unitTitle || '', cleanTitle, stripHtmlTags(cleanContent));
+        if (detected) {
+          imageUrl = detected.imageUrl;
+          imageCaption = detected.imageCaption;
+        }
       }
     }
 

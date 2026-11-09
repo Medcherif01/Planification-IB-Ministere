@@ -555,7 +555,8 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [activeTextareaKey, setActiveTextareaKey] = useState<string | null>(null);
   const [activeTextareaLabel, setActiveTextareaLabel] = useState<string>('');
-  const [studentDisplayModeOverride, setStudentDisplayModeOverride] = useState<'full_page' | 'tabs' | null>(null);
+  const [studentDisplayModeOverride, setStudentDisplayModeOverride] = useState<'full_page' | 'tabs' | 'focus' | null>(null);
+  const [focusedExerciseGlobalIdx, setFocusedExerciseGlobalIdx] = useState<number>(0);
 
   // Clavier virtuel tablette (Empêche le clavier natif de masquer la zone de saisie)
   const [isVirtualKeyboardOpen, setIsVirtualKeyboardOpen] = useState(false);
@@ -2004,7 +2005,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   // VUE 3 : PASSATION EN LIGNE BIEN ORGANISÉE (AVEC CALCULATRICE, PARENTHÈSES, ACCOLADES & MISE EN PAGE)
   // ═══════════════════════════════════════════════════════════════════════════
   const layout = evaluation.layoutConfig || {};
-  const effectiveDisplayMode: 'full_page' | 'tabs' =
+  const effectiveDisplayMode: 'full_page' | 'tabs' | 'focus' =
     studentDisplayModeOverride || layout.displayMode || 'full_page';
   const numberingStyle = layout.numberingStyle || 'continuous';
   const spacingMode = layout.spacing || 'normal';
@@ -2044,12 +2045,44 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   };
 
   const safeAssessments = Array.isArray(evaluation.assessments) ? evaluation.assessments : [];
+
+  // Liste plate de tous les exercices pour la navigation rapide et le mode Focus (1 question à la fois)
+  const flatExercisesList: Array<{
+    crit: typeof safeAssessments[0];
+    critIdx: number;
+    ex: AssessmentExercise;
+    exIdx: number;
+    globalNum: number;
+    flatIdx: number;
+    done: boolean;
+  }> = [];
+  safeAssessments.forEach((crit, cIdx) => {
+    (crit.exercises || []).forEach((ex, eIdx) => {
+      flatExercisesList.push({
+        crit,
+        critIdx: cIdx,
+        ex,
+        exIdx: eIdx,
+        globalNum: getGlobalExerciseNumber(cIdx, eIdx),
+        flatIdx: flatExercisesList.length,
+        done: isExerciseAnswered(crit, ex, eIdx),
+      });
+    });
+  });
+
+  const safeFocusIdx = Math.min(Math.max(0, focusedExerciseGlobalIdx), Math.max(0, flatExercisesList.length - 1));
+  const focusedItem = flatExercisesList[safeFocusIdx] || null;
+
   const criteriaToRender =
     effectiveDisplayMode === 'full_page'
       ? safeAssessments.map((c, idx) => ({ crit: c, critIdx: idx }))
+      : effectiveDisplayMode === 'focus' && focusedItem
+      ? [{ crit: focusedItem.crit, critIdx: focusedItem.critIdx }]
       : safeAssessments[activeCriterionIdx]
       ? [{ crit: safeAssessments[activeCriterionIdx], critIdx: activeCriterionIdx }]
       : safeAssessments.map((c, idx) => ({ crit: c, critIdx: idx }));
+
+  const progressPercent = totalQuestionsCount > 0 ? Math.round((answeredQuestionsCount / totalQuestionsCount) * 100) : 0;
 
   return (
     <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-100 text-slate-900 flex flex-col select-text">
@@ -2126,33 +2159,46 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
               </span>
             )}
 
-            {/* Bascule Feuille complète / Par onglets */}
-            <div className="hidden sm:flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-[11px] font-bold">
+            {/* Bascule Feuille complète / Par Critère / Question par Question (Focus) */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-[11px] font-bold">
               <button
                 type="button"
                 onClick={() => setStudentDisplayModeOverride('full_page')}
                 className={`px-2.5 py-1 rounded-lg transition flex items-center gap-1 ${
                   effectiveDisplayMode === 'full_page'
-                    ? 'bg-white text-purple-900 shadow-2xs'
+                    ? 'bg-white text-purple-900 shadow-2xs font-black'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
-                title="Afficher toute l'évaluation bien organisée sur une seule feuille"
+                title="Afficher toute l'évaluation sur une seule feuille"
               >
                 <List size={12} />
-                <span>Feuille complète</span>
+                <span className="hidden sm:inline">Feuille complète</span>
               </button>
               <button
                 type="button"
                 onClick={() => setStudentDisplayModeOverride('tabs')}
                 className={`px-2.5 py-1 rounded-lg transition flex items-center gap-1 ${
                   effectiveDisplayMode === 'tabs'
-                    ? 'bg-white text-purple-900 shadow-2xs'
+                    ? 'bg-white text-purple-900 shadow-2xs font-black'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
                 title="Afficher critère par critère"
               >
                 <Layers size={12} />
-                <span>Par critère</span>
+                <span className="hidden sm:inline">Par critère</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStudentDisplayModeOverride('focus')}
+                className={`px-2.5 py-1 rounded-lg transition flex items-center gap-1 ${
+                  effectiveDisplayMode === 'focus'
+                    ? 'bg-purple-600 text-white shadow-2xs font-black'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Mode simplifié : afficher un seul exercice à la fois avec boutons Suivant / Précédent"
+              >
+                <span>🎯</span>
+                <span>1 par 1 (Focus)</span>
               </button>
             </div>
 
@@ -2294,42 +2340,79 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           )
         )}
 
-        {/* 2. SOMMAIRE DE NAVIGATION RAPIDE DES EXERCICES */}
-        {showSummaryNav && (
-          <div className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-2xs flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider mr-1">
-                📋 Plan de l'évaluation :
-              </span>
-              {evaluation.assessments.map((crit, cIdx) => {
-                const colors = CRITERION_COLORS[crit.criterion] || CRITERION_COLORS.A;
-                return (crit.exercises || []).map((ex, eIdx) => {
-                  const globalNum = getGlobalExerciseNumber(cIdx, eIdx);
-                  const done = isExerciseAnswered(crit, ex, eIdx);
+        {/* 2. BARRE DE NAVIGATION RAPIDE & PROGRESSION DES EXERCICES (STICKY & INTERACTIVE) */}
+        {showSummaryNav && flatExercisesList.length > 0 && (
+          <div className="bg-white/95 backdrop-blur-md rounded-2xl p-3 sm:p-3.5 border-2 border-purple-200/80 shadow-sm sticky top-[61px] z-20 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-black text-purple-950 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🧭</span>
+                  <span>{isEn ? 'Quick Exercise Navigation:' : 'Accès direct aux exercices :'}</span>
+                </span>
+                {flatExercisesList.map(item => {
+                  const colors = CRITERION_COLORS[item.crit.criterion] || CRITERION_COLORS.A;
+                  const isFocused = effectiveDisplayMode === 'focus' && item.flatIdx === safeFocusIdx;
                   return (
                     <button
-                      key={`${crit.criterion}_${eIdx}`}
+                      key={`${item.crit.criterion}_${item.exIdx}`}
                       type="button"
                       onClick={() => {
-                        setActiveCriterionIdx(cIdx);
-                        const el = document.getElementById(`eval_ex_${crit.criterion}_${eIdx}`);
-                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        setActiveCriterionIdx(item.critIdx);
+                        setFocusedExerciseGlobalIdx(item.flatIdx);
+                        if (effectiveDisplayMode !== 'focus') {
+                          setTimeout(() => {
+                            const el = document.getElementById(`eval_ex_${item.crit.criterion}_${item.exIdx}`);
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }, 40);
+                        }
                       }}
                       className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition ${
-                        done
-                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                        isFocused
+                          ? 'bg-purple-700 border-purple-800 text-white shadow-sm ring-2 ring-purple-300'
+                          : item.done
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900 hover:bg-emerald-100'
                           : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-purple-300 hover:bg-purple-50/50'
                       }`}
                     >
-                      <span className={`w-4 h-4 rounded text-[10px] font-black text-white flex items-center justify-center ${colors.badge}`}>
-                        {crit.criterion}
+                      <span
+                        className={`w-4 h-4 rounded text-[10px] font-black text-white flex items-center justify-center ${
+                          isFocused ? 'bg-white/25' : colors.badge
+                        }`}
+                      >
+                        {item.crit.criterion}
                       </span>
-                      <span>Ex. {globalNum}</span>
-                      {done && <Check size={12} className="text-emerald-600 stroke-[3]" />}
+                      <span>Ex. {item.globalNum}</span>
+                      {item.ex.imageUrl && <span title="Contient une photo / illustration IA">🖼️</span>}
+                      {item.done && (
+                        <Check
+                          size={12}
+                          className={isFocused ? 'text-emerald-300 stroke-[3]' : 'text-emerald-600 stroke-[3]'}
+                        />
+                      )}
                     </button>
                   );
-                });
-              })}
+                })}
+              </div>
+
+              <div className="flex items-center gap-2 text-[11px] font-bold">
+                {lastAutoSave && (
+                  <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg flex items-center gap-1">
+                    <Save size={11} />
+                    <span>Sauvegardé à {lastAutoSave}</span>
+                  </span>
+                )}
+                <span className="text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-lg">
+                  {progressPercent}% complété ({answeredQuestionsCount}/{totalQuestionsCount})
+                </span>
+              </div>
+            </div>
+
+            {/* Barre visuelle de progression */}
+            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-purple-600 to-emerald-500 transition-all duration-300"
+                style={{ width: `${progressPercent}%` }}
+              />
             </div>
           </div>
         )}
@@ -2402,6 +2485,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                 {/* Exercices / Tâches du critère */}
                 <div className={spacingMode === 'compact' ? 'space-y-4' : spacingMode === 'spacious' ? 'space-y-8' : 'space-y-6'}>
                   {(activeAssessment.exercises || []).map((ex, exIdx) => {
+                    if (effectiveDisplayMode === 'focus' && focusedItem && (focusedItem.critIdx !== critIdx || focusedItem.exIdx !== exIdx)) {
+                      return null;
+                    }
                     const subQuestions = getExerciseSubQuestions(ex, activeAssessment.criterion, activeAssessment.strands);
                     const hasSubQuestions = subQuestions.length > 0;
                     const mainStrand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx, isEn);
@@ -2440,9 +2526,13 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                           </div>
                         </div>
 
-                        {/* OEUVRE D'ART / PHOTO / SCHÉMA SI PRÉSENT */}
+                        {/* OEUVRE D'ART / PHOTO IA NANO BANANA LIÉE À L'EXERCICE (AVEC ZOOM PLEIN ÉCRAN) */}
                         {ex.imageUrl && (
-                          <SafeExerciseImage imageUrl={ex.imageUrl} imageCaption={ex.imageCaption} />
+                          <SafeExerciseImage
+                            imageUrl={ex.imageUrl}
+                            imageCaption={ex.imageCaption}
+                            onZoom={(src, caption) => setZoomedDoc({ src, caption })}
+                          />
                         )}
 
                         {/* Énoncé global / Contexte de l'exercice */}
@@ -2832,7 +2922,52 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
         {/* Navigation bas de page */}
         <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-          {effectiveDisplayMode === 'tabs' ? (
+          {effectiveDisplayMode === 'focus' && flatExercisesList.length > 0 ? (
+            <div className="w-full flex items-center justify-between bg-white p-4 rounded-2xl border-2 border-purple-200 shadow-xs flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const prevIdx = Math.max(0, safeFocusIdx - 1);
+                  setFocusedExerciseGlobalIdx(prevIdx);
+                  if (flatExercisesList[prevIdx]) {
+                    setActiveCriterionIdx(flatExercisesList[prevIdx].critIdx);
+                  }
+                }}
+                disabled={safeFocusIdx === 0}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-700 disabled:opacity-30 transition"
+              >
+                ← Exercice précédent
+              </button>
+
+              <span className="text-xs font-black text-purple-900">
+                Exercice {safeFocusIdx + 1} sur {flatExercisesList.length} · ({answeredQuestionsCount}/{totalQuestionsCount} réponses)
+              </span>
+
+              {safeFocusIdx < flatExercisesList.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextIdx = Math.min(flatExercisesList.length - 1, safeFocusIdx + 1);
+                    setFocusedExerciseGlobalIdx(nextIdx);
+                    if (flatExercisesList[nextIdx]) {
+                      setActiveCriterionIdx(flatExercisesList[nextIdx].critIdx);
+                    }
+                  }}
+                  className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow transition"
+                >
+                  Exercice suivant →
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmSubmit(true)}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-lg transition flex items-center gap-1.5"
+                >
+                  <Send size={14} /> Vérifier & Soumettre ma copie
+                </button>
+              )}
+            </div>
+          ) : effectiveDisplayMode === 'tabs' ? (
             <>
               <button
                 onClick={() => setActiveCriterionIdx(i => Math.max(0, i - 1))}
@@ -2873,6 +3008,15 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
           )}
         </div>
       </main>
+
+      {/* ── MODALE DE ZOOM HAUTE RÉSOLUTION POUR LES PHOTOS / DOCUMENTS D'EXERCICE ── */}
+      {zoomedDoc && (
+        <DocumentZoomModal
+          src={zoomedDoc.src}
+          caption={zoomedDoc.caption}
+          onClose={() => setZoomedDoc(null)}
+        />
+      )}
 
       {/* ── MODALE CALCULATRICE SCIENTIFIQUE & STANDARD (si autorisée) ── */}
       {showCalculator && (

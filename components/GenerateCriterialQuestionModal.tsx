@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Sparkles, Loader2, Check, ArrowRight, BookOpen, AlertCircle, RefreshCw, Edit3 } from 'lucide-react';
+import { X, Sparkles, Loader2, Check, ArrowRight, BookOpen, AlertCircle, RefreshCw, Edit3, Image as ImageIcon } from 'lucide-react';
 import { AssessmentExercise } from '../types';
 import {
   GenerateQuestionOptions,
@@ -7,6 +7,11 @@ import {
   isEnglishSubject,
   generateCriterialQuestion,
 } from '../services/criterialQuestionGeneratorService';
+import {
+  NANO_BANANA_VISUAL_STYLES,
+  NanoBananaVisualStyle,
+  generateDiagramOrMapWithGeminiAI,
+} from '../services/educationalDiagramService';
 
 interface GenerateCriterialQuestionModalProps {
   isOpen: boolean;
@@ -57,6 +62,9 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
   const [selectedStrandIndex, setSelectedStrandIndex] = useState<string>(initialStrandIndex || 'i');
   const [difficulty, setDifficulty] = useState<'facile' | 'moyen' | 'difficile' | 'approfondi'>('moyen');
   const [customGuidance, setCustomGuidance] = useState('');
+  const [generateNanoBananaPhoto, setGenerateNanoBananaPhoto] = useState<boolean>(true);
+  const [visualStyle, setVisualStyle] = useState<NanoBananaVisualStyle>('auto');
+  const [isRegeneratingPhoto, setIsRegeneratingPhoto] = useState<boolean>(false);
 
   // Generation status & result
   const [isGenerating, setIsGenerating] = useState(false);
@@ -74,6 +82,8 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
       setErrorMessage(null);
       setIsEditingPreview(false);
       setCustomGuidance('');
+      setGenerateNanoBananaPhoto(true);
+      setVisualStyle('auto');
     }
   }, [isOpen, initialStrandIndex, initialQuestionType, targetQuestionIndex]);
 
@@ -108,6 +118,8 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
         difficulty,
         customGuidance: customGuidance.trim() || undefined,
         taskNumber: isReplaceMode ? (targetQuestionIndex! + 1) : (existingQuestionsCount + 1),
+        generateNanoBananaPhoto,
+        visualStyle,
       });
 
       setGeneratedQuestion(q);
@@ -115,6 +127,33 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
       setErrorMessage(err.message || (isEn ? 'Failed to generate question.' : 'Erreur lors de la génération.'));
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleRegenerateNanoPhotoOnly = async () => {
+    if (!generatedQuestion) return;
+    setIsRegeneratingPhoto(true);
+    try {
+      const res = await generateDiagramOrMapWithGeminiAI({
+        subject,
+        gradeLevel,
+        unitTitle,
+        exerciseTitle: generatedQuestion.title,
+        exerciseContent: generatedQuestion.content,
+        customPrompt: customGuidance.trim() || generatedQuestion.imageCaption,
+        visualStyle,
+      });
+      if (res?.imageUrl) {
+        setGeneratedQuestion({
+          ...generatedQuestion,
+          imageUrl: res.imageUrl,
+          imageCaption: res.imageCaption,
+        });
+      }
+    } catch (e) {
+      console.warn('Erreur régénération photo Nano Banana:', e);
+    } finally {
+      setIsRegeneratingPhoto(false);
     }
   };
 
@@ -297,6 +336,42 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
                 className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-purple-400"
               />
             </div>
+
+            {/* Option Photo IA Contextuelle Nano Banana */}
+            <div className="sm:col-span-2 pt-2 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={generateNanoBananaPhoto}
+                  onChange={e => setGenerateNanoBananaPhoto(e.target.checked)}
+                  className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500"
+                />
+                <div>
+                  <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                    <span>🍌 {isEn ? 'Generate Contextual AI Photo (Nano Banana)' : 'Générer une photo IA contextuelle (Nano Banana) liée à l’exercice'}</span>
+                  </span>
+                  <p className="text-[10px] text-slate-500">
+                    {isEn
+                      ? 'Creates a rich, exercise-specific illustration or realistic photo matching the exact scenario'
+                      : 'Crée une vraie photo ou illustration détaillée en relation directe avec la mise en situation de l’exercice'}
+                  </p>
+                </div>
+              </label>
+
+              {generateNanoBananaPhoto && (
+                <select
+                  value={visualStyle}
+                  onChange={e => setVisualStyle(e.target.value as NanoBananaVisualStyle)}
+                  className="p-2 bg-amber-50 border border-amber-300 text-amber-950 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                >
+                  {NANO_BANANA_VISUAL_STYLES.map(st => (
+                    <option key={st.id} value={st.id}>
+                      {st.badge} — {isEn ? st.labelEn : st.labelFr}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
 
           {/* Erreur éventuelle */}
@@ -319,7 +394,7 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
                 {isGenerating ? (
                   <>
                     <Loader2 size={18} className="animate-spin text-white" />
-                    <span>{isEn ? 'Generating question with Gemini AI...' : 'Génération de la question avec l\'IA…'}</span>
+                    <span>{isEn ? 'Generating question & Nano Banana photo...' : 'Génération de la question et de la photo Nano Banana…'}</span>
                   </>
                 ) : (
                   <>
@@ -334,14 +409,23 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
           {/* Aperçu de la question générée */}
           {generatedQuestion && (
             <div className="border-2 border-emerald-300 bg-emerald-50/40 rounded-2xl p-5 space-y-4 animate-fadeIn">
-              <div className="flex items-center justify-between pb-2 border-b border-emerald-200">
+              <div className="flex items-center justify-between pb-2 border-b border-emerald-200 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <span className="p-1 bg-emerald-600 text-white rounded-lg text-xs">✔</span>
                   <span className="text-xs font-extrabold uppercase text-emerald-900 tracking-wider">
                     {isEn ? 'Generated Question Preview' : 'Aperçu de la question générée'}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleRegenerateNanoPhotoOnly}
+                    disabled={isRegeneratingPhoto}
+                    className="flex items-center gap-1 text-xs text-amber-900 bg-amber-100 hover:bg-amber-200 font-bold px-2.5 py-1 border border-amber-300 rounded-lg transition disabled:opacity-50"
+                  >
+                    <ImageIcon size={12} className={isRegeneratingPhoto ? 'animate-spin' : ''} />
+                    <span>{isRegeneratingPhoto ? 'Nano Banana...' : '🍌 Nouvelle Photo IA'}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setIsEditingPreview(v => !v)}
@@ -361,6 +445,36 @@ const GenerateCriterialQuestionModal: React.FC<GenerateCriterialQuestionModalPro
                   </button>
                 </div>
               </div>
+
+              {/* Aperçu de la Photo IA Nano Banana générée */}
+              {generatedQuestion.imageUrl && (
+                <div className="bg-white p-3 rounded-2xl border border-amber-200 shadow-2xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                      🍌 {isEn ? 'Contextual Exercise Photo (Nano Banana)' : 'Photo / Illustration en relation avec l’exercice (Nano Banana)'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setGeneratedQuestion({ ...generatedQuestion, imageUrl: undefined, imageCaption: undefined })}
+                      className="text-[11px] text-rose-600 hover:text-rose-800 font-bold"
+                    >
+                      {isEn ? 'Remove image' : 'Retirer l’image'}
+                    </button>
+                  </div>
+                  <div className="flex justify-center bg-slate-50 rounded-xl p-2 border border-slate-100">
+                    <img
+                      src={generatedQuestion.imageUrl}
+                      alt={generatedQuestion.imageCaption || generatedQuestion.title}
+                      className="max-h-56 w-auto object-contain rounded-lg"
+                    />
+                  </div>
+                  {generatedQuestion.imageCaption && (
+                    <p className="text-[11px] text-center text-slate-600 italic font-medium">
+                      {generatedQuestion.imageCaption}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Titre */}
               <div>
