@@ -391,8 +391,8 @@ CRITICAL RULES:
 - Teacher Custom Request: ${exerciseMeta?.customPrompt || ''}
 - Visual Style: ${exerciseMeta?.visualStyle || 'photo_realiste'}`;
 
-  for (const model of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite']) {
-    for (const rawKey of keys) {
+  for (const model of ['gemini-2.5-flash', 'gemini-flash-latest']) {
+    for (const rawKey of keys.slice(0, 2)) {
       const apiKey = cleanKey(rawKey);
       if (!apiKey) continue;
       try {
@@ -400,14 +400,17 @@ CRITICAL RULES:
           apiKey,
           httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
         });
-        const resp = await ai.models.generateContent({
-          model,
-          contents: userTask,
-          config: {
-            systemInstruction: directorSystemInstruction,
-            responseMimeType: 'application/json',
-          },
-        });
+        const resp: any = await Promise.race([
+          ai.models.generateContent({
+            model,
+            contents: userTask,
+            config: {
+              systemInstruction: directorSystemInstruction,
+              responseMimeType: 'application/json',
+            },
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5500)),
+        ]);
         const txt = (resp?.text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
         if (txt) {
           const parsed = JSON.parse(txt);
@@ -422,7 +425,7 @@ CRITICAL RULES:
           }
         }
       } catch {
-        // Passer à la clé/modèle suivant
+        // Passer à la clé/modèle suivant ou au prompt direct
       }
     }
   }
@@ -431,9 +434,98 @@ CRITICAL RULES:
 }
 
 /**
+ * Cluster de génération de photos IA 100% GRATUIT (Quota gratuit / ZeroGPU) :
+ * Utilise FLUX.1-schnell (Black Forest Labs), FLUX.1-merged et Stable Diffusion 3.5 Large Turbo
+ * pour générer des photographies IA haute précision (1024×768, format 4:3) sans aucun frais
+ * lorsque la clé Gemini est sur le quota gratuit.
+ */
+async function generatePhotoWithFreeFluxCluster(
+  precisionPrompt: string
+): Promise<{ imageDataUri: string; modelUsed: string } | null> {
+  const freeNodes: Array<{
+    name: string;
+    baseUrl: string;
+    buildData: (p: string) => any[];
+  }> = [
+    {
+      name: 'flux-1-schnell-free',
+      baseUrl: 'https://black-forest-labs-flux-1-schnell.hf.space',
+      buildData: (p: string) => [p, 0, true, 1024, 768, 4],
+    },
+    {
+      name: 'flux-1-merged-free',
+      baseUrl: 'https://multimodalart-flux-1-merged.hf.space',
+      buildData: (p: string) => [p, 0, true, 1024, 768, 3.5, 8],
+    },
+    {
+      name: 'sd-3.5-large-turbo-free',
+      baseUrl: 'https://stabilityai-stable-diffusion-3-5-large-turbo.hf.space',
+      buildData: (p: string) => [
+        p,
+        'blurry, low quality, stick figures, simple vector cartoon, watermark, deformed, ugly',
+        0,
+        true,
+        1024,
+        768,
+        0,
+        4,
+      ],
+    },
+  ];
+
+  for (const node of freeNodes) {
+    try {
+      const callResp = await fetch(`${node.baseUrl}/gradio_api/call/infer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: node.buildData(precisionPrompt) }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!callResp.ok) continue;
+      const callData: any = await callResp.json();
+      const eventId = callData?.event_id;
+      if (!eventId) continue;
+
+      const sseResp = await fetch(`${node.baseUrl}/gradio_api/call/infer/${eventId}`, {
+        signal: AbortSignal.timeout(35000),
+      });
+      if (!sseResp.ok) continue;
+      const sseText = await sseResp.text();
+
+      // Extraire l'URL du fichier généré dans l'événement "complete"
+      const matchData = sseText.match(/event:\s*complete[\s\S]*?data:\s*(\[[\s\S]*?\])\s*(?:\n|$)/);
+      if (!matchData) continue;
+
+      const parsedArr = JSON.parse(matchData[1]);
+      const fileObj = parsedArr?.[0];
+      const fileUrl: string =
+        fileObj?.url ||
+        (fileObj?.path ? `${node.baseUrl}/gradio_api/file=${fileObj.path}` : '');
+      if (!fileUrl) continue;
+
+      const imgResp = await fetch(fileUrl, { signal: AbortSignal.timeout(15000) });
+      if (!imgResp.ok) continue;
+      const contentType = imgResp.headers.get('content-type') || 'image/webp';
+      const arrayBuf = await imgResp.arrayBuffer();
+      const buf = Buffer.from(arrayBuf);
+      if (buf.length < 5000) continue;
+
+      console.log(`✅ [Free AI Photo Cluster / ${node.name}] Photo IA 1024x768 générée gratuitement (${buf.length} octets) !`);
+      return {
+        imageDataUri: `data:${contentType};base64,${buf.toString('base64')}`,
+        modelUsed: node.name,
+      };
+    } catch (err: any) {
+      console.warn(`⚠️ [Free AI Photo Cluster / ${node.name}] Indisponible: ${err?.message || err}`);
+    }
+  }
+
+  return null;
+}
+
+/**
  * Recherche et télécharge côté serveur une vraie photographie haute définition libre de droits
- * depuis Wikimedia Commons (en base64) si toutes les clés Gemini Image sont en quota gratuit (429).
- * Garantit qu'on obtient TOUJOURS une vraie photo professionnelle liée au sujet et JAMAIS un SVG enfantin.
+ * depuis Wikimedia Commons (en base64) en ultime secours.
  */
 async function fetchRealContextualPhotoFallback(
   searchQueries: string[]
@@ -472,7 +564,7 @@ async function fetchRealContextualPhotoFallback(
 
         const arrayBuf = await imgResp.arrayBuffer();
         const buf = Buffer.from(arrayBuf);
-        if (buf.length < 8000) continue; // Ignorer les miniatures trop petites
+        if (buf.length < 8000) continue;
 
         return {
           imageDataUri: `data:${contentType};base64,${buf.toString('base64')}`,
@@ -500,42 +592,37 @@ async function tryGenerateImageWithNanoBanana(
     visualStyle?: string;
   }
 ): Promise<{ imageDataUri: string; caption?: string; modelUsed?: string; quotaExceeded?: boolean } | null> {
-  // 0. Raffiner le prompt avec Gemini pour une précision photographique maximale liée à l'exercice
+  // 0. Raffiner le prompt avec Gemini (gratuit) pour une précision photographique maximale liée à l'exercice
   const refined = await refineExerciseIntoPrecisionPhotoPrompt(keys, promptText, exerciseMeta);
   const effectivePrompt = refined.nanoBananaPrompt;
 
   // Normaliser les alias Nano Banana vers les modèles officiels Gemini Image (@google/genai)
   const normalizeImageModel = (m?: string): string => {
-    if (!m) return 'gemini-nano-banana-2.1';
+    if (!m) return 'gemini-2.5-flash-image';
     const lower = m.toLowerCase().trim();
     if (lower.includes('nano-banana-2.1')) return 'gemini-nano-banana-2.1';
     if (lower.includes('3.1-flash-lite-image') || lower.includes('nano-banana-lite')) return 'gemini-3.1-flash-lite-image';
     if (lower.includes('nano-banana-pro') || lower.includes('3-pro-image')) return 'gemini-3-pro-image';
     if (lower.includes('3.1-flash-image')) return 'gemini-3.1-flash-image-preview';
-    if (lower.includes('2.5-flash-image')) return 'gemini-2.5-flash-image';
-    if (lower.includes('nano-banana')) return 'gemini-nano-banana-2.1';
+    if (lower.includes('2.5-flash-image') || lower.includes('nano-banana')) return 'gemini-2.5-flash-image';
     return m;
   };
 
   const modelsToTry = [
-    normalizeImageModel(customModel || AI_IMAGE_MODEL),
-    'gemini-nano-banana-2.1',
-    'gemini-3.1-flash-lite-image',
-    'gemini-3-pro-image',
     'gemini-2.5-flash-image',
-    'gemini-3.1-flash-image-preview',
+    normalizeImageModel(customModel || AI_IMAGE_MODEL),
   ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
   let hitQuota429 = false;
 
+  // 1. Essayer Nano Banana (sonde rapide sur la première clé si quota image gratuit disponible)
   for (const model of modelsToTry) {
     const supportsImageSize = model === 'gemini-nano-banana-2.1' || model === 'gemini-3-pro-image';
 
-    for (let i = 0; i < keys.length; i++) {
+    for (let i = 0; i < Math.min(keys.length, 1); i++) {
       const apiKey = cleanKey(keys[i]);
       if (!apiKey) continue;
 
-      // 1. Tentative via le SDK officiel @google/genai
       try {
         const ai = new GoogleGenAI({
           apiKey,
@@ -544,17 +631,20 @@ async function tryGenerateImageWithNanoBanana(
           },
         });
 
-        const response = await ai.models.generateContent({
-          model,
-          contents: {
-            parts: [{ text: effectivePrompt }],
-          },
-          config: {
-            imageConfig: supportsImageSize
-              ? { aspectRatio: '4:3', imageSize: '1K' }
-              : { aspectRatio: '4:3' },
-          },
-        });
+        const response: any = await Promise.race([
+          ai.models.generateContent({
+            model,
+            contents: {
+              parts: [{ text: effectivePrompt }],
+            },
+            config: {
+              imageConfig: supportsImageSize
+                ? { aspectRatio: '4:3', imageSize: '1K' }
+                : { aspectRatio: '4:3' },
+            },
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+        ]);
 
         const parts: any[] = response?.candidates?.[0]?.content?.parts || [];
         let imageDataUri = '';
@@ -579,69 +669,38 @@ async function tryGenerateImageWithNanoBanana(
         const msg = sdkErr?.message || String(sdkErr);
         if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('billing')) {
           hitQuota429 = true;
+          break;
         }
-        console.warn(`⚠️ [NanoBanana SDK/${model}/KEY_${i + 1}] ${msg.slice(0, 140)}`);
-      }
-
-      // 2. Tentative de repli via appel REST direct
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const resp = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: effectivePrompt }] }],
-            generationConfig: {
-              imageConfig: {
-                aspectRatio: '4:3',
-              },
-            },
-          }),
-        });
-        if (!resp.ok) {
-          if (resp.status === 429) hitQuota429 = true;
-          continue;
+        if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
+          break;
         }
-        const json: any = await resp.json();
-        const parts: any[] = json?.candidates?.[0]?.content?.parts || [];
-        let imageDataUri = '';
-        let caption = '';
-        for (const part of parts) {
-          if (part?.inlineData?.data) {
-            const mime = part.inlineData.mimeType || 'image/png';
-            imageDataUri = `data:${mime};base64,${part.inlineData.data}`;
-          } else if (part?.text) {
-            caption += part.text;
-          }
-        }
-        if (imageDataUri) {
-          console.log(`✅ [NanoBanana REST/${model}/KEY_${i + 1}] Photo IA haute précision générée avec succès !`);
-          return {
-            imageDataUri,
-            caption: caption.trim() || refined.caption,
-            modelUsed: model,
-          };
-        }
-      } catch {
-        // Passer à la clé/modèle suivant
       }
     }
+    if (hitQuota429) break;
   }
 
-  // 3. Si toutes les clés sont sur le tier gratuit (429 sur les modèles Nano Banana payants),
-  // récupérer une vraie photographie haute définition correspondant exactement aux requêtes extraites par Gemini
+  // 2. Générateur Photo IA Professionnel 100% GRATUIT (FLUX.1-schnell / FLUX.1-merged / SD-3.5-Turbo)
+  // Piloté par le prompt haute précision rédigé par Gemini pour l'exercice :
+  const freeAiPhoto = await generatePhotoWithFreeFluxCluster(effectivePrompt);
+  if (freeAiPhoto?.imageDataUri) {
+    return {
+      imageDataUri: freeAiPhoto.imageDataUri,
+      caption: refined.caption,
+      modelUsed: freeAiPhoto.modelUsed,
+    };
+  }
+
+  // 3. Secours photographique haute définition libre de droits (Wikimedia Commons HD)
   const hdPhoto = await fetchRealContextualPhotoFallback(refined.searchQueries);
   if (hdPhoto?.imageDataUri) {
-    console.log(`✅ [Photo HD Contextuelle] Photographie réelle récupérée pour : ${refined.searchQueries.join(', ')}`);
     return {
       imageDataUri: hdPhoto.imageDataUri,
       caption: refined.caption,
       modelUsed: hdPhoto.modelUsed,
-      quotaExceeded: hitQuota429,
     };
   }
 
-  return hitQuota429 ? { imageDataUri: '', caption: refined.caption, quotaExceeded: true } : null;
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -675,20 +734,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       generationConfig,
       generateImage,
       imagePrompt,
+      prompt,
       imageModel,
       exerciseMeta,
     } = req.body;
-    if (!contents && !imagePrompt) {
+    if (!contents && !imagePrompt && !prompt && !exerciseMeta) {
       return res.status(400).json({ error: 'Missing contents in request body' });
     }
 
-    // Si une génération d'image IA (Nano Banana 2.1 / gemini-3.1-flash-lite-image) est demandée pour illustrer un exercice
+    // Si une génération d'image IA (Nano Banana 2.1 / FLUX.1-Schnell Free) est demandée pour illustrer un exercice
     if (generateImage) {
       const promptForImg = typeof imagePrompt === 'string' && imagePrompt.trim()
         ? imagePrompt
+        : typeof prompt === 'string' && prompt.trim()
+        ? prompt
         : typeof contents === 'string'
         ? contents
-        : JSON.stringify(contents);
+        : JSON.stringify(contents || exerciseMeta || '');
       const nanoResult = await tryGenerateImageWithNanoBanana(
         geminiKeys,
         promptForImg,
