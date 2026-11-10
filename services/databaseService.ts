@@ -282,9 +282,13 @@ function loadSharedPlanifications(): SharedPlanifications {
 
 function saveSharedPlanifications(planifications: SharedPlanifications): void {
   try {
-    localStorage.setItem(SHARED_PLANNINGS_KEY, JSON.stringify(planifications));
+    const rawJson = JSON.stringify(planifications).replace(
+      /"data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]{10000,}"/g,
+      '""'
+    );
+    localStorage.setItem(SHARED_PLANNINGS_KEY, rawJson);
   } catch (e) {
-    console.error("Erreur écriture localStorage", e);
+    console.warn("Avertissement écriture localStorage (quota compacté):", e);
   }
 }
 
@@ -294,15 +298,15 @@ function loadPlansFromLocalStorage(subject: string, grade: string): UnitPlan[] {
   if (allPlanifications[key] && Array.isArray(allPlanifications[key]) && allPlanifications[key].length > 0) {
     return deduplicatePlans(allPlanifications[key]);
   }
-  // Also check individual local storage key
+  // Migration d'une éventuelle ancienne clé directe puis suppression du doublon
   try {
     const directKey = `plans_${subject}_${grade}`;
     const directData = localStorage.getItem(directKey);
     if (directData) {
       const parsed = JSON.parse(directData);
+      localStorage.removeItem(directKey);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const clean = deduplicatePlans(parsed);
-        // Sync to shared
         allPlanifications[key] = clean;
         saveSharedPlanifications(allPlanifications);
         return clean;
@@ -317,11 +321,11 @@ function savePlansToLocalStorage(subject: string, grade: string, plans: UnitPlan
   const allPlanifications = loadSharedPlanifications();
   const key = getPlanningKey(subject, grade);
   allPlanifications[key] = cleanPlans;
-  saveSharedPlanifications(allPlanifications);
+  // Supprimer l'ancienne clé dupliquée pour ne pas doubler l'espace utilisé dans localStorage
   try {
-    const directKey = `plans_${subject}_${grade}`;
-    localStorage.setItem(directKey, JSON.stringify(cleanPlans));
+    localStorage.removeItem(`plans_${subject}_${grade}`);
   } catch (_) {}
+  saveSharedPlanifications(allPlanifications);
 }
 
 function loadAllPlansForGradeFromLocalStorage(grade: string): UnitPlan[] {

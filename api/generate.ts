@@ -5,19 +5,18 @@ import { GoogleGenAI } from '@google/genai';
 // Modèles Gemini actifs et stables
 // ─────────────────────────────────────────────────────────────────────────────
 const GEMINI_MODELS = [
-  'gemini-3.8-flash',
   'gemini-2.5-flash',
-  'gemini-3.1-flash-lite',
   'gemini-flash-latest',
+  'gemini-3.1-flash-lite-preview',
 ];
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Retry queue configuration
+// Retry configuration (compatible avec le délai serverless Vercel pour éviter 504)
 // ─────────────────────────────────────────────────────────────────────────────
-const RETRY_INTERVAL_MS    = 30_000;       // 30 secondes entre chaque passe
-const MAX_RETRY_DURATION_MS = 20 * 60_000; // 20 minutes maximum d'attente totale
+const RETRY_INTERVAL_MS    = 2_000;
+const MAX_RETRY_DURATION_MS = 18_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Nettoie et valide une clé API (supprime guillemets accidentels, espaces)
@@ -104,16 +103,19 @@ async function tryGeminiKeyWithModel(
       },
     });
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: Array.isArray(contents) ? contents : [{ role: 'user', parts: [{ text: String(contents) }] }],
-      config: {
-        systemInstruction: systemInstruction || undefined,
-        temperature: generationConfig?.temperature ?? 0.7,
-        maxOutputTokens: generationConfig?.maxOutputTokens ?? 65536,
-        responseMimeType: generationConfig?.responseMimeType || undefined,
-      },
-    });
+    const response: any = await Promise.race([
+      ai.models.generateContent({
+        model,
+        contents: Array.isArray(contents) ? contents : [{ role: 'user', parts: [{ text: String(contents) }] }],
+        config: {
+          systemInstruction: systemInstruction || undefined,
+          temperature: generationConfig?.temperature ?? 0.7,
+          maxOutputTokens: generationConfig?.maxOutputTokens ?? 16384,
+          responseMimeType: generationConfig?.responseMimeType || undefined,
+        },
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('SDK timeout (12s)')), 12000)),
+    ]);
 
     const text = response?.text;
     if (text && text.trim().length > 0) {
@@ -122,12 +124,10 @@ async function tryGeminiKeyWithModel(
     }
   } catch (sdkErr: any) {
     const errMsg = sdkErr?.message || String(sdkErr);
-    console.warn(`⚠️ [${label}/${model}] SDK erreur: ${errMsg.slice(0, 160)}. Repli sur REST SSE…`);
-    if (isRotatableError(400, errMsg)) {
-      const err: any = new Error(errMsg);
-      err.isQuota = true;
-      throw err;
-    }
+    console.warn(`⚠️ [${label}/${model}] SDK erreur: ${errMsg.slice(0, 160)}. Passage à la clé/modèle suivant…`);
+    const err: any = new Error(errMsg);
+    err.isQuota = true;
+    throw err;
   }
 
   // 2. Repli direct REST SSE

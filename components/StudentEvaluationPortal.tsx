@@ -1557,20 +1557,25 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         }).catch(err => console.warn('Erreur verrouillage matricule:', err));
       }
 
-      // VERROUILLAGE DÉFINITIF EN LOCAL
-      const lockKey = `ib_locked_${curEval.accessCode}_${cleanNum}`;
-      localStorage.setItem(lockKey, 'true');
-      localStorage.setItem(`ib_locked_${cleanCode}_${cleanNum}`, 'true');
-      if (curEval.id) {
-        localStorage.setItem(`ib_locked_${curEval.id}_${cleanNum}`, 'true');
+      // VERROUILLAGE DÉFINITIF EN LOCAL (avec purge préalable des brouillons pour éviter tout dépassement de quota)
+      try {
+        localStorage.removeItem(`draft_eval_${curEval.accessCode}_${cleanNum}`);
+        localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
+        if (curEval.id) {
+          localStorage.removeItem(`draft_eval_${curEval.id}_${cleanNum}`);
+        }
+        localStorage.removeItem(`timer_${curEval.accessCode}_${cleanNum}`);
+        localStorage.removeItem(`timer_end_${curEval.accessCode}_${cleanNum}`);
+
+        const lockKey = `ib_locked_${curEval.accessCode}_${cleanNum}`;
+        localStorage.setItem(lockKey, 'true');
+        localStorage.setItem(`ib_locked_${cleanCode}_${cleanNum}`, 'true');
+        if (curEval.id) {
+          localStorage.setItem(`ib_locked_${curEval.id}_${cleanNum}`, 'true');
+        }
+      } catch (storageErr) {
+        console.warn('Avertissement stockage local lors du verrouillage:', storageErr);
       }
-      localStorage.removeItem(`draft_eval_${curEval.accessCode}_${cleanNum}`);
-      localStorage.removeItem(`draft_eval_${cleanCode}_${cleanNum}`);
-      if (curEval.id) {
-        localStorage.removeItem(`draft_eval_${curEval.id}_${cleanNum}`);
-      }
-      localStorage.removeItem(`timer_${curEval.accessCode}_${cleanNum}`);
-      localStorage.removeItem(`timer_end_${curEval.accessCode}_${cleanNum}`);
 
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
 

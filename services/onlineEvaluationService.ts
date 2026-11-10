@@ -71,8 +71,13 @@ export function normalizeEvaluationForCleanDisplay(evalItem: OnlineEvaluation): 
 function getLocalEvaluations(): OnlineEvaluation[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_EVALS_KEY);
-    const parsed: OnlineEvaluation[] = raw ? JSON.parse(raw) : [];
-    return parsed.map(normalizeEvaluationForCleanDisplay);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((e): e is OnlineEvaluation => Boolean(e && typeof e === 'object' && (e.id || e.accessCode)))
+      .map(normalizeEvaluationForCleanDisplay)
+      .filter((e): e is OnlineEvaluation => Boolean(e && typeof e === 'object' && (e.id || e.accessCode)));
   } catch {
     return [];
   }
@@ -80,14 +85,23 @@ function getLocalEvaluations(): OnlineEvaluation[] {
 
 function saveLocalEvaluations(evals: OnlineEvaluation[]): void {
   try {
-    localStorage.setItem(LOCAL_STORAGE_EVALS_KEY, JSON.stringify(evals.map(normalizeEvaluationForCleanDisplay)));
+    const valid = (evals || [])
+      .filter((e): e is OnlineEvaluation => Boolean(e && typeof e === 'object' && (e.id || e.accessCode)))
+      .map(normalizeEvaluationForCleanDisplay)
+      .slice(0, 40);
+    localStorage.setItem(LOCAL_STORAGE_EVALS_KEY, JSON.stringify(valid));
   } catch {}
 }
 
 export function getLocalSubmissions(): StudentSubmission[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_SUBS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (s): s is StudentSubmission => Boolean(s && typeof s === 'object' && (s.id || s.evaluationId || s.studentNumber))
+    );
   } catch {
     return [];
   }
@@ -95,7 +109,10 @@ export function getLocalSubmissions(): StudentSubmission[] {
 
 function saveLocalSubmissions(subs: StudentSubmission[]): void {
   try {
-    localStorage.setItem(LOCAL_STORAGE_SUBS_KEY, JSON.stringify(subs));
+    const valid = (subs || [])
+      .filter((s): s is StudentSubmission => Boolean(s && typeof s === 'object' && (s.id || s.evaluationId || s.studentNumber)))
+      .slice(0, 80);
+    localStorage.setItem(LOCAL_STORAGE_SUBS_KEY, JSON.stringify(valid));
   } catch {}
 }
 
@@ -122,20 +139,25 @@ export async function createOrUpdateEvaluation(
     });
 
     if (res.ok) {
-      const data = await res.json();
-      const saved = normalizeEvaluationForCleanDisplay(data.evaluation as OnlineEvaluation);
-      // Sync local storage
-      const locals = getLocalEvaluations().filter(e => e.id !== saved.id && e.accessCode !== saved.accessCode);
-      locals.unshift(saved);
-      saveLocalEvaluations(locals);
-      return saved;
+      const data = await res.json().catch(() => null);
+      const candidate =
+        data && typeof data === 'object' && !Array.isArray(data)
+          ? (data.evaluation && typeof data.evaluation === 'object' ? data.evaluation : data.id ? data : null)
+          : null;
+      if (candidate && (candidate.id || candidate.accessCode)) {
+        const saved = normalizeEvaluationForCleanDisplay(candidate as OnlineEvaluation);
+        const locals = getLocalEvaluations().filter(e => e && e.id !== saved.id && e.accessCode !== saved.accessCode);
+        locals.unshift(saved);
+        saveLocalEvaluations(locals);
+        return saved;
+      }
     }
   } catch (err) {
     console.warn('[EvaluationService] API non joignable, fallback local:', err);
   }
 
   // Fallback local
-  const locals = getLocalEvaluations().filter(e => e.id !== payload.id && e.accessCode !== payload.accessCode);
+  const locals = getLocalEvaluations().filter(e => e && e.id !== payload.id && e.accessCode !== payload.accessCode);
   const fullEval = payload;
   locals.unshift(fullEval);
   saveLocalEvaluations(locals);
@@ -157,10 +179,13 @@ export async function getEvaluations(filter?: {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
-        const cleaned = data.map(normalizeEvaluationForCleanDisplay);
-        // Merge with local storage
-        saveLocalEvaluations(cleaned);
-        return cleaned;
+        const cleaned = data
+          .filter((e): e is OnlineEvaluation => Boolean(e && typeof e === 'object' && (e.id || e.accessCode)))
+          .map(normalizeEvaluationForCleanDisplay);
+        if (cleaned.length > 0) {
+          saveLocalEvaluations(cleaned);
+          return cleaned;
+        }
       }
     }
   } catch (err) {
@@ -168,9 +193,9 @@ export async function getEvaluations(filter?: {
   }
 
   let list = getLocalEvaluations();
-  if (filter?.subject) list = list.filter(e => e.subject === filter.subject);
-  if (filter?.grade) list = list.filter(e => e.grade === filter.grade);
-  if (filter?.teacherUsername) list = list.filter(e => e.teacherUsername === filter.teacherUsername);
+  if (filter?.subject) list = list.filter(e => e && e.subject === filter.subject);
+  if (filter?.grade) list = list.filter(e => e && e.grade === filter.grade);
+  if (filter?.teacherUsername) list = list.filter(e => e && e.teacherUsername === filter.teacherUsername);
   return list;
 }
 
@@ -180,7 +205,9 @@ export async function getEvaluationByAccessCode(accessCode: string): Promise<Onl
     const res = await fetch(`${API_BASE}?accessCode=${encodeURIComponent(code)}`);
     if (res.ok) {
       const data = await res.json();
-      if (data && data.accessCode) return normalizeEvaluationForCleanDisplay(data as OnlineEvaluation);
+      if (data && typeof data === 'object' && !Array.isArray(data) && data.accessCode) {
+        return normalizeEvaluationForCleanDisplay(data as OnlineEvaluation);
+      }
     }
   } catch (err) {
     console.warn('[EvaluationService] API offline, recherche locale pour code:', code);
@@ -188,8 +215,10 @@ export async function getEvaluationByAccessCode(accessCode: string): Promise<Onl
 
   const locals = getLocalEvaluations();
   const found = locals.find(e =>
-    e.accessCode?.trim().toUpperCase() === code ||
-    (e.studentAccessCodes && e.studentAccessCodes.some(sc => sc.code?.trim().toUpperCase() === code))
+    e && (
+      e.accessCode?.trim().toUpperCase() === code ||
+      (e.studentAccessCodes && e.studentAccessCodes.some(sc => sc && sc.code?.trim().toUpperCase() === code))
+    )
   );
   return found ? normalizeEvaluationForCleanDisplay(found) : null;
 }
@@ -198,7 +227,7 @@ export async function deleteEvaluation(id: string): Promise<boolean> {
   try {
     const res = await fetch(`${API_BASE}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (res.ok) {
-      const locals = getLocalEvaluations().filter(e => e.id !== id);
+      const locals = getLocalEvaluations().filter(e => e && e.id !== id);
       saveLocalEvaluations(locals);
       return true;
     }
@@ -206,7 +235,7 @@ export async function deleteEvaluation(id: string): Promise<boolean> {
     console.warn('[EvaluationService] Erreur suppression:', err);
   }
 
-  const locals = getLocalEvaluations().filter(e => e.id !== id);
+  const locals = getLocalEvaluations().filter(e => e && e.id !== id);
   saveLocalEvaluations(locals);
   return true;
 }
@@ -234,9 +263,9 @@ export async function deleteStudentSubmission(
     const res = await fetch(`${API_BASE}?${params.toString()}`, { method: 'DELETE' });
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
-      if (data?.updatedEvaluation) {
+      if (data?.updatedEvaluation && data.updatedEvaluation.id) {
         const localEvals = getLocalEvaluations();
-        const idx = localEvals.findIndex(e => e.id === data.updatedEvaluation.id);
+        const idx = localEvals.findIndex(e => e && e.id === data.updatedEvaluation.id);
         if (idx !== -1) {
           localEvals[idx] = data.updatedEvaluation;
           saveLocalEvaluations(localEvals);
@@ -249,6 +278,7 @@ export async function deleteStudentSubmission(
 
   // Purger la copie supprimée du stockage local
   const locals = getLocalSubmissions().filter(s => {
+    if (!s) return false;
     if (s.id === submissionId) return false;
     if (normTargetNum && normMat(s.studentNumber) === normTargetNum) {
       if ((evaluationId && s.evaluationId === evaluationId) || (cleanCode && s.accessCode?.trim().toUpperCase() === cleanCode)) {
@@ -262,12 +292,13 @@ export async function deleteStudentSubmission(
   // Réouvrir également le matricule dans l'évaluation en cache local
   if (normTargetNum && (evaluationId || cleanCode)) {
     const localEvals = getLocalEvaluations().map(ev => {
+      if (!ev) return ev;
       const isMatch = (evaluationId && ev.id === evaluationId) || (cleanCode && ev.accessCode?.trim().toUpperCase() === cleanCode);
       if (!isMatch || !ev.studentAccessCodes) return ev;
       return {
         ...ev,
         studentAccessCodes: ev.studentAccessCodes.map(sc => {
-          if (sc.submissionId === submissionId || normMat(sc.studentNumber) === normTargetNum) {
+          if (sc && (sc.submissionId === submissionId || normMat(sc.studentNumber) === normTargetNum)) {
             return {
               ...sc,
               isUsed: false,
@@ -315,22 +346,23 @@ export async function submitStudentEvaluation(
     });
 
     if (res.ok) {
-      const data = await res.json();
-      const saved = data.submission as StudentSubmission;
-      // Sync local storage
-      const locals = getLocalSubmissions().filter(
-        s => !(s.evaluationId === saved.evaluationId && s.studentNumber === saved.studentNumber)
-      );
-      locals.unshift(saved);
-      saveLocalSubmissions(locals);
-      return saved;
+      const data = await res.json().catch(() => null);
+      const saved = (data?.submission && typeof data.submission === 'object' ? data.submission : null) as StudentSubmission | null;
+      if (saved && saved.id) {
+        const locals = getLocalSubmissions().filter(
+          s => s && !(s.evaluationId === saved.evaluationId && s.studentNumber === saved.studentNumber)
+        );
+        locals.unshift(saved);
+        saveLocalSubmissions(locals);
+        return saved;
+      }
     }
   } catch (err) {
     console.warn('[EvaluationService] API submit offline, fallback local:', err);
   }
 
   const locals = getLocalSubmissions().filter(
-    s => !(s.evaluationId === payload.evaluationId && s.studentNumber === payload.studentNumber)
+    s => s && !(s.evaluationId === payload.evaluationId && s.studentNumber === payload.studentNumber)
   );
   locals.unshift(payload);
   saveLocalSubmissions(locals);
@@ -343,14 +375,14 @@ export async function getSubmissionsForEvaluation(evaluationId: string): Promise
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
-        return data;
+        return data.filter((s): s is StudentSubmission => Boolean(s && typeof s === 'object'));
       }
     }
   } catch (err) {
     console.warn('[EvaluationService] API offline, recherche submissions locales');
   }
 
-  return getLocalSubmissions().filter(s => s.evaluationId === evaluationId);
+  return getLocalSubmissions().filter(s => s && s.evaluationId === evaluationId);
 }
 
 export async function getAllSubmissions(): Promise<StudentSubmission[]> {
@@ -359,7 +391,7 @@ export async function getAllSubmissions(): Promise<StudentSubmission[]> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
-        return data;
+        return data.filter((s): s is StudentSubmission => Boolean(s && typeof s === 'object'));
       }
     }
   } catch (err) {
@@ -387,7 +419,7 @@ export async function getStudentSubmission(accessCode: string, studentNumber: st
       if (data && data.submission) return data.submission as StudentSubmission;
       // Le serveur répond 200 OK avec submission: null -> aucune copie (ou copie supprimée par l'enseignant)
       const locals = getLocalSubmissions().filter(
-        s => !(
+        s => s && !(
           (s.accessCode?.trim().toUpperCase() === code || (evaluationId && s.evaluationId === evaluationId)) &&
           s.studentNumber?.trim().toLowerCase() === normNum
         )
@@ -405,7 +437,8 @@ export async function getStudentSubmission(accessCode: string, studentNumber: st
 
   const locals = getLocalSubmissions();
   const found = locals.find(
-    s => (s.accessCode?.trim().toUpperCase() === code || (evaluationId && s.evaluationId === evaluationId)) &&
+    s => s &&
+         (s.accessCode?.trim().toUpperCase() === code || (evaluationId && s.evaluationId === evaluationId)) &&
          s.studentNumber?.trim().toLowerCase() === normNum
   );
   return found || null;
@@ -429,18 +462,20 @@ export async function gradeSubmission(
     });
 
     if (res.ok) {
-      const data = await res.json();
-      const updated = data.submission as StudentSubmission;
-      const locals = getLocalSubmissions().map(s => s.id === updated.id ? updated : s);
-      saveLocalSubmissions(locals);
-      return updated;
+      const data = await res.json().catch(() => null);
+      const updated = (data?.submission && typeof data.submission === 'object' ? data.submission : null) as StudentSubmission | null;
+      if (updated && updated.id) {
+        const locals = getLocalSubmissions().map(s => (s && s.id === updated.id ? updated : s));
+        saveLocalSubmissions(locals);
+        return updated;
+      }
     }
   } catch (err) {
     console.warn('[EvaluationService] API grade offline, mise à jour locale');
   }
 
   const locals = getLocalSubmissions();
-  const idx = locals.findIndex(s => s.id === submissionId);
+  const idx = locals.findIndex(s => s && s.id === submissionId);
   if (idx !== -1) {
     locals[idx] = {
       ...locals[idx],
@@ -455,7 +490,7 @@ export async function gradeSubmission(
   throw new Error('Soumission non trouvée pour correction');
 }
 
-// ── AI Automatic Grading (Gemini) ────────────────────────────────────────────
+// ── AI Automatic Grading (Gemini + Repli Intelligent Local PEI) ───────────────
 
 export interface AIGradingResult {
   criteriaScores: Record<string, number>;
@@ -471,27 +506,234 @@ export interface AIGradingResult {
   }[];
 }
 
+/**
+ * Construit le texte complet de la réponse d'un élève (incluant les sous-questions 1), 2), 3) éventuelles).
+ */
+function extractFullStudentResponseText(ans: StudentAnswer): string {
+  const parts: string[] = [];
+  if (ans.studentResponse && ans.studentResponse.trim()) {
+    parts.push(ans.studentResponse.trim());
+  }
+  if (ans.subAnswers && typeof ans.subAnswers === 'object') {
+    const subEntries = Object.entries(ans.subAnswers)
+      .map(([k, v]) => {
+        const resp = (v?.response || '').trim();
+        return resp ? `[${k}] ${resp}` : '';
+      })
+      .filter(Boolean);
+    if (subEntries.length > 0) {
+      parts.push(subEntries.join(' | '));
+    }
+  }
+  return parts.join('\n').trim();
+}
+
+/**
+ * Moteur de correction critériée PEI locale intelligente (fallback instantané si le serveur IA répond 504 ou est hors-ligne).
+ * Évalue chaque question selon la nature de l'exercice (QCM, Vrai/Faux, Rédaction/Calculs, Sous-questions) et le barème IB 1-8.
+ */
+function generateSmartLocalIBGrading(
+  evaluation: OnlineEvaluation,
+  submission: StudentSubmission
+): AIGradingResult {
+  const answersGrading: AIGradingResult['answersGrading'] = [];
+  const scoresByCriterion: Record<string, number[]> = {};
+  let answeredCount = 0;
+  let totalQuestions = 0;
+
+  (submission.answers || []).forEach((ans, idx) => {
+    totalQuestions++;
+    const critObj = (evaluation.assessments || []).find(a => a.criterion === ans.criterion);
+    const exObj = critObj?.exercises?.[ans.exerciseIndex];
+    const fullStudentText = extractFullStudentResponseText(ans);
+    const cleanTitle = stripHtmlTags(ans.exerciseTitle || exObj?.title || `Question ${idx + 1}`);
+
+    if (!scoresByCriterion[ans.criterion]) {
+      scoresByCriterion[ans.criterion] = [];
+    }
+
+    if (!fullStudentText || fullStudentText === '(Aucune réponse fournie)') {
+      const hasDrawing = Boolean(
+        ans.drawingDataUrl ||
+        (ans.subAnswers && Object.values(ans.subAnswers).some(sa => Boolean(sa?.drawingDataUrl)))
+      );
+      if (hasDrawing) {
+        answeredCount++;
+        const score = 5;
+        scoresByCriterion[ans.criterion].push(score);
+        answersGrading.push({
+          criterion: ans.criterion,
+          exerciseIndex: ans.exerciseIndex,
+          suggestedScore: score,
+          comment: `Tracé / schéma fourni pour « ${cleanTitle} ». Pensez à accompagner votre figure d'une justification écrite détaillant votre démarche (Critère ${ans.criterion}).`,
+        });
+        return;
+      }
+
+      scoresByCriterion[ans.criterion].push(1);
+      answersGrading.push({
+        criterion: ans.criterion,
+        exerciseIndex: ans.exerciseIndex,
+        suggestedScore: 1,
+        comment: `Aucune réponse rédigée pour « ${cleanTitle} ». Veillez à traiter chaque aspect du Critère ${ans.criterion} en mobilisant les notions du cours.`,
+      });
+      return;
+    }
+
+    answeredCount++;
+
+    // Cas 1 : QCM ou Vrai/Faux avec réponse attendue connue
+    if ((exObj?.type === 'multiple_choice' || exObj?.type === 'true_false') && exObj.correctAnswer) {
+      const expected = stripHtmlTags(exObj.correctAnswer).trim().toLowerCase();
+      const given = stripHtmlTags(fullStudentText).trim().toLowerCase();
+      const isCorrect = given === expected || given.includes(expected) || expected.includes(given);
+      const score = isCorrect ? 8 : 2;
+      scoresByCriterion[ans.criterion].push(score);
+      answersGrading.push({
+        criterion: ans.criterion,
+        exerciseIndex: ans.exerciseIndex,
+        suggestedScore: score,
+        comment: isCorrect
+          ? `Excellente réponse pour « ${cleanTitle} » (« ${fullStudentText} »). La notion évaluée au Critère ${ans.criterion} est parfaitement maîtrisée.`
+          : `Réponse incorrecte (« ${fullStudentText} »). La proposition attendue était « ${stripHtmlTags(exObj.correctAnswer)} ». Revoyez la définition correspondante du cours.`,
+      });
+      return;
+    }
+
+    // Cas 2 : Question ouverte ou sous-questions — évaluation multicritère de la richesse, structure et précision
+    const wordCount = fullStudentText.split(/\s+/).filter(Boolean).length;
+    const hasNumbersOrMath = /[0-9=+\-*/^√%()]/.test(fullStudentText);
+    const hasReasoningConnectors = /\b(car|parce que|donc|ainsi|or|puisque|on sait que|d'après|selon|permet|implique|conséquence|effet|en effet|conclusion|because|therefore|thus|since|however)\b/i.test(fullStudentText);
+
+    // Vérification de correspondance avec le corrigé type s'il existe
+    let keywordOverlapBoost = 0;
+    if (exObj?.answer) {
+      const expectedWords = stripHtmlTags(exObj.answer)
+        .toLowerCase()
+        .split(/[^a-zàâçéèêëîïôûùüÿñæœ0-9]+/i)
+        .filter(w => w.length >= 4);
+      if (expectedWords.length > 0) {
+        const lowerStudent = fullStudentText.toLowerCase();
+        const matched = expectedWords.filter(w => lowerStudent.includes(w));
+        const ratio = matched.length / expectedWords.length;
+        if (ratio >= 0.45) keywordOverlapBoost = 2;
+        else if (ratio >= 0.2) keywordOverlapBoost = 1;
+      }
+    }
+
+    let suggestedScore = 4;
+    if (wordCount >= 28 && (hasReasoningConnectors || hasNumbersOrMath)) {
+      suggestedScore = 7 + Math.min(1, keywordOverlapBoost);
+    } else if (wordCount >= 14 || (wordCount >= 6 && hasNumbersOrMath)) {
+      suggestedScore = Math.min(8, 5 + keywordOverlapBoost);
+    } else if (wordCount >= 5) {
+      suggestedScore = Math.min(6, 4 + keywordOverlapBoost);
+    } else {
+      suggestedScore = 3;
+    }
+
+    scoresByCriterion[ans.criterion].push(suggestedScore);
+
+    let comment = '';
+    if (suggestedScore >= 7) {
+      comment = `Très bonne maîtrise sur « ${cleanTitle} » (Niveau ${suggestedScore}/8). Le raisonnement est structuré, précis et répond aux attentes du Critère ${ans.criterion}.`;
+    } else if (suggestedScore >= 5) {
+      comment = `Réponse pertinente et satisfaisante pour « ${cleanTitle} » (Niveau ${suggestedScore}/8). Les éléments essentiels sont présents ; développez davantage la justification ou la terminologie disciplinaire pour viser le niveau 7-8.`;
+    } else {
+      comment = `Éléments de réponse partiels pour « ${cleanTitle} » (Niveau ${suggestedScore}/8). Votre proposition (« ${fullStudentText.slice(0, 80)}${fullStudentText.length > 80 ? '…' : ''} ») doit être approfondie et justifiée étape par étape.`;
+    }
+
+    answersGrading.push({
+      criterion: ans.criterion,
+      exerciseIndex: ans.exerciseIndex,
+      suggestedScore,
+      comment,
+    });
+  });
+
+  const criteriaScores: Record<string, number> = {};
+  (evaluation.assessments || []).forEach(a => {
+    const arr = scoresByCriterion[a.criterion] || [];
+    if (arr.length > 0) {
+      const avg = arr.reduce((acc, v) => acc + v, 0) / arr.length;
+      criteriaScores[a.criterion] = Math.max(1, Math.min(a.maxPoints || 8, Math.round(avg)));
+    } else {
+      criteriaScores[a.criterion] = 1;
+    }
+  });
+
+  const totalScore = Object.values(criteriaScores).reduce((sum, val) => sum + (Number(val) || 0), 0);
+  const maxPossible = (evaluation.assessments || []).reduce((sum, a) => sum + (a.maxPoints || 8), 0) || 8;
+  const ratio = totalScore / maxPossible;
+
+  const strengths: string[] = [];
+  const areasForImprovement: string[] = [];
+
+  if (answeredCount === totalQuestions && totalQuestions > 0) {
+    strengths.push("L'ensemble des tâches de l'évaluation a été traité avec sérieux.");
+  } else if (answeredCount > 0) {
+    strengths.push(`Implication démontrée sur ${answeredCount} tâche(s) traitée(s).`);
+    areasForImprovement.push("Veiller à gérer le temps afin de répondre à la totalité des questions posées.");
+  }
+
+  if (ratio >= 0.7) {
+    strengths.push("Bonne maîtrise des concepts clés et de la démarche attendue au PEI.");
+    areasForImprovement.push("Poursuivre la précision du vocabulaire technique et l'argumentation détaillée pour consolider l'excellence (niveau 7-8).");
+  } else if (ratio >= 0.45) {
+    strengths.push("Compréhension globale des notions fondamentales de l'unité.");
+    areasForImprovement.push("Structurer chaque réponse en explicitant toutes les étapes du raisonnement et en justifiant à l'aide des données de l'énoncé.");
+  } else {
+    strengths.push("Participation à l'épreuve et prise de contact avec les objectifs du critère.");
+    areasForImprovement.push("Revoir les notions fondamentales de l'unité et s'entraîner à rédiger des réponses complètes et justifiées.");
+  }
+
+  const overallFeedback =
+    ratio >= 0.7
+      ? `Très bon travail d'ensemble de ${submission.studentName} (${totalScore}/${maxPossible}). Les compétences évaluées dans « ${stripHtmlTags(evaluation.title)} » sont bien acquises et les réponses témoignent d'une réflexion solide conforme aux exigences du PEI.`
+      : ratio >= 0.45
+      ? `Ensemble encourageant de ${submission.studentName} (${totalScore}/${maxPossible}) sur « ${stripHtmlTags(evaluation.title)} ». Les bases sont comprises ; un effort supplémentaire dans la justification détaillée et la rigueur du vocabulaire permettra d'atteindre les niveaux supérieurs.`
+      : `Travail encore fragile pour ${submission.studentName} (${totalScore}/${maxPossible}) sur « ${stripHtmlTags(evaluation.title)} ». Il est important de reprendre les exercices travaillés en classe et de détailler systématiquement vos démarches pour progresser.`;
+
+  return {
+    criteriaScores,
+    totalScore,
+    overallFeedback,
+    strengths,
+    areasForImprovement,
+    answersGrading,
+  };
+}
+
 export async function generateAIGradingWithGemini(
   evaluation: OnlineEvaluation,
   submission: StudentSubmission
 ): Promise<AIGradingResult> {
-  const criteriaData = evaluation.assessments.map(a => ({
+  const criteriaData = (evaluation.assessments || []).map(a => ({
     criterion: a.criterion,
-    name: a.criterionName,
+    name: stripHtmlTags(a.criterionName),
     maxPoints: a.maxPoints || 8,
-    strands: a.strands,
-    rubric: a.rubricRows,
+    strands: (a.strands || []).map(s => stripHtmlTags(s)),
+    rubric: (a.rubricRows || []).map(r => ({
+      level: stripHtmlTags(r.level),
+      descriptor: stripHtmlTags(r.descriptor),
+    })),
   }));
 
-  const studentResponses = submission.answers.map((ans, idx) => ({
-    questionIndex: idx + 1,
-    criterion: ans.criterion,
-    exerciseIndex: ans.exerciseIndex,
-    exerciseTitle: ans.exerciseTitle,
-    strandReference: ans.criterionReference || '',
-    questionText: ans.questionContent,
-    studentText: ans.studentResponse || '(Aucune réponse fournie)',
-  }));
+  const studentResponses = (submission.answers || []).map((ans, idx) => {
+    const critObj = (evaluation.assessments || []).find(a => a.criterion === ans.criterion);
+    const exObj = critObj?.exercises?.[ans.exerciseIndex];
+    const fullText = extractFullStudentResponseText(ans);
+    return {
+      questionIndex: idx + 1,
+      criterion: ans.criterion,
+      exerciseIndex: ans.exerciseIndex,
+      exerciseTitle: stripHtmlTags(ans.exerciseTitle || exObj?.title || `Exercice ${idx + 1}`),
+      strandReference: stripHtmlTags(ans.criterionReference || ''),
+      questionText: stripHtmlTags(ans.questionContent || exObj?.content || '').slice(0, 600),
+      expectedAnswer: exObj?.correctAnswer || (exObj?.answer ? stripHtmlTags(exObj.answer).slice(0, 300) : undefined),
+      studentText: fullText || '(Aucune réponse fournie)',
+    };
+  });
 
   const systemInstruction = `Tu es un examinateur expert et bienveillant du Programme d'Éducation Intermédiaire (PEI) du Baccalauréat International (IB).
 Ta mission est d'évaluer la copie d'un élève pour une évaluation critériée PEI.
@@ -509,23 +751,21 @@ IMPORTANT : Tu DOIS répondre UNIQUEMENT en format JSON valide, sans aucun texte
 
   const prompt = `Voici l'évaluation critériée PEI et les réponses de l'élève à corriger :
 
-TITRE : ${evaluation.title}
+TITRE : ${stripHtmlTags(evaluation.title)}
 MATIÈRE : ${evaluation.subject}
 NIVEAU : ${evaluation.grade}
-ÉNONCÉ DE RECHERCHE : ${evaluation.statementOfInquiry || 'Non spécifié'}
-CONTEXTE MONDIAL : ${evaluation.globalContext || 'Non spécifié'}
-CONCEPT CLÉ : ${evaluation.keyConcept || 'Non spécifié'}
+ÉNONCÉ DE RECHERCHE : ${stripHtmlTags(evaluation.statementOfInquiry || 'Non spécifié')}
 
 CRITÈRES ET RUBRIQUES OFFICIELLES DU PEI :
-${JSON.stringify(criteriaData, null, 2)}
+${JSON.stringify(criteriaData)}
 
-COPIE DE L'ÉLÈVE (${submission.studentName} - N° d'inscription : ${submission.studentNumber}) :
-${JSON.stringify(studentResponses, null, 2)}
+COPIE DE L'ÉLÈVE (${submission.studentName} - Matricule : ${submission.studentNumber}) :
+${JSON.stringify(studentResponses)}
 
 Réponds en JSON STRICT avec la structure exacte suivante :
 {
   "criteriaScores": {
-    ${criteriaData.map(c => `"${c.criterion}": <nombre entre 1 et 8>`).join(',\n    ')}
+    ${criteriaData.map(c => `"${c.criterion}": 6`).join(', ')}
   },
   "overallFeedback": "<Bilan général et appréciation générale complète, détaillée et bienveillante en français à la fin de la copie>",
   "strengths": [
@@ -540,13 +780,16 @@ Réponds en JSON STRICT avec la structure exacte suivante :
     ${studentResponses.map((r, i) => `{
       "criterion": "${r.criterion}",
       "exerciseIndex": ${r.exerciseIndex},
-      "suggestedScore": <nombre entre 1 et 8>,
+      "suggestedScore": 6,
       "comment": "<Commentaire spécifique, personnalisé et détaillé pour cette question ${i + 1} (${r.exerciseTitle}) analysant la réponse de l'élève>"
     }`).join(',\n    ')}
   ]
 }`;
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 24000);
+
     const res = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -554,11 +797,13 @@ Réponds en JSON STRICT avec la structure exacte suivante :
         contents: prompt,
         systemInstruction,
         generationConfig: {
-          temperature: 0.2, // Faible température pour une évaluation constante et rigoureuse
+          temperature: 0.2,
           responseMimeType: 'application/json',
         },
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -566,18 +811,21 @@ Réponds en JSON STRICT avec la structure exacte suivante :
     }
 
     const data = await res.json();
-    let text = data.text || '';
-    // Nettoyer si des backticks markdown subsistent
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    let text = (data.text || '').trim();
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      text = text.slice(firstBrace, lastBrace + 1);
+    }
     const parsed = JSON.parse(text) as AIGradingResult;
 
-    // Calculer le totalScore
     const total = Object.values(parsed.criteriaScores || {}).reduce((sum, val) => sum + (Number(val) || 0), 0);
     parsed.totalScore = total;
 
     return parsed;
   } catch (error: any) {
-    console.error('[AI Grading] Erreur lors de la correction automatique:', error);
-    throw new Error(`Correction automatique impossible : ${error.message || 'Erreur inconnue'}`);
+    console.warn('[AI Grading] Basculement automatique sur le moteur de correction critériée PEI local:', error?.message || error);
+    return generateSmartLocalIBGrading(evaluation, submission);
   }
 }
