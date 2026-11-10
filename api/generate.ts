@@ -372,24 +372,30 @@ async function refineExerciseIntoPrecisionPhotoPrompt(
 
   if (!keys.length) return fallbackResult;
 
-  const directorSystemInstruction = `You are a world-class National Geographic & IB MYP textbook photography director.
-Your task is to analyze a school assessment exercise and write a HYPER-PRECISE, PHOTOREALISTIC image generation prompt for Nano Banana 2.1 (gemini-nano-banana-2.1).
+  const directorSystemInstruction = `You are a world-class IB MYP examination document designer, scientific illustrator, and museum art curator.
+Your task is to analyze a school assessment exercise and write a HYPER-PRECISE image generation prompt so the generated image is an ESSENTIAL PEDAGOGICAL DOCUMENT that the student must observe, analyze, legend, or measure to answer the exercise — NEVER a decorative wallpaper or generic stock photo.
+
+Select the exact visual format required by the exercise:
+- If the exercise is about an ARTWORK (œuvre d'art, tableau, peinture, sculpture, estampe, fresque, photographie d'art): describe a museum-grade fine art piece (painting, sculpture, or gallery photograph) exhibiting the exact artistic movement, composition, colors, lighting, and subject analyzed in the exercise.
+- If the exercise is a LABELED DIAGRAM / LEGEND (schéma à légender, anatomie, biologie, cellule, organes, circuit, montage expérimental, cycle): describe a high-precision Dorling Kindersley / encyclopedic scientific cross-section or anatomical illustration on a clean white textbook background with distinct numbered callout pointers [1], [2], [3], [4] (or [A], [B], [C], [D]) pointing to the exact structures the student must identify, WITHOUT writing the answer words next to the numbers.
+- If the exercise is a DOCUMENT / MAP / SOURCE (document d'analyse, carte géographique, photographie documentaire, source historique, comparaison de deux situations): describe an authentic archival/documentary photograph or thematic cartographic map showing the exact elements the student must observe and interpret (use a split-screen diptych if comparing two scenes).
+- If the exercise is a DIAGRAM / CHART / FIGURE / CURVE (diagramme, graphique, figure géométrique, courbe): describe a crisp, high-contrast academic textbook technical figure, coordinate curve, or scientific chart showing the exact geometrical/physical setup and labels from the exercise.
+
 CRITICAL RULES:
 1. Return ONLY valid JSON with keys:
    {
-     "nanoBananaPrompt": "Detailed English prompt (80-140 words) describing a high-resolution, realistic photograph or textbook scientific visual that directly depicts the exact scenario, objects, people, environment, experiment, or quantities in the exercise. Specify camera lens (e.g. 35mm/50mm DSLR), realistic lighting, authentic details, and exact composition. If the exercise compares two events/situations, specify a side-by-side split-screen diptych of two real photographs. NEVER ask for cartoons, simple icons, or stick figures.",
-     "searchQueries": ["2 to 4 concise English search phrases (3-5 words each) describing the concrete real-world subject for archival photo lookup, e.g. 'university graduation ceremony students', 'family birthday cake celebration'"],
-     "caption": "Clear pedagogical caption in ${isEn ? 'English' : 'French'} (1 sentence) explaining what the student should observe in the photo for this exercise."
-   }
-2. Focus 100% on the concrete real-world subject of the exercise.`;
+     "nanoBananaPrompt": "Detailed English prompt (80-140 words) describing the exact functional pedagogical visual (artwork, numbered diagram to legend, documentary source photo, thematic map, or technical figure). NEVER ask for cartoons, simple icons, or stick figures.",
+     "searchQueries": ["2 to 4 concise English search phrases (3-5 words each) describing the concrete subject for archival lookup"],
+     "caption": "Clear pedagogical document title in ${isEn ? 'English' : 'French'} (e.g. 'Document 1 : ...', 'Œuvre étudiée : ...', 'Schéma à légender : ...', 'Figure : ...') explaining what the student must observe or legend."
+   }`;
 
-  const userTask = `Analyze this IB MYP exercise and produce the JSON:
+  const userTask = `Analyze this IB MYP exercise and produce the JSON for its pedagogical visual document:
 - Subject: ${exerciseMeta?.subject || 'IB MYP'} (${exerciseMeta?.grade || 'PEI'})
 - Unit: ${exerciseMeta?.unitTitle || ''}
 - Exercise Title: ${exerciseMeta?.exerciseTitle || ''}
 - Exercise Content: ${(exerciseMeta?.exerciseContent || rawPrompt).slice(0, 1800)}
 - Teacher Custom Request: ${exerciseMeta?.customPrompt || ''}
-- Visual Style: ${exerciseMeta?.visualStyle || 'photo_realiste'}`;
+- Visual Category / Style: ${exerciseMeta?.visualStyle || 'auto'}`;
 
   for (const model of ['gemini-2.5-flash', 'gemini-flash-latest']) {
     for (const rawKey of keys.slice(0, 2)) {
@@ -416,7 +422,7 @@ CRITICAL RULES:
           const parsed = JSON.parse(txt);
           if (parsed?.nanoBananaPrompt) {
             return {
-              nanoBananaPrompt: `${parsed.nanoBananaPrompt}\nPhotorealistic, ultra-detailed editorial textbook quality, 4:3 aspect ratio. Strictly NO stick figures, NO amateur vector cartoons.`,
+              nanoBananaPrompt: `${parsed.nanoBananaPrompt}\nHigh-resolution academic examination document quality, 4:3 aspect ratio. Strictly NO decorative filler, NO stick figures, NO amateur cartoons.`,
               searchQueries: Array.isArray(parsed.searchQueries) && parsed.searchQueries.length > 0
                 ? parsed.searchQueries.map(String)
                 : fallbackResult.searchQueries,

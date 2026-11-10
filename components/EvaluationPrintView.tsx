@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Printer, Award, Clock, Download } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../types';
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
-import { stripHtmlTags } from '../services/educationalDiagramService';
+import { stripHtmlTags, sanitizeExerciseVisualsForDisplay } from '../services/educationalDiagramService';
 import { formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
 import { resolveArtworkOrImage, generateDynamicMuseumArtCard } from '../services/artworkService';
 import { convertGoogleDriveUrl } from '../services/studentRosterService';
@@ -222,18 +222,26 @@ function parseExerciseContent(
       stimulusText: sanitizeText(content),
       subQuestions: exercise.subQuestions.map((sq: AssessmentSubQuestion) => ({
         ...sq,
+        label: stripHtmlTags(sq.label || ''),
         content: sanitizeText(sq.content),
       })),
     };
   }
 
+  // Normaliser les sauts de paragraphes HTML en retours à la ligne avant découpage pour ne jamais couper une balise <p>
+  const normalizedForSplit = content
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/^<p[^>]*>/i, '')
+    .replace(/<\/p>$/i, '');
+
   // 2. Détection du schéma de questions numérotées : 1) ... 2) ... ou 1. ... 2. ...
-  const pattern = /(?:^|\n)\s*(?:([0-9]+|[a-d])\s*[\)\.]\s+)/gi;
-  const matches = Array.from(content.matchAll(pattern)) as RegExpExecArray[];
+  const pattern = /(?:^|\n)\s*(?:(?:\*\*|<strong>)?([0-9]+|[a-d])\s*[\)\.](?:\*\*|<\/strong>)?\s+)/gi;
+  const matches = Array.from(normalizedForSplit.matchAll(pattern)) as RegExpExecArray[];
 
   if (matches.length >= 2) {
     const firstMatchPos = matches[0].index || 0;
-    const stimulus = sanitizeText(content.substring(0, firstMatchPos));
+    const stimulus = sanitizeText(normalizedForSplit.substring(0, firstMatchPos));
     const subQuestions: AssessmentSubQuestion[] = [];
     const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
 
@@ -241,10 +249,10 @@ function parseExerciseContent(
       const match = matches[i];
       const nextMatch = matches[i + 1];
       const startPos = (match.index || 0) + match[0].length;
-      const endPos = nextMatch ? nextMatch.index : content.length;
-      const rawSubText = content.substring(startPos, endPos).trim();
+      const endPos = nextMatch ? nextMatch.index : normalizedForSplit.length;
+      const rawSubText = normalizedForSplit.substring(startPos, endPos).trim();
       const subText = sanitizeText(rawSubText);
-      const label = match[1] + ')';
+      const label = stripHtmlTags(match[1]) + ')';
       const roman = romanNumerals[i % romanNumerals.length];
       const matchedStrand = strands.find(s => s.toLowerCase().startsWith(`${roman}.`))?.replace(/^[ivx]+[\.\)]\s*/i, '').trim();
 
@@ -253,7 +261,7 @@ function parseExerciseContent(
         label,
         content: subText,
         strandIndex: roman,
-        strandText: matchedStrand || '',
+        strandText: stripHtmlTags(matchedStrand || ''),
         type: exercise.type || 'open',
         options: exercise.options,
         correctAnswer: exercise.correctAnswer,
@@ -525,6 +533,15 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
       page-break-inside: avoid !important;
       break-inside: avoid !important;
     }
+    .rich-exercise-html p { margin-bottom: 0.45rem; }
+    .rich-exercise-html p:last-child { margin-bottom: 0; }
+    .rich-exercise-html strong, .rich-exercise-html b { font-weight: 800; color: #0f172a; }
+    .rich-exercise-html em, .rich-exercise-html i { font-style: italic; color: #334155; }
+    .rich-exercise-html ul { list-style-type: disc; padding-left: 1.25rem; margin: 0.4rem 0; }
+    .rich-exercise-html ol { list-style-type: decimal; padding-left: 1.25rem; margin: 0.4rem 0; }
+    .rich-exercise-html table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 11px; }
+    .rich-exercise-html th, .rich-exercise-html td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; }
+    .rich-exercise-html th { background-color: #f1f5f9; font-weight: 700; color: #0f172a; }
   </style>
 </head>
 <body>
@@ -837,7 +854,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
           <div className="flex items-center gap-1.5 mb-1">
             <Award size={14} className="text-purple-700 shrink-0" />
             <span className="font-black text-slate-900 uppercase text-xs">
-              {evaluation.title}
+              {stripHtmlTags(evaluation.title)}
             </span>
           </div>
 
@@ -846,19 +863,19 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
               <strong className="not-italic text-purple-900 font-bold uppercase text-[10px] mr-1">
                 {isEn ? 'Statement of inquiry:' : 'Énoncé de recherche :'}
               </strong>
-              « {evaluation.statementOfInquiry} »
+              « {stripHtmlTags(evaluation.statementOfInquiry)} »
             </div>
           )}
 
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-600">
             {evaluation.keyConcept && (
-              <span><strong>{isEn ? 'Key concept:' : 'Concept clé :'}</strong> {evaluation.keyConcept}</span>
+              <span><strong>{isEn ? 'Key concept:' : 'Concept clé :'}</strong> {stripHtmlTags(evaluation.keyConcept)}</span>
             )}
             {evaluation.globalContext && (
-              <span><strong>{isEn ? 'Global context:' : 'Contexte mondial :'}</strong> {evaluation.globalContext}</span>
+              <span><strong>{isEn ? 'Global context:' : 'Contexte mondial :'}</strong> {stripHtmlTags(evaluation.globalContext)}</span>
             )}
             {evaluation.relatedConcepts && evaluation.relatedConcepts.length > 0 && (
-              <span><strong>{isEn ? 'Related concepts:' : 'Concepts connexes :'}</strong> {evaluation.relatedConcepts.join(', ')}</span>
+              <span><strong>{isEn ? 'Related concepts:' : 'Concepts connexes :'}</strong> {evaluation.relatedConcepts.map(c => stripHtmlTags(c)).join(', ')}</span>
             )}
           </div>
         </section>
@@ -897,10 +914,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                       {isEn ? `Criterion ${a.criterion}` : `Critère ${a.criterion}`}
                     </td>
                     <td className="border border-slate-300 px-2 py-1 font-bold text-slate-800">
-                      {a.criterionName}
+                      {stripHtmlTags(a.criterionName)}
                     </td>
                     <td className="border border-slate-300 px-2 py-1 text-slate-600 text-[9.5px]">
-                      {(a.strands || []).join(' ; ')}
+                      {(a.strands || []).map(s => stripHtmlTags(s)).join(' ; ')}
                     </td>
                     <td className="border border-slate-300 px-2 py-1 text-center font-semibold text-slate-700">
                       0 - {a.maxPoints || 8}
@@ -926,7 +943,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                 <div
                   className="py-1 px-2.5 bg-slate-800 text-white font-bold text-xs uppercase tracking-wide flex items-center justify-between rounded-xs avoid-break"
                 >
-                  <span>{isEn ? `Criterion ${crit.criterion}: ${crit.criterionName}` : `Critère ${crit.criterion} : ${crit.criterionName}`}</span>
+                  <span>{isEn ? `Criterion ${crit.criterion}: ${stripHtmlTags(crit.criterionName)}` : `Critère ${crit.criterion} : ${stripHtmlTags(crit.criterionName)}`}</span>
                   <span className="text-[10px] text-slate-300 font-normal">
                     {isEn ? `Achievement scale: 1 - ${crit.maxPoints || 8} points` : `Barème de réalisation : 1 - ${crit.maxPoints || 8}`}
                   </span>
@@ -950,10 +967,10 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                         {crit.rubricRows.map((r, ri) => (
                           <tr key={ri} style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                             <td className="border border-slate-200 px-2 py-0.5 text-center font-bold text-slate-700">
-                              {r.level}
+                              {stripHtmlTags(r.level)}
                             </td>
                             <td className="border border-slate-200 px-2 py-0.5 text-slate-600">
-                              {r.descriptor}
+                              {stripHtmlTags(r.descriptor)}
                             </td>
                           </tr>
                         ))}
@@ -973,6 +990,21 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                   const hasSubQuestions = subQuestions.length > 0;
                   const strandInfo = getQuestionStrandLabel(crit.criterion, crit.strands, ex, exIdx, isEn);
 
+                  // Filtrage strict : n'afficher un visuel QUE si l'exercice nécessite une courbe (Maths, IS, Éco, Sciences),
+                  // une figure géométrique, un diagramme, un schéma à légender ou une œuvre d'art
+                  const subQuestionsText = (ex.subQuestions || [])
+                    .map(sq => stripHtmlTags(sq.content || ''))
+                    .join(' ');
+                  const sanitizedVisual = sanitizeExerciseVisualsForDisplay({
+                    subject: evaluation.subject || '',
+                    unitTitle: evaluation.unitTitle || evaluation.title || '',
+                    exerciseTitle: ex.title || '',
+                    exerciseContent: ex.content || '',
+                    subQuestionsText,
+                    imageUrl: ex.imageUrl,
+                    imageCaption: ex.imageCaption,
+                  });
+
                   return (
                     <div
                       key={exIdx}
@@ -984,7 +1016,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                           <span className="px-2 py-0.5 bg-slate-700 text-white font-bold text-[10px] rounded-xs uppercase">
                             {isEn ? `Task ${exIdx + 1}` : `Tâche ${exIdx + 1}`}
                           </span>
-                          <span className="font-bold text-slate-900 text-xs">{ex.title}</span>
+                          <span className="font-bold text-slate-900 text-xs">{stripHtmlTags(ex.title)}</span>
                         </div>
 
                         {/* Note de la tâche si corrigé */}
@@ -995,9 +1027,13 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                         )}
                       </div>
 
-                      {/* Illustration / Schéma / Document visuel si présent */}
-                      {ex.imageUrl && (
-                        <PrintSafeImage imageUrl={ex.imageUrl} imageCaption={ex.imageCaption} isEn={isEn} />
+                      {/* Illustration / Courbe / Figure / Schéma / Œuvre d'Art strictement liée à l'exercice */}
+                      {sanitizedVisual.imageUrl && (
+                        <PrintSafeImage
+                          imageUrl={sanitizedVisual.imageUrl}
+                          imageCaption={sanitizedVisual.imageCaption}
+                          isEn={isEn}
+                        />
                       )}
 
                       {/* TEXTE SUPPORT / STIMULUS (SANS BALISES HTML RÉSIDUELLES) */}

@@ -16,11 +16,13 @@ import EvaluationPrintView from './EvaluationPrintView';
 import RichExerciseContent from './RichExerciseContent';
 import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, convertGoogleDriveUrl } from '../services/artworkService';
+import { normalizeEvaluationForCleanDisplay } from '../services/onlineEvaluationService';
 import {
   generateDiagramOrMapWithGeminiAI,
   generateNanoBananaPhotosForAssessments,
   NANO_BANANA_VISUAL_STYLES,
   NanoBananaVisualStyle,
+  stripHtmlTags,
 } from '../services/educationalDiagramService';
 
 interface StudentViewLayoutEditorModalProps {
@@ -51,7 +53,9 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
   onSaveEvaluation,
   onOpenDetailedQuestionEditor,
 }) => {
-  const [draftEval, setDraftEval] = useState<OnlineEvaluation>(() => JSON.parse(JSON.stringify(evaluation)));
+  const [draftEval, setDraftEval] = useState<OnlineEvaluation>(() =>
+    normalizeEvaluationForCleanDisplay(JSON.parse(JSON.stringify(evaluation)))
+  );
   const [viewMode, setViewMode] = useState<'organize' | 'pure_student'>('organize');
   const [showLayoutPanel, setShowLayoutPanel] = useState<boolean>(true);
   const [activeCriterionIdx, setActiveCriterionIdx] = useState<number>(0);
@@ -80,7 +84,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
 
   useEffect(() => {
     if (evaluation) {
-      setDraftEval(JSON.parse(JSON.stringify(evaluation)));
+      setDraftEval(normalizeEvaluationForCleanDisplay(JSON.parse(JSON.stringify(evaluation))));
     }
   }, [evaluation]);
 
@@ -133,14 +137,16 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
   const handleBatchGenerateNanoPhotos = async () => {
     if (isBatchGeneratingPhotos) return;
     setIsBatchGeneratingPhotos(true);
-    setBatchPhotoProgress('Analyse des exercices...');
+    setBatchPhotoProgress('Analyse des exercices (Art, Légende, Doc, Figure)…');
     try {
       const { updatedAssessments } = await generateNanoBananaPhotosForAssessments({
         subject: draftEval.subject || '',
         gradeLevel: draftEval.grade || '',
         unitTitle: draftEval.unitTitle || draftEval.title,
         assessments: draftEval.assessments || [],
-        overwriteExisting: false,
+        overwriteExisting: true,
+        onlyContextualExercises: true,
+        removeDecorativeVisuals: true,
         visualStyle: 'auto',
         onProgress: (done, total, title) => {
           setBatchPhotoProgress(`${done}/${total} : ${title}`);
@@ -1088,7 +1094,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                 <span className="flex items-center gap-1.5">
                                   <Edit3 size={12} className="text-indigo-600" />
                                   <span>
-                                    {hasSubQuestions ? '✏️ Modification manuelle du contexte / énoncé (utilisez **texte** pour mettre en gras) :' : '✏️ Modification manuelle de la consigne (utilisez **texte** pour mettre en gras) :'}
+                                    {hasSubQuestions ? '✏️ Modification manuelle du contexte / énoncé (format HTML optimisé) :' : '✏️ Modification manuelle de la consigne (format HTML optimisé) :'}
                                   </span>
                                 </span>
                                 <div className="flex items-center gap-2 flex-wrap">
@@ -1096,7 +1102,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                     type="button"
                                     onClick={() =>
                                       handleUpdateExerciseField(critIdx, exIdx, {
-                                        content: `${ex.content || ''} **texte en gras**`,
+                                        content: `${ex.content || ''} <strong>texte en gras</strong>`,
                                       })
                                     }
                                     className="px-2 py-0.5 bg-white hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded font-black text-[11px]"
@@ -1287,7 +1293,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                     dangerouslySetInnerHTML={{ __html: ex.imageUrl }}
                                   />
                                   {ex.imageCaption && (
-                                    <p className="text-xs text-slate-700 font-bold italic mt-2">🖼️ {ex.imageCaption}</p>
+                                    <p className="text-xs text-slate-700 font-bold italic mt-2">🖼️ {stripHtmlTags(ex.imageCaption)}</p>
                                   )}
                                 </div>
                               );
@@ -1299,13 +1305,13 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                 <div className="w-full max-w-xl mx-auto aspect-[4/3] bg-white rounded-xl border border-slate-200 p-2 flex items-center justify-center overflow-hidden shadow-2xs">
                                   <img
                                     src={src}
-                                    alt={ex.imageCaption || 'Figure / Photo Google Drive (4:3)'}
+                                    alt={stripHtmlTags(ex.imageCaption || 'Figure / Courbe / Illustration (4:3)')}
                                     referrerPolicy="no-referrer"
                                     className="w-full h-full object-contain"
                                   />
                                 </div>
                                 {ex.imageCaption && (
-                                  <p className="text-xs text-slate-700 font-bold italic mt-2">🖼️ {ex.imageCaption}</p>
+                                  <p className="text-xs text-slate-700 font-bold italic mt-2">🖼️ {stripHtmlTags(ex.imageCaption)}</p>
                                 )}
                               </div>
                             );
@@ -1365,7 +1371,7 @@ const StudentViewLayoutEditorModal: React.FC<StudentViewLayoutEditorModalProps> 
                                                   content: e.target.value,
                                                 })
                                               }
-                                              placeholder={`✏️ Modifier l'énoncé de la sous-question ${sub.label || `${sIdx + 1})`} (**gras**)...`}
+                                              placeholder={`✏️ Modifier l'énoncé de la sous-question ${sub.label || `${sIdx + 1})`}...`}
                                               className="w-full p-2 bg-white border border-indigo-200 focus:border-purple-500 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none"
                                             />
                                           )}

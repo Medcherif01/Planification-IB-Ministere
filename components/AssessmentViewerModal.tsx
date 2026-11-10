@@ -12,7 +12,7 @@ import { createOrUpdateEvaluation } from '../services/onlineEvaluationService';
 import { isEnglishSubject, GenerateQuestionOptions } from '../services/criterialQuestionGeneratorService';
 import { generateCleanStudentCodesForEvaluation } from '../services/studentRosterService';
 import RichExerciseContent from './RichExerciseContent';
-import { optimizeEvaluationWithAI } from '../services/evaluationAiOptimizerService';
+import { optimizeEvaluationWithAI, sanitizeAndFormatLocalAssessments } from '../services/evaluationAiOptimizerService';
 import {
   generateDiagramOrMapWithGeminiAI,
   generateNanoBananaPhotosForAssessments,
@@ -68,7 +68,14 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
 
   useEffect(() => {
     if (!isOpen || !plan) return;
-    setAssessments(plan.assessments ? plan.assessments.map(a => JSON.parse(JSON.stringify(a))) : []);
+    const rawCopy = plan.assessments ? plan.assessments.map(a => JSON.parse(JSON.stringify(a))) : [];
+    const cleaned = sanitizeAndFormatLocalAssessments(
+      rawCopy,
+      plan.subject || '',
+      plan.title || '',
+      plan.gradeLevel || ''
+    );
+    setAssessments(cleaned);
     setActiveIdx(0);
     setHasUnsavedChanges(false);
     setSaveStatus('idle');
@@ -132,10 +139,10 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
     }
   };
 
-  // Générer les photos IA contextuelles (Nano Banana) pour toute l'évaluation
+  // Générer les supports visuels pédagogiques UNIQUEMENT pour les exercices qui en ont besoin (Art, Légende, Doc, Diagramme, Figure, Courbe)
   const handleBatchGenerateNanoPhotos = async () => {
     if (!plan || assessments.length === 0) return;
-    setBatchNanoProgress(isEn ? 'Starting Nano Banana AI...' : 'Lancement Nano Banana IA...');
+    setBatchNanoProgress(isEn ? 'Analyzing exercises for required visuals...' : 'Analyse des exercices (Art, Légende, Doc, Figure, Courbe)...');
     try {
       const { updatedAssessments } = await generateNanoBananaPhotosForAssessments({
         assessments,
@@ -144,14 +151,15 @@ const AssessmentViewerModal: React.FC<AssessmentViewerModalProps> = ({
         unitTitle: plan.title,
         visualStyle: nanoVisualStyle,
         overwriteExisting: true,
-        onlyContextualExercises: false,
+        onlyContextualExercises: true,
+        removeDecorativeVisuals: true,
         onProgress: (curr, tot, title) => {
-          setBatchNanoProgress(`🍌 Nano Banana (${curr}/${tot}) : ${title.slice(0, 28)}...`);
+          setBatchNanoProgress(`📐 Support (${curr}/${tot}) : ${title.slice(0, 28)}...`);
         },
       });
       persistChanges(updatedAssessments);
     } catch (e) {
-      console.warn('Erreur batch Nano Banana:', e);
+      console.warn('Erreur batch supports visuels:', e);
     } finally {
       setBatchNanoProgress(null);
     }

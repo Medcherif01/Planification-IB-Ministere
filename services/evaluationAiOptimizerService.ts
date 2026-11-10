@@ -4,6 +4,7 @@ import {
   detectAndAttachEducationalDiagram,
   generateDiagramOrMapWithGeminiAI,
   shouldExerciseHaveVisual,
+  sanitizeExerciseVisualsForDisplay,
 } from './educationalDiagramService';
 import { resolveArtworkOrImage } from './artworkService';
 import { getCriteriaSync, isLanguageAcquisitionSubject } from './ibCriteriaService';
@@ -101,9 +102,7 @@ function reconstructSquishedAndRawTables(text: string): string {
         let j = i + 1;
         while (j < lines.length) {
           const rowLine = lines[j].trim();
-          // Cas 1 : chiffres collés (ex: 197027.5450 -> 1970 | 27.5 | 450)
           const squishedMatch = rowLine.match(/^((?:19|20)\d{2})\s*(\d{1,2}(?:\.\d+)?)\s*(\d{2,4})$/);
-          // Cas 2 : séparés par espace ou tabulation (ex: 1970 27.5 450)
           const spacedMatch = rowLine.match(/^((?:19|20)\d{2})[\s\t]+(\d{1,2}(?:\.\d+)?(?:°C)?)[\s\t]+(\d{2,4}(?:mm)?)$/);
           
           if (squishedMatch) {
@@ -185,7 +184,6 @@ function reconstructSquishedAndRawTables(text: string): string {
         processed.push(l);
         continue;
       }
-      // Séparation par tabulation ou par au moins 2 espaces consécutifs
       const cols = trimmed.split(/\t|\s{2,}/).map(s => s.trim()).filter(Boolean);
       if (cols.length >= 2 && cols.length <= 7) {
         if (tableBuffer.length === 0 || tableBuffer[0].length === cols.length) {
@@ -204,9 +202,28 @@ function reconstructSquishedAndRawTables(text: string): string {
 }
 
 /**
+ * Convertit tous les symboles Markdown (**gras**, *italique*, __souligné__, ### titres, `code`)
+ * en balises HTML sémantiques propres (<strong>, <em>, <code>) et élimine tout symbole résiduel.
+ */
+function convertMarkdownInlineToHtml(text: string): string {
+  return text
+    .replace(/```[a-z]*\n?([\s\S]*?)```/gi, '<pre><code>$1</code></pre>')
+    .replace(/(?:^|<p>|<br\s*\/?>|\n)\s*#{1,6}\s+([^<\n]+)/gi, '<p><strong>$1</strong></p>')
+    .replace(/\*\*\*([\s\S]+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([\s\S]+?)__/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(>])\*([^*\n]+)\*(?=[\s.,;:!?)<]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|\n|<br\s*\/?>|<p>)\s*\*\s+/gi, '$1• ')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*/g, '')
+    .replace(/__/g, '')
+    .replace(/#{2,6}\s*/g, '');
+}
+
+/**
  * Nettoie, structure et sécurise le format HTML professionnel généré par l'IA ou saisi par l'enseignant.
  * Conserve et valorise les balises sémantiques valides (<p>, <strong>, <b>, <em>, <i>, <ul>, <ol>, <li>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <br>, <code>, <blockquote>).
- * Convertit le texte brut, les tableaux compressés ou le markdown en balisage HTML propre.
+ * Convertit systématiquement le Markdown (**gras**, *italique*, ###, tableaux) en HTML propre sans aucun symbole brut.
  */
 export function formatProfessionalHtml(content?: string): string {
   if (!content) return '';
@@ -242,18 +259,28 @@ export function formatProfessionalHtml(content?: string): string {
     str = convertMarkdownTablesToHtml(str);
   }
 
-  // Vérifier si le contenu contient déjà des balises sémantiques HTML
+  // Conversion systématique des symboles Markdown (**gras**, *italique*, ###) en balises HTML propres
+  str = convertMarkdownInlineToHtml(str);
+
+  // Mise en valeur automatique des intitulés structurants s'ils ne sont pas déjà en gras
+  str = str.replace(
+    /(^|<p>|<br\s*\/?>|\n)\s*(Mise en situation|Contexte|Consigne|Instructions?|Données|Document(?:\s+\d+)?| Hypothèse| Problématique|Rappel)\s*:/gi,
+    '$1<strong>$2 :</strong>'
+  );
+
+  // Vérifier si le contenu contient déjà des balises de blocs HTML
   const hasSemanticTags = /<(?:p|ul|ol|li|table|div|blockquote|h[1-6])[\s>]/i.test(str);
 
   if (!hasSemanticTags) {
-    // Si c'est du texte brut, le convertir en paragraphes HTML soignés
+    // Si c'est du texte brut, le convertir en paragraphes et listes HTML soignés
     const paragraphs = str.split(/\n\s*\n/).filter(Boolean);
     if (paragraphs.length > 0) {
       str = paragraphs
         .map(p => {
-          const lines = p.split('\n');
-          if (lines.length > 1 && lines.every(l => l.trim().startsWith('•') || l.trim().startsWith('-'))) {
-            const listItems = lines.map(l => `<li>${l.replace(/^[•\-]\s*/, '').trim()}</li>`).join('');
+          const lines = p.split('\n').map(l => l.trim()).filter(Boolean);
+          if (lines.length === 0) return '';
+          if (lines.length > 1 && lines.every(l => l.startsWith('•') || l.startsWith('- ') || l.startsWith('* '))) {
+            const listItems = lines.map(l => `<li>${l.replace(/^[•\-*]\s*/, '').trim()}</li>`).join('');
             return `<ul>${listItems}</ul>`;
           }
           return `<p>${lines.join('<br/>')}</p>`;
@@ -541,43 +568,45 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
 
         return {
           criterion: critCode,
-          criterionName: officialCriterionName,
+          criterionName: stripHtmlTags(officialCriterionName),
           maxPoints: typeof item.maxPoints === 'number' ? item.maxPoints : 8,
-          strands: officialStrands,
-          rubricRows: officialRubricRows,
+          strands: officialStrands.map((s: string) => stripHtmlTags(s)),
+          rubricRows: officialRubricRows.map((r: any) => ({
+            level: stripHtmlTags(String(r.level || '')),
+            descriptor: stripHtmlTags(String(r.descriptor || '')),
+          })),
           exercises: (Array.isArray(item.exercises) && item.exercises.length > 0 ? item.exercises : original?.exercises || []).map((ex: any, eIdx: number) => {
             const rawTitle = stripHtmlTags(ex.title) || (isEn ? `Task ${eIdx + 1}` : `Tâche ${eIdx + 1}`);
             const cleanTitle = isEn ? rawTitle.replace(/^Tâche\s+/i, 'Task ').replace(/^Exercice\s+/i, 'Task ') : rawTitle;
             const cleanContent = formatProfessionalHtml(ex.content) || `<p>${cleanTitle}</p>`;
             const cleanAnswer = ex.answer ? formatProfessionalHtml(ex.answer) : undefined;
+            const subQuestionsText = Array.isArray(ex.subQuestions)
+              ? ex.subQuestions.map((sq: any) => stripHtmlTags(sq.content || '')).join(' ')
+              : '';
 
-            // Détection et attachement d'oeuvre d'art, figure géométrique ou schéma éducatif
-            let imageUrl = ex.imageUrl || '';
-            let imageCaption = ex.imageCaption || '';
-
-            const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
-            if (resolvedArt) {
-              imageUrl = resolvedArt.imageUrl;
-              imageCaption = resolvedArt.imageCaption;
-            } else if (!imageUrl && insertVisualDiagrams) {
-              const detected = detectAndAttachEducationalDiagram(subject, unitTitle, cleanTitle, cleanContent);
-              if (detected) {
-                imageUrl = detected.imageUrl;
-                imageCaption = detected.imageCaption;
-              }
-            }
+            const sanitizedVisual = insertVisualDiagrams
+              ? sanitizeExerciseVisualsForDisplay({
+                  subject,
+                  unitTitle,
+                  exerciseTitle: cleanTitle,
+                  exerciseContent: cleanContent,
+                  subQuestionsText,
+                  imageUrl: ex.imageUrl,
+                  imageCaption: ex.imageCaption,
+                })
+              : { imageUrl: undefined, imageCaption: undefined };
 
             const sIdx = ex.strandIndex || 'i';
             const matchedSavedStrand = savedCrit?.strands?.find(s => s.toLowerCase().startsWith(`${sIdx.toLowerCase()}.`));
-            const officialStrandText = matchedSavedStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || ex.strandText || '';
+            const officialStrandText = stripHtmlTags(matchedSavedStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || ex.strandText || '');
 
             return {
               title: cleanTitle,
               content: cleanContent,
-              imageUrl: imageUrl || undefined,
-              imageCaption: imageCaption || undefined,
+              imageUrl: sanitizedVisual.imageUrl,
+              imageCaption: sanitizedVisual.imageCaption,
               criterionReference: ex.criterionReference
-                ? (isEn ? String(ex.criterionReference).replace(/^Critère/i, 'Criterion') : ex.criterionReference)
+                ? (isEn ? stripHtmlTags(String(ex.criterionReference)).replace(/^Critère/i, 'Criterion') : stripHtmlTags(String(ex.criterionReference)))
                 : (isEn ? `Criterion ${critCode}: ${sIdx}.` : `Critère ${critCode} : ${sIdx}.`),
               strandIndex: sIdx,
               strandText: officialStrandText,
@@ -591,10 +620,10 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
                     const matchedSqStrand = savedCrit?.strands?.find(s => s.toLowerCase().startsWith(`${sqStrand.toLowerCase()}.`));
                     return {
                       id: sq.id || `sub_${sqIdx + 1}`,
-                      label: sq.label || `${sqIdx + 1})`,
+                      label: stripHtmlTags(sq.label) || `${sqIdx + 1})`,
                       content: formatProfessionalHtml(sq.content) || '',
                       strandIndex: sqStrand,
-                      strandText: matchedSqStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || sq.strandText || '',
+                      strandText: stripHtmlTags(matchedSqStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || sq.strandText || ''),
                       type: sq.type || 'open',
                       options: Array.isArray(sq.options) ? sq.options.map((o: any) => stripHtmlTags(String(o))) : undefined,
                       correctAnswer: sq.correctAnswer ? stripHtmlTags(String(sq.correctAnswer)) : undefined,
@@ -606,25 +635,22 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
         };
       });
 
-      // Enrichissement Nano Banana : générer des photos contextuelles IA pour les exercices pertinents
+      // Enrichissement visuel : générer UNIQUEMENT pour les exercices qui requièrent une courbe, figure, diagramme, schéma à légender ou œuvre d'art
       if (insertVisualDiagrams) {
         const nanoTargets: Array<{ cIdx: number; eIdx: number }> = [];
         validated.forEach((crit, cIdx) => {
           crit.exercises.forEach((ex, eIdx) => {
-            const hasRealPhoto = Boolean(
-              ex.imageUrl &&
-                (ex.imageUrl.startsWith('data:image/png') ||
-                  ex.imageUrl.startsWith('data:image/jpeg') ||
-                  ex.imageUrl.startsWith('data:image/webp'))
-            );
-            if (!hasRealPhoto && (shouldExerciseHaveVisual(subject, ex.title, ex.content) || eIdx === 0)) {
+            const subText = Array.isArray(ex.subQuestions)
+              ? ex.subQuestions.map(sq => sq.content || '').join(' ')
+              : '';
+            const hasPedagogicalVisual = Boolean(ex.imageUrl && ex.imageUrl.startsWith('data:image/'));
+            if (!hasPedagogicalVisual && shouldExerciseHaveVisual(subject, ex.title, `${ex.content} ${subText}`)) {
               nanoTargets.push({ cIdx, eIdx });
             }
           });
         });
 
-        // Générer jusqu'à 4 photos contextuelles Nano Banana en parallèle pour illustrer l'évaluation
-        const selectedTargets = nanoTargets.slice(0, 4);
+        const selectedTargets = nanoTargets.slice(0, 6);
         await Promise.all(
           selectedTargets.map(async ({ cIdx, eIdx }) => {
             const ex = validated[cIdx].exercises[eIdx];
@@ -635,7 +661,6 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
                 unitTitle,
                 exerciseTitle: ex.title,
                 exerciseContent: ex.content,
-                customPrompt: ex.imageCaption,
                 visualStyle: 'auto',
               });
               if (generated?.imageUrl) {
@@ -654,16 +679,15 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
     return sanitizeAndFormatLocalAssessments(filteredExisting, subject, unitTitle, gradeLevel);
   } catch (error) {
     console.warn('optimizeEvaluationWithAI: Erreur lors de l\'appel API, utilisation du repli structuré local:', error);
-    // En cas d'erreur réseau, fallback local de mise en forme propre sans doublons
     return sanitizeAndFormatLocalAssessments(filteredExisting, subject, unitTitle, gradeLevel);
   }
 }
 
 /**
  * Nettoyage et formatage local de sécurité :
- * Élimine les doublons exacts, applique le format HTML soigné,
+ * Élimine les doublons exacts, applique le format HTML soigné sans aucun symbole **,
  * respecte les objectifs spécifiques IB sauvegardés par les enseignants,
- * et associe si opportun un document/diagramme éducatif.
+ * et ne conserve/génère des visuels QUE pour les exercices de courbe, figure, diagramme, légende ou art.
  */
 export function sanitizeAndFormatLocalAssessments(
   assessments: AssessmentData[],
@@ -676,10 +700,8 @@ export function sanitizeAndFormatLocalAssessments(
 
   return assessments.map(crit => {
     const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.criterion === crit.criterion);
-    const officialCriterionName = savedCrit?.criterionName || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`);
-    const officialStrands = savedCrit?.strands?.length
-      ? [...savedCrit.strands]
-      : crit.strands;
+    const officialCriterionName = stripHtmlTags(savedCrit?.criterionName || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`));
+    const officialStrands = (savedCrit?.strands?.length ? [...savedCrit.strands] : crit.strands || []).map(s => stripHtmlTags(s));
 
     const seenTitles = new Set<string>();
     const seenContents = new Set<string>();
@@ -694,7 +716,7 @@ export function sanitizeAndFormatLocalAssessments(
 
       // Détection de doublons stricts
       if (simpleContentKey && seenContents.has(simpleContentKey)) {
-        return; // Éliminer la question doublon
+        return;
       }
       if (simpleTitleKey && seenTitles.has(simpleTitleKey) && simpleContentKey && seenContents.has(simpleContentKey)) {
         return;
@@ -703,21 +725,20 @@ export function sanitizeAndFormatLocalAssessments(
       if (simpleContentKey) seenContents.add(simpleContentKey);
       if (simpleTitleKey) seenTitles.add(simpleTitleKey);
 
-      // Détection et attachement d'oeuvre d'art ou schéma éducatif
-      let imageUrl = ex.imageUrl || '';
-      let imageCaption = ex.imageCaption || '';
+      const subQuestionsText = Array.isArray(ex.subQuestions)
+        ? ex.subQuestions.map(sq => stripHtmlTags(sq.content || '')).join(' ')
+        : '';
 
-      const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
-      if (resolvedArt) {
-        imageUrl = resolvedArt.imageUrl;
-        imageCaption = resolvedArt.imageCaption;
-      } else if (!imageUrl && (subject || unitTitle)) {
-        const detected = detectAndAttachEducationalDiagram(subject, unitTitle, cleanTitle, cleanContent);
-        if (detected) {
-          imageUrl = detected.imageUrl;
-          imageCaption = detected.imageCaption;
-        }
-      }
+      // Validation stricte du visuel : supprime toute photo décorative et attache la vraie courbe/figure si requis
+      const sanitizedVisual = sanitizeExerciseVisualsForDisplay({
+        subject,
+        unitTitle,
+        exerciseTitle: cleanTitle,
+        exerciseContent: cleanContent,
+        subQuestionsText,
+        imageUrl: ex.imageUrl,
+        imageCaption: ex.imageCaption,
+      });
 
       const sIdx = ex.strandIndex || 'i';
       const matchedSavedStrand = savedCrit?.strands?.find(s => s.toLowerCase().startsWith(`${sIdx.toLowerCase()}.`));
@@ -727,11 +748,11 @@ export function sanitizeAndFormatLocalAssessments(
         title: cleanTitle,
         content: cleanContent,
         criterionReference: ex.criterionReference
-          ? (isEn ? String(ex.criterionReference).replace(/^Critère/i, 'Criterion') : ex.criterionReference)
+          ? (isEn ? stripHtmlTags(String(ex.criterionReference)).replace(/^Critère/i, 'Criterion') : stripHtmlTags(String(ex.criterionReference)))
           : (isEn ? `Criterion ${crit.criterion}: ${sIdx}.` : `Critère ${crit.criterion} : ${sIdx}.`),
-        strandText: matchedSavedStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || ex.strandText || '',
-        imageUrl: imageUrl || undefined,
-        imageCaption: imageCaption || undefined,
+        strandText: stripHtmlTags(matchedSavedStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || ex.strandText || ''),
+        imageUrl: sanitizedVisual.imageUrl,
+        imageCaption: sanitizedVisual.imageCaption,
         answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
         options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
         subQuestions: ex.subQuestions?.map(sq => {
@@ -739,7 +760,8 @@ export function sanitizeAndFormatLocalAssessments(
           const matchedSqStrand = savedCrit?.strands?.find(s => s.toLowerCase().startsWith(`${sqStrand.toLowerCase()}.`));
           return {
             ...sq,
-            strandText: matchedSqStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || sq.strandText || '',
+            label: stripHtmlTags(sq.label),
+            strandText: stripHtmlTags(matchedSqStrand?.replace(/^[ivx]+[\.\)]\s*/i, '') || sq.strandText || ''),
             content: formatProfessionalHtml(sq.content),
             options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
           };
@@ -751,6 +773,10 @@ export function sanitizeAndFormatLocalAssessments(
       ...crit,
       criterionName: officialCriterionName,
       strands: officialStrands,
+      rubricRows: crit.rubricRows?.map(r => ({
+        level: stripHtmlTags(r.level),
+        descriptor: stripHtmlTags(r.descriptor),
+      })),
       exercises: uniqueExercises,
     };
   });

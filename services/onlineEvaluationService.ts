@@ -1,15 +1,78 @@
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentData } from '../types';
+import { sanitizeExerciseVisualsForDisplay, stripHtmlTags } from './educationalDiagramService';
+import { formatProfessionalHtml } from './evaluationAiOptimizerService';
 
 const API_BASE = '/api/online-evaluations';
 const LOCAL_STORAGE_EVALS_KEY = 'ib_online_evaluations_cache';
 const LOCAL_STORAGE_SUBS_KEY = 'ib_online_submissions_cache';
+
+/**
+ * Normalise une évaluation pour garantir :
+ * 1) Aucune photo décorative ou hors-sujet : seuls les exercices nécessitant une courbe (Maths, IS, Éco, Sciences),
+ *    une figure géométrique, un diagramme, un schéma à légender ou une œuvre d'art conservent/reçoivent leur visuel exact.
+ * 2) Un HTML propre et structuré sans aucun symbole Markdown brut (**gras**, ###, etc.).
+ */
+export function normalizeEvaluationForCleanDisplay(evalItem: OnlineEvaluation): OnlineEvaluation {
+  if (!evalItem) return evalItem;
+  const subject = evalItem.subject || '';
+  const unitTitle = evalItem.unitTitle || evalItem.title || '';
+
+  const cleanAssessments = (evalItem.assessments || []).map(crit => ({
+    ...crit,
+    criterionName: stripHtmlTags(crit.criterionName || ''),
+    strands: (crit.strands || []).map(s => stripHtmlTags(s)),
+    rubricRows: (crit.rubricRows || []).map(r => ({
+      ...r,
+      descriptor: stripHtmlTags(r.descriptor || ''),
+    })),
+    exercises: (crit.exercises || []).map(ex => {
+      const subQuestionsText = (ex.subQuestions || [])
+        .map(sq => stripHtmlTags(sq.content || ''))
+        .join(' ');
+      const sanitizedVisual = sanitizeExerciseVisualsForDisplay({
+        subject,
+        unitTitle,
+        exerciseTitle: ex.title || '',
+        exerciseContent: ex.content || '',
+        subQuestionsText,
+        imageUrl: ex.imageUrl,
+        imageCaption: ex.imageCaption,
+      });
+      return {
+        ...ex,
+        title: stripHtmlTags(ex.title || ''),
+        content: formatProfessionalHtml(ex.content || ''),
+        imageUrl: sanitizedVisual.imageUrl,
+        imageCaption: sanitizedVisual.imageCaption ? stripHtmlTags(sanitizedVisual.imageCaption) : undefined,
+        answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
+        options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
+        subQuestions: ex.subQuestions?.map(sq => ({
+          ...sq,
+          label: stripHtmlTags(sq.label || ''),
+          content: formatProfessionalHtml(sq.content || ''),
+          strandText: sq.strandText ? stripHtmlTags(sq.strandText) : undefined,
+          options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
+        })),
+      };
+    }),
+  }));
+
+  return {
+    ...evalItem,
+    title: stripHtmlTags(evalItem.title || ''),
+    unitTitle: evalItem.unitTitle ? stripHtmlTags(evalItem.unitTitle) : undefined,
+    statementOfInquiry: evalItem.statementOfInquiry ? stripHtmlTags(evalItem.statementOfInquiry) : undefined,
+    assessments: cleanAssessments,
+  };
+}
 
 // ── Cache local helpers ───────────────────────────────────────────────────────
 
 function getLocalEvaluations(): OnlineEvaluation[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_EVALS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed: OnlineEvaluation[] = raw ? JSON.parse(raw) : [];
+    return parsed.map(normalizeEvaluationForCleanDisplay);
   } catch {
     return [];
   }
@@ -17,7 +80,7 @@ function getLocalEvaluations(): OnlineEvaluation[] {
 
 function saveLocalEvaluations(evals: OnlineEvaluation[]): void {
   try {
-    localStorage.setItem(LOCAL_STORAGE_EVALS_KEY, JSON.stringify(evals));
+    localStorage.setItem(LOCAL_STORAGE_EVALS_KEY, JSON.stringify(evals.map(normalizeEvaluationForCleanDisplay)));
   } catch {}
 }
 
@@ -41,13 +104,15 @@ function saveLocalSubmissions(subs: StudentSubmission[]): void {
 export async function createOrUpdateEvaluation(
   evaluation: Partial<OnlineEvaluation> & { title: string; subject: string; grade: string; assessments: AssessmentData[] }
 ): Promise<OnlineEvaluation> {
-  const payload = {
+  const rawPayload = {
     ...evaluation,
     id: evaluation.id || `eval_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     accessCode: (evaluation.accessCode || `EVAL-${Math.floor(1000 + Math.random() * 9000)}`).toUpperCase(),
     status: evaluation.status || 'active',
     createdAt: evaluation.createdAt || new Date().toISOString(),
-  };
+  } as OnlineEvaluation;
+
+  const payload = normalizeEvaluationForCleanDisplay(rawPayload);
 
   try {
     const res = await fetch(API_BASE, {
@@ -58,7 +123,7 @@ export async function createOrUpdateEvaluation(
 
     if (res.ok) {
       const data = await res.json();
-      const saved = data.evaluation as OnlineEvaluation;
+      const saved = normalizeEvaluationForCleanDisplay(data.evaluation as OnlineEvaluation);
       // Sync local storage
       const locals = getLocalEvaluations().filter(e => e.id !== saved.id && e.accessCode !== saved.accessCode);
       locals.unshift(saved);
@@ -71,7 +136,7 @@ export async function createOrUpdateEvaluation(
 
   // Fallback local
   const locals = getLocalEvaluations().filter(e => e.id !== payload.id && e.accessCode !== payload.accessCode);
-  const fullEval = payload as OnlineEvaluation;
+  const fullEval = payload;
   locals.unshift(fullEval);
   saveLocalEvaluations(locals);
   return fullEval;
@@ -92,9 +157,10 @@ export async function getEvaluations(filter?: {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
+        const cleaned = data.map(normalizeEvaluationForCleanDisplay);
         // Merge with local storage
-        saveLocalEvaluations(data);
-        return data;
+        saveLocalEvaluations(cleaned);
+        return cleaned;
       }
     }
   } catch (err) {
@@ -114,7 +180,7 @@ export async function getEvaluationByAccessCode(accessCode: string): Promise<Onl
     const res = await fetch(`${API_BASE}?accessCode=${encodeURIComponent(code)}`);
     if (res.ok) {
       const data = await res.json();
-      if (data && data.accessCode) return data as OnlineEvaluation;
+      if (data && data.accessCode) return normalizeEvaluationForCleanDisplay(data as OnlineEvaluation);
     }
   } catch (err) {
     console.warn('[EvaluationService] API offline, recherche locale pour code:', code);
@@ -125,7 +191,7 @@ export async function getEvaluationByAccessCode(accessCode: string): Promise<Onl
     e.accessCode?.trim().toUpperCase() === code ||
     (e.studentAccessCodes && e.studentAccessCodes.some(sc => sc.code?.trim().toUpperCase() === code))
   );
-  return found || null;
+  return found ? normalizeEvaluationForCleanDisplay(found) : null;
 }
 
 export async function deleteEvaluation(id: string): Promise<boolean> {

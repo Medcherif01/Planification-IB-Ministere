@@ -297,8 +297,7 @@ Schéma JSON attendu :
       (Boolean(options.generateNanoBananaPhoto) ||
         options.questionType === 'geometry' ||
         options.questionType === 'art' ||
-        options.questionType === 'subquestions' ||
-        shouldExerciseHaveVisual(options.subject, cleanTitle, cleanContent));
+        shouldExerciseHaveVisual(options.subject, cleanTitle, cleanContent, imageCaption));
 
     if (shouldUseNanoBanana) {
       try {

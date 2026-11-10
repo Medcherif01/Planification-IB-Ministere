@@ -824,7 +824,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/en/c/c3/Dora_Maar_Au_Chat.jpg",
     svgDataUri: toSvgDataUri(SVG_PICASSO_DORA_MAAR),
     caption: "Pablo Picasso, 'Dora Maar au chat', 1941, Huile sur toile, 128.3 cm × 95.3 cm (Cubisme)",
-    keywords: ['dora maar', 'dora maar au chat', 'picasso', 'pablo picasso', 'chat', '1941', 'cubisme', 'portrait cubiste']
+    keywords: ['dora maar', 'dora maar au chat', 'pablo picasso', 'portrait cubiste de dora']
   },
   {
     id: 'picasso_guernica',
@@ -837,7 +837,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/en/7/74/PicassoGuernica.jpg",
     svgDataUri: toSvgDataUri(SVG_PICASSO_GUERNICA),
     caption: "Pablo Picasso, 'Guernica', 1937, Huile sur toile, 349.3 cm × 776.6 cm, Musée Reina Sofía",
-    keywords: ['guernica', 'picasso', 'pablo picasso', '1937', 'guerre civile', 'espagne', 'cubisme', 'monochrome']
+    keywords: ['guernica', 'picasso guernica', 'bombardement de guernica']
   },
   {
     id: 'van_gogh_starry_night',
@@ -850,7 +850,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/commons/e/ea/Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg",
     svgDataUri: toSvgDataUri(SVG_VAN_GOGH_STARRY_NIGHT),
     caption: "Vincent van Gogh, 'La Nuit étoilée', 1889, Huile sur toile, 73.7 cm × 92.1 cm, MoMA New York",
-    keywords: ['nuit étoilée', 'starry night', 'van gogh', 'vincent van gogh', '1889', 'post-impressionnisme', 'cyprès', 'tourbillons']
+    keywords: ['nuit étoilée', 'starry night', 'van gogh', 'vincent van gogh']
   },
   {
     id: 'hokusai_grande_vague',
@@ -863,7 +863,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/commons/a/a5/Tsunami_by_hokusai_19th_century.jpg",
     svgDataUri: toSvgDataUri(SVG_HOKUSAI_GREAT_WAVE),
     caption: "Katsushika Hokusai, 'La Grande Vague de Kanagawa', vers 1831, Estampe sur bois, 25.7 cm × 37.8 cm",
-    keywords: ['grande vague', 'vague de kanagawa', 'hokusai', 'katsushika hokusai', 'estampe', 'fuji', 'ukiyo-e', 'japon']
+    keywords: ['grande vague', 'vague de kanagawa', 'hokusai', 'katsushika hokusai', 'ukiyo-e']
   },
   {
     id: 'da_vinci_mona_lisa',
@@ -876,7 +876,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/commons/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg",
     svgDataUri: toSvgDataUri(SVG_DA_VINCI_MONA_LISA),
     caption: "Léonard de Vinci, 'Mona Lisa (La Joconde)', 1503-1506, Huile sur peuplier, 77 cm × 53 cm, Musée du Louvre",
-    keywords: ['joconde', 'mona lisa', 'vinci', 'léonard de vinci', 'leonardo da vinci', 'louvre', 'renaissance', 'sfumato', 'sourire']
+    keywords: ['la joconde', 'mona lisa', 'léonard de vinci', 'leonardo da vinci']
   },
   {
     id: 'munch_le_cri',
@@ -889,7 +889,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/commons/c/c5/Edvard_Munch%2C_1893%2C_The_Scream%2C_oil%2C_tempera_and_pastel_on_cardboard%2C_91_x_73_cm%2C_National_Gallery_of_Norway.jpg",
     svgDataUri: toSvgDataUri(SVG_MUNCH_SCREAM),
     caption: "Edvard Munch, 'Le Cri', 1893, Huile et pastel sur carton, 91 cm × 73.5 cm, Galerie nationale d'Oslo",
-    keywords: ['le cri', 'the scream', 'munch', 'edvard munch', 'expressionnisme', 'angoisse', '1893']
+    keywords: ['le cri de munch', 'the scream', 'edvard munch']
   },
   {
     id: 'mondrian_composition',
@@ -902,7 +902,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/commons/a/a4/Piet_Mondriaan%2C_1930_-_Mondrian_Composition_II_in_Red%2C_Blue%2C_and_Yellow.jpg",
     svgDataUri: toSvgDataUri(SVG_MONDRIAN),
     caption: "Piet Mondrian, 'Composition avec rouge, jaune et bleu', 1930, Huile sur toile, 46 cm × 46 cm",
-    keywords: ['mondrian', 'piet mondrian', 'composition avec rouge', 'de stijl', 'abstraction géométrique', 'lignes noires']
+    keywords: ['mondrian', 'piet mondrian', 'composition avec rouge', 'de stijl']
   },
   {
     id: 'art_islamique_alhambra',
@@ -915,7 +915,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Alhambra_Mosaics.jpg/1024px-Alhambra_Mosaics.jpg",
     svgDataUri: toSvgDataUri(SVG_ART_ISLAMIQUE_ALHAMBRA),
     caption: "Motif géométrique et arabesque en zellige, Palais de l'Alhambra, Grenade (XIVe siècle)",
-    keywords: ['alhambra', 'zellige', 'mosaïque', 'arabesque', 'art islamique', 'grenade', 'géométrie islamique', 'nasride']
+    keywords: ['zellige de l\'alhambra', 'mosaïque de l\'alhambra', 'palais de l\'alhambra', 'art islamique nasride']
   },
   {
     id: 'art_islamique_calligraphie',
@@ -928,7 +928,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Kufic_script_in_blue_Quran.jpg/1024px-Kufic_script_in_blue_Quran.jpg",
     svgDataUri: toSvgDataUri(SVG_CORAN_BLEU_CALLIGRAPHIE),
     caption: "Coran Bleu, Calligraphie en écriture koufique dorée sur parchemin teinté à l'indigo (IXe siècle)",
-    keywords: ['calligraphie', 'coran bleu', 'koufique', 'calligraphie arabe', 'art islamique', 'kairouan', 'manuscrit']
+    keywords: ['coran bleu', 'calligraphie koufique', 'écriture koufique']
   },
   {
     id: 'vermeer_jeune_fille_perle',
@@ -941,7 +941,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
     url: "https://upload.wikimedia.org/wikipedia/commons/0/0f/1665_Girl_with_a_Pearl_Earring.jpg",
     svgDataUri: toSvgDataUri(SVG_VERMEER_PEARL),
     caption: "Johannes Vermeer, 'La Jeune Fille à la perle', vers 1665, Huile sur toile, 44.5 cm × 39 cm, Mauritshuis",
-    keywords: ['jeune fille à la perle', 'vermeer', 'johannes vermeer', 'perle', 'turban', 'mauritshuis', 'baroque']
+    keywords: ['jeune fille à la perle', 'johannes vermeer', 'girl with a pearl earring']
   }
 ];
 
@@ -951,7 +951,7 @@ export const FAMOUS_ARTWORKS: ArtworkItem[] = [
 
 /**
  * Analyse tout texte (titre, consigne, légende ou identifiant) et recherche
- * si une oeuvre d'art connue y est référencée.
+ * si une oeuvre d'art connue y est explicitement référencée.
  */
 export function findMatchingArtwork(text: string): ArtworkItem | null {
   if (!text) return null;
@@ -960,13 +960,7 @@ export function findMatchingArtwork(text: string): ArtworkItem | null {
   for (const art of FAMOUS_ARTWORKS) {
     for (const kw of art.keywords) {
       const cleanKw = kw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      if (lower.includes(cleanKw)) {
-        // Garde-fous pour les mots polysémiques courts
-        if (cleanKw === 'chat' && !lower.includes('picasso') && !lower.includes('dora')) continue;
-        if (cleanKw === '1941' && !lower.includes('picasso')) continue;
-        if (cleanKw === '1937' && !lower.includes('guernica') && !lower.includes('picasso')) continue;
-        if (cleanKw === 'estampe' && !lower.includes('hokusai') && !lower.includes('vague')) continue;
-        if (cleanKw === 'japon' && !lower.includes('hokusai') && !lower.includes('vague')) continue;
+      if (cleanKw.length >= 6 && lower.includes(cleanKw)) {
         return art;
       }
     }

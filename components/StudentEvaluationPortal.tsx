@@ -14,6 +14,7 @@ import VirtualTabletKeyboard from './VirtualTabletKeyboard';
 import RichExerciseContent from './RichExerciseContent';
 import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, findMatchingArtwork, generateDynamicMuseumArtCard, getSafeArtworkImageUrl } from '../services/artworkService';
+import { sanitizeExerciseVisualsForDisplay, stripHtmlTags } from '../services/educationalDiagramService';
 import { getEvaluationByAccessCode, getStudentSubmission, getLocalSubmissions, createOrUpdateEvaluation, submitStudentEvaluation } from '../services/onlineEvaluationService';
 
 interface StudentEvaluationPortalProps {
@@ -2493,6 +2494,18 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                     const mainStrand = resolveStrandForQuestion(activeAssessment.criterion, activeAssessment.strands, ex, exIdx, isEn);
                     const exerciseNum = getGlobalExerciseNumber(critIdx, exIdx);
                     const exDone = isExerciseAnswered(activeAssessment, ex, exIdx);
+                    const subQuestionsText = (ex.subQuestions || [])
+                      .map(sq => stripHtmlTags(sq.content || ''))
+                      .join(' ');
+                    const sanitizedVisual = sanitizeExerciseVisualsForDisplay({
+                      subject: evaluation.subject || '',
+                      unitTitle: evaluation.unitTitle || evaluation.title || '',
+                      exerciseTitle: ex.title || '',
+                      exerciseContent: ex.content || '',
+                      subQuestionsText,
+                      imageUrl: ex.imageUrl,
+                      imageCaption: ex.imageCaption,
+                    });
 
                     return (
                       <div
@@ -2509,7 +2522,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                               Exercice {exerciseNum}
                             </span>
                             <h4 className="font-black text-base sm:text-lg text-slate-900">
-                              {ex.title || `Exercice ${exerciseNum}`}
+                              {stripHtmlTags(ex.title || `Exercice ${exerciseNum}`)}
                             </h4>
                           </div>
                           <div className="flex items-center gap-2">
@@ -2526,11 +2539,11 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                           </div>
                         </div>
 
-                        {/* OEUVRE D'ART / PHOTO IA NANO BANANA LIÉE À L'EXERCICE (AVEC ZOOM PLEIN ÉCRAN) */}
-                        {ex.imageUrl && (
+                        {/* COURBE / FIGURE / DIAGRAMME / OEUVRE D'ART STRICTEMENT LIÉE À L'EXERCICE (AVEC ZOOM PLEIN ÉCRAN) */}
+                        {sanitizedVisual.imageUrl && (
                           <SafeExerciseImage
-                            imageUrl={ex.imageUrl}
-                            imageCaption={ex.imageCaption}
+                            imageUrl={sanitizedVisual.imageUrl}
+                            imageCaption={sanitizedVisual.imageCaption ? stripHtmlTags(sanitizedVisual.imageCaption) : undefined}
                             onZoom={(src, caption) => setZoomedDoc({ src, caption })}
                           />
                         )}

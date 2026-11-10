@@ -18,9 +18,9 @@ export interface EducationalDiagram {
 }
 
 /**
- * Nettoie scrupuleusement toute balise HTML (<p>, <strong>, etc.) pour garantir
- * qu'aucun code source n'apparaît textuellement dans les questions ou sur les copies imprimées.
- * Gère le décodage d'entités HTML imbriquées (&lt;p class="mb-2"&gt;) et les balises orphelines.
+ * Nettoie scrupuleusement toute balise HTML (<p>, <strong>, etc.) ainsi que les symboles
+ * de formatage Markdown (**gras**, *italique*, __souligné__, ### titres, `code`)
+ * pour garantir qu'aucun code source ni symbole brut n'apparaît dans les titres, options ou copies.
  */
 export function stripHtmlTags(str?: string): string {
   if (!str) return '';
@@ -50,11 +50,18 @@ export function stripHtmlTags(str?: string): string {
     }
   }
 
-  // Nettoyage de sécurité renforcé : supprime tout reste textuel de balises connues même mal formées
+  // Nettoyage de sécurité renforcé : supprime tout reste textuel de balises HTML ET les symboles Markdown (**gras**, *italique*, ###)
   result = result
     .replace(/<\/?(?:p|strong|b|em|i|u|span|div|table|tr|td|th|tbody|thead|ul|ol|li|h[1-6]|font|a|section|article)[^>]*>/gi, '')
     .replace(/<[a-zA-Z][^>]*>/g, '')
     .replace(/<\/[a-zA-Z]+>/g, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '$1')
+    .replace(/^\s*#{1,6}\s+/gm, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/__/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
@@ -1041,11 +1048,269 @@ export function generateDynamicPlantCell(): { imageUrl: string; imageCaption: st
 }
 
 /**
+ * Génère dynamiquement une courbe parabolique / quadratique f(x) = ax² + bx + c
+ * dans un repère orthonormé (O, I, J) avec sommet et points remarquables.
+ */
+export function generateDynamicQuadraticCurve(options: {
+  a?: number;
+  b?: number;
+  c?: number;
+  equationStr?: string;
+  caption?: string;
+}): { imageUrl: string; imageCaption: string } {
+  const a = options.a !== undefined && options.a !== 0 ? options.a : 1;
+  const b = options.b !== undefined ? options.b : 0;
+  const c = options.c !== undefined ? options.c : -2;
+  const eqStr = options.equationStr || `f(x) = ${a === 1 ? '' : a === -1 ? '-' : a}x² ${b > 0 ? `+ ${b}x` : b < 0 ? `- ${Math.abs(b)}x` : ''} ${c > 0 ? `+ ${c}` : c < 0 ? `- ${Math.abs(c)}` : ''}`.replace(/\s+/g, ' ').trim();
+  const caption = options.caption || `Repère orthonormé (O, I, J) — Courbe représentative (${eqStr})`;
+
+  const ox = 230;
+  const oy = 165;
+  const scale = 28;
+
+  // Générer le chemin de la parabole pour x dans [-4, 4]
+  const pathPoints: string[] = [];
+  for (let x = -4; x <= 4; x += 0.2) {
+    const y = a * x * x + b * x + c;
+    const sx = ox + x * scale;
+    const sy = oy - y * scale;
+    if (sy >= 38 && sy <= 270 && sx >= 35 && sx <= 425) {
+      pathPoints.push(`${pathPoints.length === 0 ? 'M' : 'L'} ${sx.toFixed(1)},${sy.toFixed(1)}`);
+    }
+  }
+
+  // Sommet S(-b/(2a), f(-b/(2a)))
+  const vx = -b / (2 * a);
+  const vy = a * vx * vx + b * vx + c;
+  const svx = ox + vx * scale;
+  const svy = oy - vy * scale;
+
+  const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 300" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="230" y="24" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  <defs>
+    <pattern id="quad_grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M 28 0 L 0 0 0 28" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect x="35" y="38" width="390" height="232" fill="url(#quad_grid)"/>
+  <line x1="35" y1="${oy}" x2="425" y2="${oy}" stroke="#334155" stroke-width="2"/>
+  <polygon points="425,${oy} 415,${oy - 4} 415,${oy + 4}" fill="#334155"/>
+  <text x="418" y="${oy + 16}" font-size="12" font-weight="bold" fill="#334155">x</text>
+  <line x1="${ox}" y1="270" x2="${ox}" y2="38" stroke="#334155" stroke-width="2"/>
+  <polygon points="${ox},38 ${ox - 4},48 ${ox + 4},48" fill="#334155"/>
+  <text x="${ox - 14}" y="50" font-size="12" font-weight="bold" fill="#334155">y</text>
+  <text x="${ox - 12}" y="${oy + 14}" font-size="11" font-weight="bold" fill="#334155">O</text>
+  ${[-4, -3, -2, -1, 1, 2, 3, 4].map(v => {
+    const gx = ox + v * scale;
+    return `<line x1="${gx}" y1="${oy - 3}" x2="${gx}" y2="${oy + 3}" stroke="#64748b" stroke-width="1.5"/>
+    <text x="${gx}" y="${oy + 14}" font-size="10" fill="#64748b" text-anchor="middle">${v}</text>`;
+  }).join('')}
+  ${[-3, -2, -1, 1, 2, 3, 4].map(v => {
+    const gy = oy - v * scale;
+    if (gy < 42 || gy > 265) return '';
+    return `<line x1="${ox - 3}" y1="${gy}" x2="${ox + 3}" y2="${gy}" stroke="#64748b" stroke-width="1.5"/>
+    <text x="${ox - 8}" y="${gy + 4}" font-size="10" fill="#64748b" text-anchor="end">${v}</text>`;
+  }).join('')}
+  <path d="${pathPoints.join(' ')}" fill="none" stroke="#4f46e5" stroke-width="3" stroke-linecap="round"/>
+  <rect x="250" y="44" width="168" height="22" rx="6" fill="#eef2ff" stroke="#a5b4fc"/>
+  <text x="334" y="59" font-size="11" font-weight="bold" fill="#3730a3" text-anchor="middle">Courbe (C) : ${eqStr}</text>
+  ${svy >= 42 && svy <= 265 ? `
+    <circle cx="${svx.toFixed(1)}" cy="${svy.toFixed(1)}" r="4.5" fill="#dc2626"/>
+    <text x="${(svx + 8).toFixed(1)}" y="${(svy + 14).toFixed(1)}" font-size="11" font-weight="bold" fill="#dc2626">S(${Number(vx.toFixed(1))}; ${Number(vy.toFixed(1))})</text>
+  ` : ''}
+</svg>
+`.trim();
+
+  return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+}
+
+/**
+ * Génère dynamiquement des courbes pour Individus et Sociétés (IS), Économie, Géographie, Sciences ou Maths :
+ * - Courbe d'Offre et de Demande (Équilibre du marché Prix / Quantité)
+ * - Courbe d'évolution temporelle ou expérimentale (extraite des chiffres de l'exercice : PIB, Population, Température, CO2, Chômage, Vitesse, etc.)
+ */
+export function generateDynamicEconomicOrSocialCurve(
+  exerciseTitle: string,
+  exerciseContent: string,
+  subject: string
+): { imageUrl: string; imageCaption: string } {
+  const cleanTitle = stripHtmlTags(exerciseTitle || '');
+  const cleanContent = stripHtmlTags(exerciseContent || '');
+  const fullText = `${cleanTitle} ${cleanContent}`.trim();
+  const lower = fullText.toLowerCase();
+
+  // CAS A : ÉCONOMIE / IS — COURBES D'OFFRE ET DE DEMANDE (ÉQUILIBRE DU MARCHÉ)
+  if (
+    (lower.includes('offre') && lower.includes('demande')) ||
+    (lower.includes('supply') && lower.includes('demand')) ||
+    lower.includes('équilibre du marché') ||
+    lower.includes('equilibre du marche') ||
+    lower.includes('prix d\'équilibre')
+  ) {
+    const isEn = /english|anglais|acquisition|supply/i.test(`${subject} ${fullText}`);
+    const caption = isEn
+      ? `Figure: Market Equilibrium — Supply (S) and Demand (D) Curves`
+      : `Graphique : Courbes d'Offre (O) et de Demande (D) — Équilibre du marché`;
+
+    const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="240" y="24" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  <defs>
+    <pattern id="econ_grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect x="65" y="40" width="375" height="210" fill="url(#econ_grid)"/>
+  <!-- Axe Prix (P) -->
+  <line x1="65" y1="250" x2="65" y2="38" stroke="#1e293b" stroke-width="2.5"/>
+  <polygon points="65,35 60,45 70,45" fill="#1e293b"/>
+  <text x="58" y="34" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="end">${isEn ? 'Price (P)' : 'Prix (P)'}</text>
+  <!-- Axe Quantité (Q) -->
+  <line x1="65" y1="250" x2="445" y2="250" stroke="#1e293b" stroke-width="2.5"/>
+  <polygon points="448,250 438,245 438,255" fill="#1e293b"/>
+  <text x="442" y="270" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="end">${isEn ? 'Quantity (Q)' : 'Quantité (Q)'}</text>
+  <!-- Courbe de Demande (D) décroissante -->
+  <path d="M 95,65 Q 230,150 395,228" fill="none" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/>
+  <text x="400" y="225" font-size="12" font-weight="bold" fill="#1d4ed8">${isEn ? 'Demand (D)' : 'Demande (D)'}</text>
+  <!-- Courbe d'Offre (O) croissante -->
+  <path d="M 95,228 Q 230,155 395,65" fill="none" stroke="#059669" stroke-width="3.5" stroke-linecap="round"/>
+  <text x="400" y="68" font-size="12" font-weight="bold" fill="#047857">${isEn ? 'Supply (S)' : 'Offre (O)'}</text>
+  <!-- Point d'équilibre E(Q*, P*) à (242, 149) -->
+  <line x1="65" y1="149" x2="242" y2="149" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5,4"/>
+  <line x1="242" y1="149" x2="242" y2="250" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5,4"/>
+  <circle cx="242" cy="149" r="5.5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+  <text x="252" y="143" font-size="12" font-weight="900" fill="#dc2626">${isEn ? 'E (Equilibrium)' : 'E (Équilibre)'}</text>
+  <text x="56" y="153" font-size="11" font-weight="bold" fill="#dc2626" text-anchor="end">P*</text>
+  <text x="242" y="266" font-size="11" font-weight="bold" fill="#dc2626" text-anchor="middle">Q*</text>
+  <text x="55" y="255" font-size="11" font-weight="bold" fill="#475569">0</text>
+</svg>
+`.trim();
+    return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+  }
+
+  // CAS B : COURBE D'ÉVOLUTION DYNAMIQUE (IS, Économie, Géographie, Sciences, Maths)
+  // Extraire les années éventuelles (ex: 1980, 1990, 2000, 2010, 2020)
+  const yearsFound = Array.from(new Set((fullText.match(/\b(?:18|19|20)\d{2}\b/g) || []).map(Number)))
+    .sort((a, b) => a - b)
+    .slice(0, 6);
+
+  // Extraire les valeurs numériques associées (hors années)
+  const rawNums = (fullText.replace(/\b(?:18|19|20)\d{2}\b/g, ' ').match(/\b\d+(?:[.,]\d+)?\b/g) || [])
+    .map(n => parseFloat(n.replace(',', '.')))
+    .filter(n => !isNaN(n) && n >= 0 && n <= 10000);
+
+  // Déterminer l'unité et l'intitulé de l'axe Y selon le thème de l'énoncé
+  let yAxisLabel = 'Valeur';
+  let xAxisLabel = yearsFound.length >= 2 ? 'Année' : 'Temps / Variable (x)';
+  let unitSuffix = '';
+
+  if (lower.includes('pib') || lower.includes('gdp') || lower.includes('croissance')) {
+    yAxisLabel = 'PIB / Croissance';
+    unitSuffix = lower.includes('%') ? '%' : ' Mds';
+  } else if (lower.includes('population') || lower.includes('démograph') || lower.includes('habitant')) {
+    yAxisLabel = 'Population';
+    unitSuffix = lower.includes('million') ? ' M' : '';
+  } else if (lower.includes('température') || lower.includes('temperature') || lower.includes('°c')) {
+    yAxisLabel = 'Température (°C)';
+    unitSuffix = '°C';
+  } else if (lower.includes('co2') || lower.includes('émission') || lower.includes('carbone')) {
+    yAxisLabel = 'Émissions CO₂';
+    unitSuffix = ' Mt';
+  } else if (lower.includes('chômage') || lower.includes('inflation') || lower.includes('taux') || lower.includes('%')) {
+    yAxisLabel = 'Taux (%)';
+    unitSuffix = '%';
+  } else if (lower.includes('vitesse') || lower.includes('distance') || lower.includes('mouvement')) {
+    yAxisLabel = lower.includes('vitesse') ? 'Vitesse (m/s)' : 'Distance (m)';
+    xAxisLabel = 'Temps t (s)';
+  } else if (lower.includes('coût') || lower.includes('cout') || lower.includes('recette') || lower.includes('bénéfice') || lower.includes('prix')) {
+    yAxisLabel = 'Montant (€ / $)';
+    xAxisLabel = 'Quantité produite (q)';
+  }
+
+  const xLabels = yearsFound.length >= 3
+    ? yearsFound.map(String)
+    : ['t₁', 't₂', 't₃', 't₄', 't₅'];
+
+  let yValues: number[] = [];
+  if (rawNums.length >= xLabels.length) {
+    yValues = rawNums.slice(0, xLabels.length);
+  } else if (lower.includes('diminu') || lower.includes('baiss') || lower.includes('décroiss')) {
+    yValues = [82, 68, 54, 41, 28].slice(0, xLabels.length);
+  } else if (lower.includes('fluctu') || lower.includes('crise') || lower.includes('pic')) {
+    yValues = [35, 62, 85, 52, 74].slice(0, xLabels.length);
+  } else {
+    yValues = [24, 38, 55, 72, 88].slice(0, xLabels.length);
+  }
+
+  const minV = Math.min(...yValues);
+  const maxV = Math.max(...yValues, minV + 10);
+  const span = Math.max(maxV - minV, 10);
+
+  const chartLeft = 75;
+  const chartRight = 430;
+  const chartTop = 58;
+  const chartBottom = 235;
+  const chartWidth = chartRight - chartLeft;
+  const chartHeight = chartBottom - chartTop;
+
+  const coords = xLabels.map((lbl, idx) => {
+    const val = yValues[idx] ?? yValues[yValues.length - 1] ?? 50;
+    const x = chartLeft + (idx / Math.max(1, xLabels.length - 1)) * chartWidth;
+    const normY = (val - Math.max(0, minV - span * 0.15)) / (span * 1.3);
+    const y = chartBottom - Math.max(0.08, Math.min(0.92, normY)) * chartHeight;
+    return { lbl, val, x, y };
+  });
+
+  const polylinePts = coords.map(c => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+  const areaPts = `${chartLeft},${chartBottom} ${polylinePts} ${coords[coords.length - 1].x.toFixed(1)},${chartBottom}`;
+
+  const cleanCaptionTitle = cleanTitle.replace(/^(?:Tâche|Task|Exercice|Question)\s*\d*\s*[:\-]?\s*/i, '').trim() || `Courbe d'évolution (${yAxisLabel})`;
+  const caption = `Graphique : ${cleanCaptionTitle.slice(0, 75)}`;
+
+  const svgXml = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 295" width="100%" height="100%" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
+  <rect width="100%" height="100%" fill="#fafafa" rx="12" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="245" y="25" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">${caption}</text>
+  <!-- Lignes de grille horizontales -->
+  ${[0, 0.25, 0.5, 0.75, 1].map(r => {
+    const gy = chartBottom - r * chartHeight;
+    const gv = Math.round(Math.max(0, minV - span * 0.1) + r * (span * 1.2));
+    return `
+      <line x1="${chartLeft}" y1="${gy.toFixed(1)}" x2="${chartRight}" y2="${gy.toFixed(1)}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="3,3"/>
+      <text x="${chartLeft - 8}" y="${(gy + 4).toFixed(1)}" font-size="10" font-weight="600" fill="#64748b" text-anchor="end">${gv}${unitSuffix}</text>
+    `;
+  }).join('')}
+  <!-- Aire sous la courbe -->
+  <polygon points="${areaPts}" fill="#4f46e5" fill-opacity="0.08"/>
+  <!-- Axes -->
+  <line x1="${chartLeft}" y1="${chartBottom}" x2="${chartLeft}" y2="40" stroke="#1e293b" stroke-width="2"/>
+  <polygon points="${chartLeft},36 ${chartLeft - 4},44 ${chartLeft + 4},44" fill="#1e293b"/>
+  <text x="${chartLeft + 6}" y="44" font-size="11" font-weight="bold" fill="#1e293b">${yAxisLabel}</text>
+  <line x1="${chartLeft}" y1="${chartBottom}" x2="${chartRight + 15}" y2="${chartBottom}" stroke="#1e293b" stroke-width="2"/>
+  <polygon points="${chartRight + 18},${chartBottom} ${chartRight + 10},${chartBottom - 4} ${chartRight + 10},${chartBottom + 4}" fill="#1e293b"/>
+  <text x="${chartRight + 10}" y="${chartBottom + 32}" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="end">${xAxisLabel}</text>
+  <!-- Courbe principale -->
+  <polyline points="${polylinePts}" fill="none" stroke="#4f46e5" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Points et valeurs -->
+  ${coords.map(c => `
+    <line x1="${c.x.toFixed(1)}" y1="${c.y.toFixed(1)}" x2="${c.x.toFixed(1)}" y2="${chartBottom}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3"/>
+    <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="5" fill="#4f46e5" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="${c.x.toFixed(1)}" y="${(c.y - 9).toFixed(1)}" font-size="10.5" font-weight="bold" fill="#312e81" text-anchor="middle">${c.val}${unitSuffix}</text>
+    <text x="${c.x.toFixed(1)}" y="${chartBottom + 16}" font-size="11" font-weight="bold" fill="#334155" text-anchor="middle">${c.lbl}</text>
+  `).join('')}
+</svg>
+`.trim();
+
+  return { imageUrl: toSvgDataUri(svgXml), imageCaption: caption };
+}
+
+/**
  * Détecte intelligemment et rigoureusement si une tâche doit être accompagnée
- * d'un schéma visuel et s'assure d'une compatibilité ABSOLUE avec l'énoncé.
- * 
- * RÈGLE D'OR : Ne jamais attacher un schéma qui contredit les lettres, valeurs ou
- * notions de l'exercice. Si l'exercice ne nécessite pas de figure, renvoie null.
+ * d'une courbe, d'une figure géométrique, d'un diagramme, d'un schéma à légender ou d'une œuvre d'art,
+ * et génère la représentation vectorielle exacte en rapport direct avec l'énoncé.
  */
 export function detectAndAttachEducationalDiagram(
   subject: string,
@@ -1053,14 +1318,14 @@ export function detectAndAttachEducationalDiagram(
   exerciseTitle: string,
   exerciseContent: string
 ): { imageUrl: string; imageCaption: string } | null {
-  const content = exerciseContent || '';
-  const title = exerciseTitle || '';
+  const content = stripHtmlTags(exerciseContent || '');
+  const title = stripHtmlTags(exerciseTitle || '');
   const text = `${title} ${content}`.trim();
   const lower = text.toLowerCase();
   const subjLower = (subject || '').toLowerCase();
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CAS 0 : OEUVRES D'ART CÉLÈBRES, ARTS VISUELS & DOCUMENTS HISTORIQUES
+  // CAS 0 : OEUVRES D'ART EXPLICITES & ANALYSE PLASTIQUE EN ARTS
   // ═══════════════════════════════════════════════════════════════════════════
   const matchedArt = findMatchingArtwork(text);
   if (matchedArt) {
@@ -1074,68 +1339,28 @@ export function detectAndAttachEducationalDiagram(
     subjLower.includes('art') ||
     subjLower.includes('plastique') ||
     subjLower.includes('visuel') ||
-    subjLower.includes('musique') ||
-    lower.includes('oeuvre d\'art') ||
-    lower.includes('oeuvre') ||
-    lower.includes('tableau') ||
-    lower.includes('peinture');
+    subjLower.includes('musique');
 
-  // Si c'est un cours d'art explicite demandant l'analyse d'une oeuvre non répertoriée
-  if (isArtSubject && (lower.includes('analys') || lower.includes('observ') || lower.includes('tableau') || lower.includes('peinture'))) {
-    // Générer une élégante fiche muséale vectorielle au lieu d'un bloc vide
+  if (
+    isArtSubject &&
+    /\b(oeuvre|œuvre|tableau|peinture|sculpture|fresque|estampe|gravure|autoportrait|installation\s+artistique|artwork|painting)\b/i.test(text)
+  ) {
     const artCard = generateDynamicMuseumArtCard({
       title: title.replace(/^(?:Tâche|Task|Question)\s*\d*\s*[:\-]\s*/i, '').trim() || "Analyse Visuelle et Plastique",
-      artist: "Artiste / Document d'étude",
-      periodOrYear: "Histoire des Arts",
+      artist: "Œuvre / Support artistique d'étude",
+      periodOrYear: "Histoire des Arts — PEI",
       medium: "Analyse plastique et compositionnelle",
-      caption: `Document iconographique : ${title}`,
+      caption: `Support d'analyse artistique : ${title}`,
     });
     return artCard;
   }
 
-  // 1. FILTRE DE NÉCESSITÉ VISUELLE STRICTE POUR LES SCIENCES ET MATHS :
-  // L'exercice doit faire explicitement appel à une figure ou un schéma
-  const hasExplicitVisualReference =
-    lower.includes('figure') ||
-    lower.includes('graphique') ||
-    lower.includes('courbe') ||
-    lower.includes('schéma') ||
-    lower.includes('schema') ||
-    lower.includes('document') ||
-    lower.includes('diagramme') ||
-    lower.includes('repère') ||
-    lower.includes('repere') ||
-    lower.includes('légender') ||
-    lower.includes('legender') ||
-    lower.includes('ci-contre') ||
-    lower.includes('ci-dessous') ||
-    lower.includes('illustration') ||
-    lower.includes('observer') ||
-    lower.includes('perspective cavalière');
-
-  // Si l'exercice ne fait AUCUNE référence visuelle ni géométrique, ne PAS injecter de schéma
-  if (!hasExplicitVisualReference) {
-    // Vérifier si c'est un problème géométrique explicite avec calcul d'un solide ou d'un triangle
-    const isStrictGeometryProblem =
-      (lower.includes('triangle') && lower.includes('rectangle en')) ||
-      lower.includes('cylindre de révolution') ||
-      lower.includes('cône de révolution') ||
-      lower.includes('théorème de thalès') ||
-      lower.includes('theoreme de thales');
-
-    if (!isStrictGeometryProblem) {
-      return null;
-    }
-  }
-
   // ═══════════════════════════════════════════════════════════════════════════
-  // CAS 1 : MATHÉMATIQUES — GÉOMÉTRIE (TRIANGLES, THALÈS, SOLIDES, CERCLE)
+  // CAS 1 : MATHÉMATIQUES — GÉOMÉTRIE (TRIANGLES, THALÈS, SOLIDES)
   // ═══════════════════════════════════════════════════════════════════════════
 
   // A. Triangle rectangle (Pythagore / Trigonométrie)
-  if (lower.includes('triangle') && (lower.includes('rectangle') || lower.includes('hypoténuse') || lower.includes('pythagore'))) {
-    // Tenter d'extraire les 3 lettres du triangle et le sommet de l'angle droit
-    // ex: "triangle ABC rectangle en B" ou "triangle DEF rectangle en D" ou "MNP rectangle en M"
+  if (lower.includes('triangle') && (lower.includes('rectangle') || lower.includes('hypoténuse') || lower.includes('pythagore') || lower.includes('cosinus') || lower.includes('sinus') || lower.includes('tangente'))) {
     const match = text.match(/\btriangle\s+([A-Za-z]{3})\s+rectangle\s+en\s+([A-Za-z])\b/i) ||
                   text.match(/\b([A-Za-z]{3})\s+est\s+un\s+triangle\s+rectangle\s+en\s+([A-Za-z])\b/i) ||
                   text.match(/(?<!trian)\b([A-Za-z]{3})\s+rectangle\s+en\s+([A-Za-z])\b/i);
@@ -1145,12 +1370,10 @@ export function detectAndAttachEducationalDiagram(
       const rightAt = match[2].toUpperCase();
       const letters = triName.split('') as [string, string, string];
 
-      // Vérifier si des mesures sont mentionnées dans le texte
       let s1Label: string | undefined;
       let s2Label: string | undefined;
       let sHypLabel: string | undefined;
 
-      // Chercher des égalités comme AB = 6 cm ou EF = 10
       const lenMatches = Array.from(text.matchAll(/([A-Z]{2})\s*=\s*(\d+(?:[\.,]\d+)?)\s*(?:cm|m|mm)?/g));
       for (const lm of lenMatches) {
         const seg = lm[1].toUpperCase();
@@ -1173,52 +1396,75 @@ export function detectAndAttachEducationalDiagram(
       });
     }
 
-    // Si c'est un triangle ABC mentionné explicitement
-    if (text.includes('ABC')) {
-      const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_triangle_rectangle')!;
-      return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
-    }
-
-    // Si aucune lettre n'est identifiable mais que c'est un triangle rectangle générique
     return generateDynamicRightTriangle({
       points: ['A', 'B', 'C'],
       rightAngleAt: 'B',
-      caption: 'Figure : Triangle rectangle avec côtés de l\'angle droit et hypoténuse',
+      caption: 'Figure : Triangle ABC rectangle en B',
     });
   }
 
   // B. Théorème de Thalès
-  if (lower.includes('thalès') || lower.includes('thales') || (lower.includes('parallèle') && lower.includes('triangle'))) {
-    // Si la figure cite expressément (MN) // (BC) ou ABC
+  if (lower.includes('thalès') || lower.includes('thales') || (lower.includes('parallèle') && lower.includes('triangle') && (lower.includes('figure') || lower.includes('calculer')))) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'math_theoreme_thales')!;
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
   // C. Solides géométriques dans l'espace
-  if (lower.includes('cylindre')) {
+  if (lower.includes('cylindre de révolution') || (lower.includes('cylindre') && (lower.includes('figure') || lower.includes('rayon') || lower.includes('volume')))) {
     return generateDynamicSolid('cylindre');
   }
-  if (lower.includes('cône') || lower.includes('cone')) {
+  if (lower.includes('cône de révolution') || ((lower.includes('cône') || lower.includes('cone')) && (lower.includes('figure') || lower.includes('sommet') || lower.includes('volume')))) {
     return generateDynamicSolid('cone');
   }
-  if (lower.includes('cube')) {
+  if (lower.includes('cube') && (lower.includes('figure') || lower.includes('arête') || lower.includes('perspective'))) {
     return generateDynamicSolid('cube');
   }
-  if (lower.includes('pavé droit') || lower.includes('parallélépipède') || (lower.includes('solide') && lower.includes('volume'))) {
+  if (lower.includes('pavé droit') || lower.includes('parallélépipède') || lower.includes('perspective cavalière')) {
     return generateDynamicSolid('pave');
   }
 
-  // D. Repère orthonormé & Fonctions affines / linéaires
-  if (
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CAS 2 : COURBES MATHÉMATIQUES (FONCTIONS, PARABOLES, DROITES, REPÈRE)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const isMathCurve =
     lower.includes('repère') ||
     lower.includes('repere') ||
     lower.includes('abscisse') ||
     lower.includes('ordonnée') ||
     lower.includes('coefficient directeur') ||
-    (lower.includes('fonction') && (lower.includes('courbe') || lower.includes('graphique') || lower.includes('droite')))
-  ) {
-    // Tenter de parser une équation affine : ex: f(x) = 2x + 1 ou y = -x + 3
-    const eqMatch = text.match(/(?:f\(x\)|y)\s*=\s*([+-]?\s*\d*(?:\.\d+)?)\s*x\s*([+-]\s*\d+(?:\.\d+)?)?/i);
+    lower.includes('parabole') ||
+    lower.includes('lecture graphique') ||
+    lower.includes('lire graphiquement') ||
+    lower.includes('déterminer graphiquement') ||
+    lower.includes('résoudre graphiquement') ||
+    ((lower.includes('fonction') || lower.includes('f(x)') || lower.includes('g(x)')) &&
+      (lower.includes('courbe') || lower.includes('graphique') || lower.includes('droite') || lower.includes('représentation')));
+
+  if (isMathCurve) {
+    // 1. Tester une fonction quadratique / parabole : ex: f(x) = x² - 3 ou y = 2x^2 + x - 1
+    const quadMatch = text.match(/(?:f\(x\)|g\(x\)|y)\s*=\s*([+-]?\s*\d*(?:\.\d+)?)\s*x(?:\^2|²)\s*([+-]\s*\d*(?:\.\d+)?\s*x)?\s*([+-]\s*\d+(?:\.\d+)?)?/i);
+    if (quadMatch || lower.includes('parabole') || lower.includes('second degré') || lower.includes('x²') || lower.includes('x^2')) {
+      let a = 1;
+      let b = 0;
+      let c = -2;
+      if (quadMatch) {
+        const aRaw = (quadMatch[1] || '').replace(/\s+/g, '');
+        a = aRaw === '' || aRaw === '+' ? 1 : aRaw === '-' ? -1 : parseFloat(aRaw) || 1;
+        if (quadMatch[2]) {
+          const bRaw = quadMatch[2].replace(/x|\s+/gi, '');
+          b = bRaw === '' || bRaw === '+' ? 1 : bRaw === '-' ? -1 : parseFloat(bRaw) || 0;
+        }
+        if (quadMatch[3]) {
+          c = parseFloat(quadMatch[3].replace(/\s+/g, '')) || 0;
+        } else {
+          c = 0;
+        }
+      }
+      return generateDynamicQuadraticCurve({ a, b, c });
+    }
+
+    // 2. Tester une équation affine : ex: f(x) = 2x + 1 ou y = -x + 3
+    const eqMatch = text.match(/(?:f\(x\)|g\(x\)|y)\s*=\s*([+-]?\s*\d*(?:\.\d+)?)\s*x\s*([+-]\s*\d+(?:\.\d+)?)?/i);
     if (eqMatch) {
       let aStr = (eqMatch[1] || '1').replace(/\s+/g, '');
       if (aStr === '' || aStr === '+') aStr = '1';
@@ -1240,89 +1486,91 @@ export function detectAndAttachEducationalDiagram(
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CAS 2 : SCIENCES — PHYSIQUE - CHIMIE & SVT
+  // CAS 3 : SCIENCES — SCHÉMAS À LÉGENDER & PHYSIQUE-CHIMIE / SVT
   // ═══════════════════════════════════════════════════════════════════════════
-
-  // A. Électricité / Circuits
   if (
-    lower.includes('circuit') ||
-    (lower.includes('électrique') && (lower.includes('pile') || lower.includes('lampe') || lower.includes('schéma')))
+    lower.includes('circuit électrique') ||
+    (lower.includes('circuit') && (lower.includes('pile') || lower.includes('lampe') || lower.includes('générateur') || lower.includes('schéma') || lower.includes('dipôle')))
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_circuit_electrique')!;
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // B. SVT / Biologie cellulaire
   if (lower.includes('cellule') || lower.includes('organite') || lower.includes('microscope')) {
-    // Si végétale
     if (lower.includes('végétal') || lower.includes('vegetal') || lower.includes('chloroplaste') || lower.includes('paroi')) {
       return generateDynamicPlantCell();
     }
-    // Si animale
-    if (lower.includes('animal') || lower.includes('membrane') || lower.includes('cytoplasme')) {
+    if (lower.includes('animal') || lower.includes('membrane') || lower.includes('cytoplasme') || lower.includes('noyau')) {
       const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_cellule_animale')!;
       return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
     }
-    if (lower.includes('microscope') && (lower.includes('oculaire') || lower.includes('objectif'))) {
+    if (lower.includes('microscope') && (lower.includes('oculaire') || lower.includes('objectif') || lower.includes('schéma') || lower.includes('légend'))) {
       const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_optique_microscope');
       if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
     }
   }
 
-  // C. Respiration & Anatomie
   if (
     lower.includes('appareil respiratoire') ||
-    lower.includes('poumon') ||
-    lower.includes('trachée') ||
-    lower.includes('bronche')
+    ((lower.includes('poumon') || lower.includes('trachée') || lower.includes('bronche')) && (lower.includes('schéma') || lower.includes('légend') || lower.includes('organe')))
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_systeme_respiratoire');
     if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // D. Photosynthèse & Échanges foliaires
   if (
     lower.includes('photosynthèse') ||
     lower.includes('photosynthese') ||
-    (lower.includes('feuille') && lower.includes('chlorophylle'))
+    (lower.includes('feuille') && lower.includes('chlorophylle') && lower.includes('schéma'))
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_photosynthese');
     if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // E. Atome & Modèle atomique
   if (
     lower.includes('modèle atomique') ||
-    (lower.includes('atome') && (lower.includes('proton') || lower.includes('électron') || lower.includes('neutron')))
+    (lower.includes('atome') && (lower.includes('proton') || lower.includes('électron') || lower.includes('neutron')) && (lower.includes('schéma') || lower.includes('modèle') || lower.includes('légend')))
   ) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_modele_atome');
     if (diag) return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // F. Cycle de l'eau
   if (lower.includes('cycle de l\'eau') || lower.includes('cycle de l eau')) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'sciences_cycle_eau')!;
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CAS 3 : STATISTIQUES & GRAPHIQUES DE DONNÉES
+  // CAS 4 : COURBES EN INDIVIDUS & SOCIÉTÉS (IS), ÉCONOMIE, GÉOGRAPHIE, SCIENCES & MATHS
   // ═══════════════════════════════════════════════════════════════════════════
-  if (
-    (lower.includes('histogramme') || lower.includes('diagramme en barres') || lower.includes('diagramme circulaire')) &&
-    (lower.includes('graphique') || lower.includes('données') || lower.includes('valeurs'))
-  ) {
+  const isHistogramOrBarChart =
+    lower.includes('histogramme') ||
+    lower.includes('diagramme en barres') ||
+    lower.includes('diagramme circulaire');
+
+  if (isHistogramOrBarChart) {
     const diag = EDUCATIONAL_DIAGRAMS.find(d => d.id === 'data_comparatif_barres')!;
     return { imageUrl: diag.svgDataUri, imageCaption: diag.caption };
   }
 
-  // Aucun schéma n'est strictement et fidèlement compatible : ne rien forcer !
+  const isEconomicOrContextualCurve =
+    lower.includes('courbe') ||
+    lower.includes('graphique') ||
+    (lower.includes('offre') && lower.includes('demande')) ||
+    lower.includes('équilibre du marché') ||
+    lower.includes('diagramme ombrothermique') ||
+    lower.includes('climatogramme');
+
+  if (isEconomicOrContextualCurve) {
+    return generateDynamicEconomicOrSocialCurve(title, content, subject);
+  }
+
+  // Aucun schéma, courbe ou figure requis : renvoyer null (zéro photo inutile)
   return null;
 }
 
 /**
- * Variable globale définissant le modèle IA pour générer automatiquement les photos,
- * diagrammes, schémas, oeuvres d'art et cartes géographiques (Nano Banana par défaut).
+ * Variable globale définissant le modèle IA pour générer automatiquement les supports visuels.
  */
 export const AI_IMAGE_GENERATION_MODEL =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_AI_IMAGE_MODEL) ||
@@ -1335,6 +1583,14 @@ export type NanoBananaVisualStyle =
   | 'schema_annote'
   | 'document_historique_carte';
 
+export type PedagogicalVisualCategory =
+  | 'artwork'
+  | 'labeled_diagram'
+  | 'document_source'
+  | 'chart_diagram'
+  | 'geometry_curve'
+  | null;
+
 export const NANO_BANANA_VISUAL_STYLES: Array<{
   id: NanoBananaVisualStyle;
   labelFr: string;
@@ -1344,67 +1600,231 @@ export const NANO_BANANA_VISUAL_STYLES: Array<{
 }> = [
   {
     id: 'auto',
-    labelFr: 'Auto (Adapté à l’exercice)',
-    labelEn: 'Auto (Matched to exercise)',
-    badge: '🍌 Nano Banana Intelligent',
-    descFr: 'Choisit automatiquement entre photo réaliste de mise en situation, illustration scientifique ou figure cotée selon l’énoncé.',
-  },
-  {
-    id: 'photo_realiste',
-    labelFr: 'Photo réaliste contextualisée',
-    labelEn: 'Contextual Realistic Photo',
-    badge: '📸 Photo Réelle',
-    descFr: 'Photographie éducative haute définition illustrant concrètement la situation réelle décrite dans l’exercice (architecture, laboratoire, nature, terrain).',
-  },
-  {
-    id: 'illustration_scientifique',
-    labelFr: 'Illustration scientifique & expérimentale',
-    labelEn: 'Scientific & Lab Illustration',
-    badge: '🔬 Sciences & Labo',
-    descFr: 'Visuel encyclopédique riche montrant le phénomène, le montage expérimental ou l’organisme étudié avec détails visuels précis.',
+    labelFr: 'Auto (Uniquement Courbe, Figure, Schéma ou Œuvre d’Art)',
+    labelEn: 'Auto (Only Curve, Figure, Diagram or Artwork)',
+    badge: '📈 Courbe & Figure',
+    descFr: 'Génère uniquement les courbes (Maths, IS, Économie, Sciences), figures géométriques, schémas à légender ou œuvres d’art requis par la question.',
   },
   {
     id: 'schema_annote',
-    labelFr: 'Figure & Schéma pédagogique annoté',
-    labelEn: 'Annotated Educational Figure',
-    badge: '📐 Schéma & Mesures',
-    descFr: 'Schéma ou figure géométrique/technique reprenant fidèlement les lettres, les grandeurs et les repères de la question.',
+    labelFr: 'Courbe / Figure géométrique / Schéma à légender',
+    labelEn: 'Curve / Geometric Figure / Labeled Diagram',
+    badge: '📐 Courbe & Schéma',
+    descFr: 'Courbe mathématique ou économique, figure géométrique cotée ou schéma scientifique à légender.',
   },
   {
     id: 'document_historique_carte',
-    labelFr: 'Carte géographique / Document d’époque',
-    labelEn: 'Geographic Map / Historical Doc',
-    badge: '🗺️ Carte & Histoire',
-    descFr: 'Carte thématique, reconstitution historique ou œuvre visuelle en lien direct avec le sujet d’étude.',
+    labelFr: 'Œuvre d’art (Tableau, Peinture, Sculpture)',
+    labelEn: 'Artwork (Painting, Sculpture, Visual Art)',
+    badge: '🎨 Œuvre d’Art',
+    descFr: 'Œuvre d’art faisant l’objet d’une analyse plastique ou iconographique dans l’exercice.',
+  },
+  {
+    id: 'illustration_scientifique',
+    labelFr: 'Graphique statistique / Histogramme / Diagramme',
+    labelEn: 'Statistical Graph / Histogram / Chart',
+    badge: '📊 Graphique',
+    descFr: 'Graphique d’évolution, courbes d’offre et demande ou histogramme de données.',
+  },
+  {
+    id: 'photo_realiste',
+    labelFr: 'Document photographique spécifique',
+    labelEn: 'Specific Documentary Photograph',
+    badge: '📸 Photo Spécifique',
+    descFr: 'Uniquement sur demande manuelle explicite de l’enseignant pour une question précise.',
   },
 ];
 
 /**
- * Détecte si l'énoncé ou le titre d'un exercice fait référence à un diagramme, une photo,
- * une oeuvre, une carte, un schéma scientifique, une mise en situation concrète ou une figure géométrique.
+ * Classifie avec une Rigueur Absolue si un exercice nécessite obligatoirement une COURBE
+ * (en Maths, IS, Économie, Sciences...), une FIGURE GÉOMÉTRIQUE, un DIAGRAMME/GRAPHIQUE,
+ * un SCHÉMA À LÉGENDER ou une ŒUVRE D'ART.
+ *
+ * IMPORTANT : Ne JAMAIS inclure `imageCaption` dans l'analyse automatique afin qu'une ancienne
+ * légende générée ne maintienne pas artificiellement une photo décorative inutile.
+ * Renvoie `null` pour tout exercice qui ne nécessite pas de courbe, figure, schéma ou œuvre d'art.
+ */
+export function classifyPedagogicalVisualRequirement(
+  subject: string,
+  exerciseTitle: string,
+  exerciseContent: string,
+  _imageCaption?: string
+): PedagogicalVisualCategory {
+  const cleanTitle = stripHtmlTags(exerciseTitle || '');
+  const cleanContent = stripHtmlTags(exerciseContent || '');
+  const fullText = `${cleanTitle} ${cleanContent}`.trim();
+  const subjLower = (subject || '').toLowerCase();
+
+  if (!fullText) return null;
+
+  // 1. ŒUVRE D'ART EXPLICITE (Arts visuels, tableau, peinture, sculpture)
+  if (findMatchingArtwork(fullText)) {
+    return 'artwork';
+  }
+  const isArtSubject =
+    subjLower.includes('art') ||
+    subjLower.includes('plastique') ||
+    subjLower.includes('visuel') ||
+    subjLower.includes('musique');
+  const artworkPatterns = [
+    /\b(?:oeuvre|œuvre)\s+d['’]art\b/i,
+    /\banalyse\s+(?:de\s+l['’])?(?:oeuvre|œuvre|tableau|peinture|sculpture)\b/i,
+    /\b(?:observez|observer|étudiez|etudiez|décrivez|decrivez|analysez)\s+(?:ce|le|la|l['’]|cette)\s*(?:tableau|peinture|sculpture|oeuvre|œuvre|fresque|estampe|gravure|autoportrait)\b/i,
+    /\b(?:tableau|peinture|sculpture|fresque|estampe|gravure)\s+(?:ci-dessous|ci-contre|suivant|représenté)\b/i,
+  ];
+  if (
+    artworkPatterns.some(rx => rx.test(fullText)) ||
+    (isArtSubject && /\b(oeuvre|œuvre|tableau|peinture|sculpture|fresque|estampe|composition\s+plastique|artwork|painting)\b/i.test(fullText))
+  ) {
+    return 'artwork';
+  }
+
+  // 2. COURBES (Maths, IS, Économie, Géographie, Sciences) & FIGURES GÉOMÉTRIQUES
+  const curveAndGeometryPatterns = [
+    /\bcourbes?\b/i,
+    /\b(?:représentation\s+graphique|lecture\s+graphique|lire\s+graphiquement|déterminer\s+graphiquement|résoudre\s+graphiquement|tracer\s+la\s+courbe|allure\s+de\s+la\s+courbe)\b/i,
+    /\brepère\s+(?:orthonormé|orthogonal|cartésien|\(o\s*,)\b/i,
+    /\b(?:axe\s+des\s+abscisses|axe\s+des\s+ordonnées|parabole|coefficient\s+directeur)\b/i,
+    /\b(?:offre\s+et\s+(?:de\s+)?demande|courbe\s+d['’]offre|courbe\s+de\s+demande|équilibre\s+du\s+marché|supply\s+and\s+demand)\b/i,
+    /\bfigure\s+(?:ci-dessous|ci-contre|suivante|\d+)\b/i,
+    /\b(?:sur\s+la\s+figure|d['’]après\s+la\s+figure|observer\s+la\s+figure)\b/i,
+    /\btriangle\s+[A-Z]{3}\s+rectangle\s+en\s+[A-Z]\b/,
+    /\b[A-Z]{3}\s+est\s+un\s+triangle\s+rectangle\s+en\s+[A-Z]\b/,
+    /\b(?:théorème\s+de\s+thalès|theoreme\s+de\s+thales|configuration\s+de\s+thalès|perspective\s+cavalière|cylindre\s+de\s+révolution|cône\s+de\s+révolution|pavé\s+droit)\b/i,
+    /\b(?:graph\s+of\s+the\s+function|coordinate\s+plane|right\s+triangle\s+[A-Z]{3}|curve\s+below)\b/i,
+  ];
+  if (curveAndGeometryPatterns.some(rx => rx.test(fullText))) {
+    return 'geometry_curve';
+  }
+
+  // 3. GRAPHIQUES & DIAGRAMMES DE DONNÉES (Maths, IS, Économie, Sciences)
+  const chartDiagramPatterns = [
+    /\b(?:diagramme\s+en\s+barres|diagramme\s+circulaire|diagramme\s+semi-circulaire|diagramme\s+ombrothermique|histogramme|climatogramme|pyramide\s+des\s+âges|nuage\s+de\s+points)\b/i,
+    /\b(?:graphique|diagramme)\s+(?:ci-dessous|ci-contre|suivant|\d+)\b/i,
+    /\b(?:d['’]après\s+le\s+graphique|à\s+partir\s+du\s+graphique|observez\s+le\s+graphique|analyser\s+le\s+graphique|sur\s+le\s+graphique|observez\s+le\s+diagramme)\b/i,
+    /\b(?:bar\s+chart|pie\s+chart|histogram|graph\s+below|chart\s+below)\b/i,
+  ];
+  if (chartDiagramPatterns.some(rx => rx.test(fullText))) {
+    return 'chart_diagram';
+  }
+
+  // 4. SCHÉMAS À LÉGENDER / MONTAGES SCIENTIFIQUES
+  const labeledDiagramPatterns = [
+    /\b(?:légender|legender|légendez|legendez|annoter|annotez)\s+(?:le\s+schéma|la\s+figure|le\s+croquis|le\s+diagramme)\b/i,
+    /\b(?:schéma|schema|croquis)\s+(?:à\s+légender|ci-dessous|ci-contre|suivant)\b/i,
+    /\b(?:complétez|completez|identifiez|nommez)\s+(?:le\s+schéma|les\s+éléments\s+numérotés|les\s+organes\s+numérotés|les\s+parties\s+numérotées|les\s+légendes|les\s+repères)\b/i,
+    /\b(?:numérotés?\s+de\s+1\s+à|repérés?\s+par\s+les\s+(?:lettres|numéros|chiffres))\b/i,
+    /\b(?:appareil\s+respiratoire|cellule\s+animale|cellule\s+végétale|microscope\s+optique|circuit\s+électrique|modèle\s+atomique|cycle\s+de\s+l['’]eau|photosynthèse)\b/i,
+    /\[[1-6A-D]\]\s*(?:et|,|ou)\s*\[[1-6A-D]\]/,
+  ];
+  if (labeledDiagramPatterns.some(rx => rx.test(fullText))) {
+    return 'labeled_diagram';
+  }
+
+  // Règle stricte : aucune photo décorative ou hors-sujet sur les autres exercices !
+  return null;
+}
+
+/**
+ * Détecte strictement si un exercice DOIT comporter un visuel pédagogique (Courbe, Figure,
+ * Diagramme, Schéma à légender ou Œuvre d'art). Renvoie `false` pour tout autre exercice.
  */
 export function shouldExerciseHaveVisual(
   subject: string,
   exerciseTitle: string,
-  exerciseContent: string
+  exerciseContent: string,
+  _imageCaption?: string
 ): boolean {
-  const combined = `${subject || ''} ${exerciseTitle || ''} ${stripHtmlTags(exerciseContent || '')}`.toLowerCase();
-  const visualKeywords = [
-    'diagramme', 'schéma', 'schema', 'carte', 'figure', 'image', 'photo', 'oeuvre', 'œuvre',
-    'tableau artistique', 'peinture', 'sculpture', 'croquis', 'illustration', 'observez',
-    'observer', 'document', 'ci-dessous', 'ci-contre', 'repère', 'graphique', 'courbe',
-    'circuit', 'cellule', 'anatomie', 'appareil', 'microscope', 'expérience', 'montage',
-    'triangle', 'cercle', 'cylindre', 'cône', 'pyramide', 'polygone', 'vecteur',
-    'mise en situation', 'contexte', 'terrain', 'bâtiment', 'pont', 'rampe', 'échelle',
-    'écosystème', 'réaction', 'laboratoire', 'énergie', 'vitesse', 'trajectoire', 'force',
-    'diagram', 'map', 'picture', 'figure below', 'chart', 'artwork', 'painting', 'sketch', 'context'
-  ];
-  return visualKeywords.some(kw => combined.includes(kw));
+  return classifyPedagogicalVisualRequirement(subject, exerciseTitle, exerciseContent) !== null;
+}
+
+/**
+ * Nettoie et valide le visuel d'un exercice pour l'affichage ou la sauvegarde :
+ * - Supprime automatiquement toute photo décorative / inutile si l'exercice ne nécessite ni courbe, ni figure, ni diagramme, ni schéma à légender, ni œuvre d'art.
+ * - Si l'exercice nécessite une COURBE (en Maths, IS, Économie, Sciences), une FIGURE ou un SCHÉMA, garantit que l'image affichée est la vraie courbe / figure vectorielle correspondante et non une photo aléatoire sans rapport.
+ */
+export function sanitizeExerciseVisualsForDisplay(params: {
+  subject: string;
+  unitTitle?: string;
+  exerciseTitle?: string;
+  exerciseContent?: string;
+  subQuestionsText?: string;
+  imageUrl?: string;
+  imageCaption?: string;
+}): { imageUrl?: string; imageCaption?: string } {
+  const {
+    subject,
+    unitTitle = '',
+    exerciseTitle = '',
+    exerciseContent = '',
+    subQuestionsText = '',
+    imageUrl = '',
+    imageCaption = '',
+  } = params;
+
+  const trimmedUrl = (imageUrl || '').trim();
+
+  // Si l'enseignant a collé un lien Google Drive explicite, toujours le respecter
+  if (
+    trimmedUrl.includes('drive.google.com') ||
+    trimmedUrl.includes('googleusercontent.com') ||
+    trimmedUrl.startsWith('/api/image-proxy')
+  ) {
+    return { imageUrl: trimmedUrl, imageCaption: stripHtmlTags(imageCaption) || undefined };
+  }
+
+  const combinedText = `${exerciseContent} ${subQuestionsText}`.trim();
+  const category = classifyPedagogicalVisualRequirement(subject, exerciseTitle, combinedText);
+
+  // RÈGLE 1 : Si l'exercice ne requiert ni courbe, ni figure, ni diagramme, ni légende, ni œuvre d'art -> ZÉRO PHOTO !
+  if (!category) {
+    return { imageUrl: undefined, imageCaption: undefined };
+  }
+
+  // RÈGLE 2 : Si l'exercice requiert une courbe, figure, graphique ou schéma, fournir la figure/courbe exacte !
+  const exactDiagram = detectAndAttachEducationalDiagram(subject, unitTitle, exerciseTitle, combinedText);
+  if (
+    exactDiagram &&
+    (category === 'geometry_curve' ||
+      category === 'chart_diagram' ||
+      category === 'labeled_diagram' ||
+      category === 'artwork')
+  ) {
+    // Si aucune image n'est présente OU si l'image existante est une photo bitmap aléatoire (webp/png/jpg) au lieu d'une courbe/figure SVG
+    const isBitmapPhoto =
+      trimmedUrl.startsWith('data:image/webp') ||
+      trimmedUrl.startsWith('data:image/jpeg') ||
+      trimmedUrl.startsWith('data:image/jpg') ||
+      trimmedUrl.startsWith('data:image/png');
+
+    if (!trimmedUrl || isBitmapPhoto) {
+      return {
+        imageUrl: exactDiagram.imageUrl,
+        imageCaption: stripHtmlTags(exactDiagram.imageCaption),
+      };
+    }
+  }
+
+  if (trimmedUrl) {
+    return {
+      imageUrl: trimmedUrl,
+      imageCaption: stripHtmlTags(imageCaption) || exactDiagram?.imageCaption || undefined,
+    };
+  }
+
+  if (exactDiagram) {
+    return {
+      imageUrl: exactDiagram.imageUrl,
+      imageCaption: stripHtmlTags(exactDiagram.imageCaption),
+    };
+  }
+
+  return { imageUrl: undefined, imageCaption: undefined };
 }
 
 /**
  * Extrait les éléments concrets d'un énoncé (nombres avec unités, objets, contexte)
- * pour enrichir le prompt Nano Banana et garantir que la photo générée est intimement liée à l'exercice.
+ * pour enrichir le prompt et garantir que le support généré fait partie intégrante de l'exercice.
  */
 function extractExerciseContextSummary(title: string, cleanContent: string, subject: string): {
   measurements: string[];
@@ -1412,17 +1832,12 @@ function extractExerciseContextSummary(title: string, cleanContent: string, subj
   scenarioSnippet: string;
 } {
   const full = `${title} ${cleanContent}`;
-  // Extraire les mesures chiffrées (ex: "12 cm", "45°", "250 m", "20 °C", "9,8 m/s²", "f(x) = 2x + 3")
   const measureMatches = full.match(/\b\d+(?:[.,]\d+)?\s*(?:cm|mm|m|km|°C|°|%|kg|g|L|mL|s|min|h|V|A|W|Hz|N|J|Pa|mol|€|\$)\b|[A-Z]{1,3}\s*=\s*\d+(?:[.,]\d+)?\s*(?:cm|m|mm)?|(?:f\(x\)|y)\s*=\s*[^\s,;.<]+/gi) || [];
   const measurements = Array.from(new Set(measureMatches.map(m => m.trim()))).slice(0, 6);
 
-  // Extraire la mise en situation (premières phrases significatives)
-  const cleanLines = cleanContent
-    .replace(/\s+/g, ' ')
-    .trim();
+  const cleanLines = cleanContent.replace(/\s+/g, ' ').trim();
   const scenarioSnippet = cleanLines.slice(0, 480);
 
-  // Termes clés du titre et du sujet
   const rawWords = `${title} ${subject}`
     .replace(/^(?:Tâche|Task|Exercice|Question)\s*\d*\s*[:\-]?\s*/i, '')
     .split(/[\s,;:().?!]+/)
@@ -1433,8 +1848,8 @@ function extractExerciseContextSummary(title: string, cleanContent: string, subj
 }
 
 /**
- * Construit un prompt riche et ultra-spécifique pour Nano Banana afin de générer
- * une vraie photo ou illustration pédagogique en relation directe avec l'exercice (jamais une image générique simple).
+ * Construit un prompt ultra-spécifique pour générer un support d'exercice fonctionnel
+ * (Œuvre d'art, Schéma à légender, Diagramme, Figure/Courbe) — jamais décoratif.
  */
 export function buildContextualNanoBananaPrompt(params: {
   subject: string;
@@ -1448,54 +1863,41 @@ export function buildContextualNanoBananaPrompt(params: {
 }): string {
   const { subject, gradeLevel, unitTitle, exerciseTitle, cleanStatement, customPrompt, visualStyle = 'auto', isEn = false } = params;
   const { measurements, scenarioSnippet } = extractExerciseContextSummary(exerciseTitle || '', cleanStatement, subject);
+  const detectedCategory = classifyPedagogicalVisualRequirement(subject, exerciseTitle || '', cleanStatement);
 
   let styleDirective = '';
-  const subjLower = (subject || '').toLowerCase();
 
-  if (visualStyle === 'photo_realiste') {
-    styleDirective = 'High-resolution, hyper-detailed realistic educational photography (National Geographic / editorial textbook photography style), natural lighting, clear depth of field, authentic real-world setting directly depicting the exact scenario of the exercise.';
-  } else if (visualStyle === 'illustration_scientifique') {
-    styleDirective = 'Detailed scientific textbook & laboratory visual illustration (Dorling Kindersley / encyclopedic scientific visualization style), cutaway or close-up view showing the exact physical, chemical, or biological mechanism described in the exercise, crisp educational annotations.';
-  } else if (visualStyle === 'schema_annote') {
-    styleDirective = 'High-precision educational diagram & geometric/technical illustration on a clean bright background, showing the exact setup, shapes, vectors, or apparatus from the exercise with clear visual proportions and callouts.';
-  } else if (visualStyle === 'document_historique_carte') {
-    styleDirective = 'Rich thematic cartographic map, historical archival document illustration, or museum-grade cultural artwork directly illustrating the period, region, or work analyzed in the exercise.';
+  if (visualStyle === 'schema_annote' || (visualStyle === 'auto' && (detectedCategory === 'labeled_diagram' || detectedCategory === 'geometry_curve'))) {
+    styleDirective = 'High-precision academic textbook graph, mathematical/economic curve, or scientific/geometric diagram on a clean white background, showing the exact curve, axes, coordinates, or geometric setup from the exercise.';
+  } else if (visualStyle === 'document_historique_carte' || (visualStyle === 'auto' && detectedCategory === 'artwork')) {
+    styleDirective = 'Museum-grade fine art work (painting, sculpture, print, or artistic composition) directly serving as the primary artwork analyzed by the student in the exercise.';
   } else {
-    // Mode 'auto' : adapte intelligemment selon la matière et le contenu de l'exercice
-    if (subjLower.includes('science') || subjLower.includes('physique') || subjLower.includes('chimie') || subjLower.includes('svt') || subjLower.includes('biolog')) {
-      styleDirective = 'Rich, realistic scientific educational photo-illustration combining a real-world or laboratory photographic scene with clear visual focus on the exact phenomenon, experiment, organism, or apparatus described in the exercise.';
-    } else if (subjLower.includes('math')) {
-      styleDirective = 'Contextual real-world architectural/engineering photograph or high-clarity 3D/2D visual scene directly illustrating the concrete problem situation and geometric/mathematical structure described in the exercise.';
-    } else if (subjLower.includes('individu') || subjLower.includes('histoire') || subjLower.includes('géographie') || subjLower.includes('geographie')) {
-      styleDirective = 'Authentic editorial documentary photograph, historical scene reconstruction, or detailed thematic map directly depicting the historical/geographical situation described in the exercise.';
-    } else {
-      styleDirective = 'High-resolution realistic editorial photograph or rich textbook visual scene directly illustrating the specific context, characters, environment, and subject of the exercise.';
-    }
+    styleDirective = 'Clear academic chart, curve graph, or scientific diagram showing the exact variables, measurements, and comparative elements required to answer the exercise.';
   }
 
   const measureNote = measurements.length > 0
-    ? `Key quantities/elements from the exercise to reflect visually: ${measurements.join(', ')}.`
+    ? `Key quantities/labels from the exercise to include accurately: ${measurements.join(', ')}.`
     : '';
 
   return [
-    `Generate a rich, context-specific 4:3 educational visual for an IB MYP (${gradeLevel}) ${subject} assessment exercise.`,
-    `IMPORTANT: Do NOT generate a simple abstract icon or generic stock placeholder. The image MUST directly depict the concrete objects, environment, experiment, or real-world situation described in this specific exercise:`,
+    `Generate a functional, non-decorative 4:3 examination visual support for an IB MYP (${gradeLevel}) ${subject} exercise.`,
+    `CRITICAL: This visual is an INTEGRAL PART OF THE EXERCISE (Curve, Geometric Figure, Chart, Labeled Diagram, or Artwork), NOT a decorative illustration.`,
+    `- Pedagogical Visual Type: ${detectedCategory || visualStyle}`,
     `- Unit Theme: "${unitTitle || subject}"`,
     `- Exercise Title: "${exerciseTitle || ''}"`,
-    `- Exercise Scenario & Details: "${scenarioSnippet}"`,
-    customPrompt ? `- Teacher's Specific Visual Request: "${customPrompt}"` : '',
+    `- Exercise Instructions & Content: "${scenarioSnippet}"`,
+    customPrompt ? `- Teacher's Specific Document Request: "${customPrompt}"` : '',
     measureNote,
-    `- Visual Style: ${styleDirective}`,
-    `- Ensure high visual clarity, pedagogical relevance for students examining the image during an exam, and any visible labels in ${isEn ? 'English' : 'French'}.`,
+    `- Visual Specification: ${styleDirective}`,
+    `- Ensure high academic clarity for students examining the document during an exam (${isEn ? 'English' : 'French'}).`,
   ]
     .filter(Boolean)
     .join('\n');
 }
 
 /**
- * Génère automatiquement (ou à la demande) une photo IA contextuelle (Nano Banana / gemini-2.5-flash-image),
- * une illustration scientifique, une oeuvre d'art, une figure géométrique ou une carte géographique
- * via Gemini AI (/api/generate) en relation directe avec l'exercice.
+ * Génère le support visuel d'un exercice (Courbe en Maths/IS/Économie/Sciences, Figure géométrique cotée,
+ * Schéma à légender [1,2,3,4], Graphique de données ou Œuvre d'art).
  */
 export async function generateDiagramOrMapWithGeminiAI(params: {
   subject: string;
@@ -1512,14 +1914,42 @@ export async function generateDiagramOrMapWithGeminiAI(params: {
   const modelToUse = params.imageModel || AI_IMAGE_GENERATION_MODEL;
   const isEn = /english|anglais|acquisition/i.test(params.subject || '');
   const cleanStatement = stripHtmlTags(params.exerciseContent || '');
-  const userDescription = (params.customPrompt || '').trim();
+  const userDescription = stripHtmlTags(params.customPrompt || '');
   const visualStyle = params.visualStyle || 'auto';
-  const { measurements, keyTerms, scenarioSnippet } = extractExerciseContextSummary(
-    params.exerciseTitle || '',
-    cleanStatement,
-    params.subject || ''
-  );
 
+  // 1. PRIORITÉ ABSOLUE AUX COURBES (MATHS, IS, ÉCONOMIE, SCIENCES), FIGURES GÉOMÉTRIQUES, GRAPHIQUES, SCHÉMAS & ŒUVRES :
+  // Garantit qu'un exercice de courbe ou de figure reçoit toujours une VRAIE courbe/figure précise et jamais une photo aléatoire !
+  if (visualStyle !== 'photo_realiste') {
+    const exactMatch = detectAndAttachEducationalDiagram(
+      params.subject || '',
+      params.unitTitle || '',
+      params.exerciseTitle || '',
+      `${userDescription} ${cleanStatement}`
+    );
+    if (exactMatch) {
+      return {
+        imageUrl: exactMatch.imageUrl,
+        imageCaption: exactMatch.imageCaption,
+        modelUsed: 'pedagogical-precision-diagram',
+      };
+    }
+
+    // Si le style choisi est courbe/schéma/graphique, générer une courbe contextuelle dédiée
+    if (visualStyle === 'schema_annote' || visualStyle === 'illustration_scientifique') {
+      const curve = generateDynamicEconomicOrSocialCurve(
+        params.exerciseTitle || '',
+        `${userDescription} ${cleanStatement}`,
+        params.subject || ''
+      );
+      return {
+        imageUrl: curve.imageUrl,
+        imageCaption: curve.imageCaption,
+        modelUsed: 'pedagogical-precision-curve',
+      };
+    }
+  }
+
+  // 2. GÉNÉRATION IA UNIQUEMENT SI NÉCESSAIRE (Œuvre d'art spécifique ou demande explicite de l'enseignant)
   const imagePrompt = buildContextualNanoBananaPrompt({
     subject: params.subject || 'IB MYP',
     gradeLevel: effectiveGrade,
@@ -1557,13 +1987,13 @@ export async function generateDiagramOrMapWithGeminiAI(params: {
       const defaultCaption =
         userDescription ||
         (params.exerciseTitle
-          ? `${isEn ? 'Visual Document — ' : 'Document photographique — '}${params.exerciseTitle.replace(/^(?:Tâche|Task|Exercice)\s*\d*\s*[:\-]\s*/i, '')}`
+          ? `${isEn ? 'Figure — ' : 'Figure — '}${stripHtmlTags(params.exerciseTitle).replace(/^(?:Tâche|Task|Exercice)\s*\d*\s*[:\-]\s*/i, '')}`
           : isEn
-          ? 'Contextual Educational Visual (Nano Banana AI)'
-          : 'Illustration photographique contextualisée (Nano Banana IA)');
+          ? 'Examination Visual Support'
+          : 'Support visuel de l’exercice');
 
       if (data?.imageDataUri && String(data.imageDataUri).startsWith('data:image/')) {
-        const cleanCaption = String(data.caption || '').trim();
+        const cleanCaption = stripHtmlTags(String(data.caption || '')).trim();
         return {
           imageUrl: data.imageDataUri,
           imageCaption: cleanCaption.length > 5 && cleanCaption.length < 240 ? cleanCaption : defaultCaption,
@@ -1572,108 +2002,19 @@ export async function generateDiagramOrMapWithGeminiAI(params: {
       }
     }
   } catch (err) {
-    console.warn('Fallback contextual illustration after AI generation warning:', err);
+    console.warn('Fallback pedagogical diagram after AI generation warning:', err);
   }
-
-  // 3. Fallback local intelligent si un schéma spécialisé correspond exactement aux données de l'exercice
-  const fallback = detectAndAttachEducationalDiagram(
-    params.subject || '',
-    params.unitTitle || '',
-    params.exerciseTitle || '',
-    `${userDescription} ${cleanStatement}`
-  );
-  if (fallback) {
-    return fallback;
-  }
-
-  // 4. Illustration contextuelle riche extraite des données réelles de l'exercice (jamais un simple bloc A-B-C)
-  const safeTitle = (userDescription || params.exerciseTitle || 'Document d’étude contextualisé')
-    .replace(/[<>&"]/g, ' ')
-    .slice(0, 72);
-  const snippetLines: string[] = [];
-  const cleanWords = scenarioSnippet.replace(/[<>&"]/g, ' ').split(/\s+/);
-  let currentLine = '';
-  for (const w of cleanWords) {
-    if ((currentLine + ' ' + w).trim().length > 68) {
-      snippetLines.push(currentLine.trim());
-      currentLine = w;
-      if (snippetLines.length >= 3) break;
-    } else {
-      currentLine = (currentLine + ' ' + w).trim();
-    }
-  }
-  if (currentLine && snippetLines.length < 3) snippetLines.push(currentLine.trim());
-
-  const badgesToRender = (measurements.length > 0 ? measurements : keyTerms.slice(0, 4)).slice(0, 4);
-
-  const autoSvg = `<svg viewBox="0 0 680 510" xmlns="http://www.w3.org/2000/svg" style="font-family:system-ui,-apple-system,sans-serif;">
-    <defs>
-      <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#f8fafc"/>
-        <stop offset="100%" stop-color="#eef2ff"/>
-      </linearGradient>
-      <linearGradient id="hdrGrad" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0%" stop-color="#1e1b4b"/>
-        <stop offset="50%" stop-color="#4338ca"/>
-        <stop offset="100%" stop-color="#0f766e"/>
-      </linearGradient>
-      <pattern id="fineGrid" width="24" height="24" patternUnits="userSpaceOnUse">
-        <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#e2e8f0" stroke-width="1"/>
-      </pattern>
-    </defs>
-    <rect width="680" height="510" rx="18" fill="url(#bgGrad)" stroke="#cbd5e1" stroke-width="2.5"/>
-    <rect x="20" y="20" width="640" height="64" rx="14" fill="url(#hdrGrad)"/>
-    <text x="42" y="46" font-size="11" font-weight="bold" fill="#a5b4fc" letter-spacing="1">${(params.subject || 'IB MYP').toUpperCase()} • ${effectiveGrade.toUpperCase()} • DOCUMENT D'ANALYSE</text>
-    <text x="42" y="68" font-size="16" font-weight="bold" fill="#ffffff">${safeTitle}</text>
-
-    <!-- Zone de scène visuelle contextualisée -->
-    <rect x="24" y="100" width="632" height="265" rx="14" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
-    <rect x="26" y="102" width="628" height="261" rx="12" fill="url(#fineGrid)"/>
-
-    <!-- Illustration centrale dynamique (Système étudié + Repères) -->
-    <ellipse cx="220" cy="295" rx="145" ry="26" fill="#dbeafe" opacity="0.65"/>
-    <path d="M 85,295 L 215,145 L 345,295 Z" fill="#e0e7ff" stroke="#4338ca" stroke-width="3"/>
-    <line x1="215" y1="145" x2="215" y2="295" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="5,4"/>
-    <circle cx="215" cy="145" r="6" fill="#4338ca"/>
-    <circle cx="85" cy="295" r="6" fill="#0f766e"/>
-    <circle cx="345" cy="295" r="6" fill="#dc2626"/>
-    <text x="215" y="132" text-anchor="middle" font-size="12" font-weight="bold" fill="#1e1b4b">${keyTerms[0] || 'Sommet / Source'}</text>
-    <text x="215" y="318" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f766e">${measurements[0] || keyTerms[1] || 'Grandeur mesurée'}</text>
-
-    <!-- Cartouche des données et paramètres extraits de l'exercice -->
-    <rect x="385" y="122" width="250" height="220" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8"/>
-    <rect x="385" y="122" width="250" height="34" rx="10" fill="#e0e7ff"/>
-    <text x="510" y="144" text-anchor="middle" font-size="12" font-weight="bold" fill="#312e81">${isEn ? 'Exercise Parameters & Clues' : 'Données & Repères de l’énoncé'}</text>
-    ${badgesToRender
-      .map(
-        (b, i) => `
-      <rect x="400" y="${168 + i * 40}" width="220" height="30" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
-      <circle cx="418" cy="${183 + i * 40}" r="9" fill="#4f46e5"/>
-      <text x="418" y="${187 + i * 40}" text-anchor="middle" font-size="10" font-weight="bold" fill="#ffffff">${i + 1}</text>
-      <text x="436" y="${187 + i * 40}" font-size="12" font-weight="bold" fill="#1e293b">${String(b).replace(/[<>&"]/g, '').slice(0, 26)}</text>`
-      )
-      .join('')}
-
-    <!-- Bandeau de mise en situation en bas -->
-    <rect x="24" y="380" width="632" height="106" rx="14" fill="#0f172a"/>
-    <text x="44" y="404" font-size="11" font-weight="bold" fill="#38bdf8" letter-spacing="0.8">${isEn ? 'CONTEXTUAL SCENARIO EXTRACTED FROM EXERCISE :' : 'EXTRAIT DE LA MISE EN SITUATION DE L’EXERCICE :'}</text>
-    ${snippetLines
-      .map(
-        (line, idx) =>
-          `<text x="44" y="${428 + idx * 20}" font-size="12" fill="#e2e8f0">${line}</text>`
-      )
-      .join('')}
-  </svg>`;
 
   return {
-    imageUrl: toSvgDataUri(autoSvg),
-    imageCaption: userDescription || params.exerciseTitle || (isEn ? 'Contextual Exercise Document' : 'Document visuel en lien avec l’exercice'),
+    imageUrl: '',
+    imageCaption: '',
   };
 }
 
 /**
- * Génère par lot (batch) des photos IA contextuelles Nano Banana pour tous les exercices
- * d'une évaluation critériée qui n'ont pas encore de vraie photo IA (ou pour régénérer toutes les illustrations).
+ * Génère par lot (batch) les visuels pédagogiques UNIQUEMENT pour les exercices qui en ont besoin
+ * (Courbe en Maths/IS/Économie/Sciences, Figure géométrique, Diagramme, Schéma à légender ou Œuvre d'art)
+ * et supprime systématiquement toutes les photos décoratives ou sans rapport des autres exercices.
  */
 export async function generateNanoBananaPhotosForAssessments<T extends {
   criterion: string;
@@ -1682,6 +2023,7 @@ export async function generateNanoBananaPhotosForAssessments<T extends {
     content: string;
     imageUrl?: string;
     imageCaption?: string;
+    subQuestions?: Array<{ content?: string }>;
     [key: string]: any;
   }>;
 }>(params: {
@@ -1692,37 +2034,50 @@ export async function generateNanoBananaPhotosForAssessments<T extends {
   visualStyle?: NanoBananaVisualStyle;
   overwriteExisting?: boolean;
   onlyContextualExercises?: boolean;
+  removeDecorativeVisuals?: boolean;
   onProgress?: (current: number, total: number, exerciseTitle: string) => void;
-}): Promise<{ updatedAssessments: T[]; generatedCount: number }> {
+}): Promise<{ updatedAssessments: T[]; generatedCount: number; removedDecorativeCount?: number }> {
   const {
     assessments,
     subject,
     gradeLevel,
     unitTitle,
     visualStyle = 'auto',
-    overwriteExisting = false,
-    onlyContextualExercises = false,
+    overwriteExisting = true,
+    onlyContextualExercises = true,
+    removeDecorativeVisuals = true,
     onProgress,
   } = params;
 
   const cloned: T[] = JSON.parse(JSON.stringify(assessments));
   const tasksToProcess: Array<{ critIdx: number; exIdx: number; title: string; content: string }> = [];
+  let removedDecorativeCount = 0;
 
   cloned.forEach((crit, critIdx) => {
     (crit.exercises || []).forEach((ex, exIdx) => {
-      const hasBitmapPhoto = Boolean(
-        ex.imageUrl &&
-          (ex.imageUrl.startsWith('data:image/png') ||
-            ex.imageUrl.startsWith('data:image/jpeg') ||
-            ex.imageUrl.startsWith('data:image/webp') ||
-            ex.imageUrl.startsWith('http'))
+      const subText = Array.isArray(ex.subQuestions)
+        ? ex.subQuestions.map(sq => sq.content || '').join(' ')
+        : '';
+      const fullContent = `${ex.content || ''} ${subText}`.trim();
+
+      const requiresPedagogicalVisual = shouldExerciseHaveVisual(
+        subject,
+        ex.title,
+        fullContent
       );
 
-      if (!overwriteExisting && hasBitmapPhoto) {
+      // Si l'exercice ne nécessite ni courbe, ni figure, ni diagramme, ni schéma à légender, ni œuvre d'art :
+      if (!requiresPedagogicalVisual && onlyContextualExercises) {
+        if (removeDecorativeVisuals && (ex.imageUrl || ex.imageCaption)) {
+          delete ex.imageUrl;
+          delete ex.imageCaption;
+          removedDecorativeCount++;
+        }
         return;
       }
 
-      if (onlyContextualExercises && !shouldExerciseHaveVisual(subject, ex.title, ex.content)) {
+      const hasValidVisual = Boolean(ex.imageUrl && ex.imageUrl.startsWith('data:image/svg+xml'));
+      if (!overwriteExisting && hasValidVisual) {
         return;
       }
 
@@ -1730,25 +2085,10 @@ export async function generateNanoBananaPhotosForAssessments<T extends {
         critIdx,
         exIdx,
         title: ex.title,
-        content: ex.content,
+        content: fullContent,
       });
     });
   });
-
-  // Si tous les exercices avaient déjà une image et que l'enseignant clique explicitement sur le bouton de génération,
-  // on régénère toutes les photos pour remplacer les visuels existants par de nouvelles photos Nano Banana.
-  if (tasksToProcess.length === 0 && !onlyContextualExercises) {
-    cloned.forEach((crit, critIdx) => {
-      (crit.exercises || []).forEach((ex, exIdx) => {
-        tasksToProcess.push({
-          critIdx,
-          exIdx,
-          title: ex.title,
-          content: ex.content,
-        });
-      });
-    });
-  }
 
   let generatedCount = 0;
   for (let i = 0; i < tasksToProcess.length; i++) {
@@ -1769,12 +2109,17 @@ export async function generateNanoBananaPhotosForAssessments<T extends {
         cloned[t.critIdx].exercises[t.exIdx].imageUrl = res.imageUrl;
         cloned[t.critIdx].exercises[t.exIdx].imageCaption = res.imageCaption;
         generatedCount++;
+      } else {
+        delete cloned[t.critIdx].exercises[t.exIdx].imageUrl;
+        delete cloned[t.critIdx].exercises[t.exIdx].imageCaption;
       }
     } catch (e) {
-      console.warn(`Erreur génération photo Nano Banana pour "${t.title}":`, e);
+      console.warn(`Erreur génération support visuel pour "${t.title}":`, e);
     }
   }
 
-  return { updatedAssessments: cloned, generatedCount };
+  return { updatedAssessments: cloned, generatedCount, removedDecorativeCount };
 }
+
+
 

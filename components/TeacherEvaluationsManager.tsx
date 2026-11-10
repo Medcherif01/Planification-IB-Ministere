@@ -25,6 +25,7 @@ import {
   NANO_BANANA_VISUAL_STYLES,
   NanoBananaVisualStyle,
   shouldExerciseHaveVisual,
+  sanitizeExerciseVisualsForDisplay,
   AI_IMAGE_GENERATION_MODEL,
   stripHtmlTags,
 } from '../services/educationalDiagramService';
@@ -1005,67 +1006,54 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
             (crit.exercises || []).map(async ex => {
               const cleanTitle = stripHtmlTags(ex.title);
               const cleanContent = formatProfessionalHtml(ex.content);
-              let imageUrl = ex.imageUrl || '';
-              let imageCaption = ex.imageCaption || '';
+              const effectiveSubject = selectedPlanForCreate.subject || currentSubject || '';
+              const unitTitle = selectedPlanForCreate.title || '';
 
-              // 1. Résolution d'oeuvres d'art ou de documents visuels authentiques
-              const resolvedArt = resolveArtworkOrImage(imageUrl, `${cleanTitle} ${stripHtmlTags(cleanContent)}`);
-              if (resolvedArt) {
-                imageUrl = resolvedArt.imageUrl;
-                imageCaption = resolvedArt.imageCaption;
-              } else {
-                // Valider que imageUrl est bien une source d'image (data URI, url http/https, chemin, svg)
-                const isRealImage = Boolean(
-                  imageUrl && (
-                    imageUrl.startsWith('data:image/') ||
-                    imageUrl.startsWith('http://') ||
-                    imageUrl.startsWith('https://') ||
-                    imageUrl.startsWith('/') ||
-                    imageUrl.startsWith('<svg')
-                  )
+              let imageUrl = '';
+              let imageCaption = '';
+
+              if (insertVisualDiagramsOnCreate) {
+                const subQuestionsText = (ex.subQuestions || [])
+                  .map(sq => stripHtmlTags(sq.content || ''))
+                  .join(' ');
+                const needsVisual = shouldExerciseHaveVisual(
+                  effectiveSubject,
+                  cleanTitle,
+                  `${stripHtmlTags(cleanContent)} ${subQuestionsText}`,
+                  ex.imageCaption
                 );
-                if (!isRealImage) {
-                  if (!imageCaption && imageUrl.length > 5) {
-                    imageCaption = imageUrl;
-                  }
-                  imageUrl = '';
-                }
 
-                const effectiveSubject = selectedPlanForCreate.subject || currentSubject || '';
-                const needsVisual =
-                  insertVisualDiagramsOnCreate ||
-                  Boolean(imageCaption) ||
-                  shouldExerciseHaveVisual(effectiveSubject, cleanTitle, cleanContent);
-
-                if (!imageUrl && needsVisual) {
-                  try {
-                    const aiVisual = await generateDiagramOrMapWithGeminiAI({
-                      subject: effectiveSubject,
-                      gradeLevel: targetGrade,
-                      unitTitle: selectedPlanForCreate.title,
-                      exerciseTitle: cleanTitle,
-                      exerciseContent: stripHtmlTags(cleanContent),
-                      customPrompt: imageCaption || undefined,
-                      imageModel: AI_IMAGE_GENERATION_MODEL,
-                    });
-                    if (aiVisual?.imageUrl) {
-                      imageUrl = aiVisual.imageUrl;
-                      imageCaption = aiVisual.imageCaption;
-                    }
-                  } catch {
-                    // Repli ci-dessous si besoin
-                  }
+                if (needsVisual) {
+                  // Purger toute ancienne photo décorative et générer la courbe/figure/œuvre exacte liée à l'exercice
+                  const sanitized = sanitizeExerciseVisualsForDisplay({
+                    subject: effectiveSubject,
+                    unitTitle,
+                    exerciseTitle: cleanTitle,
+                    exerciseContent: cleanContent,
+                    subQuestionsText,
+                    imageUrl: ex.imageUrl,
+                    imageCaption: ex.imageCaption,
+                  });
+                  imageUrl = sanitized.imageUrl || '';
+                  imageCaption = sanitized.imageCaption || '';
 
                   if (!imageUrl) {
-                    const detected = detectAndAttachEducationalDiagram(
-                      effectiveSubject,
-                      selectedPlanForCreate.title || '',
-                      cleanTitle,
-                      stripHtmlTags(cleanContent)
-                    );
-                    if (detected) {
-                      imageUrl = detected.imageUrl;
-                      imageCaption = detected.imageCaption;
+                    try {
+                      const aiVisual = await generateDiagramOrMapWithGeminiAI({
+                        subject: effectiveSubject,
+                        gradeLevel: targetGrade,
+                        unitTitle,
+                        exerciseTitle: cleanTitle,
+                        exerciseContent: `${stripHtmlTags(cleanContent)} ${subQuestionsText}`.trim(),
+                        customPrompt: imageCaption || undefined,
+                        imageModel: AI_IMAGE_GENERATION_MODEL,
+                      });
+                      if (aiVisual?.imageUrl) {
+                        imageUrl = aiVisual.imageUrl;
+                        imageCaption = aiVisual.imageCaption;
+                      }
+                    } catch {
+                      // Repli vectoriel déjà pris en charge par sanitizeExerciseVisualsForDisplay
                     }
                   }
                 }
@@ -1076,7 +1064,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                 title: cleanTitle,
                 content: cleanContent,
                 imageUrl: imageUrl || undefined,
-                imageCaption: imageCaption || undefined,
+                imageCaption: imageCaption ? stripHtmlTags(imageCaption) : undefined,
                 answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
                 options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
                 subQuestions: ex.subQuestions?.map(sq => ({
@@ -1559,22 +1547,23 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     });
   }, [evaluations, searchQuery, evalUnitFilter, evalSemesterFilter, evalCompletionFilter, evalSortOrder, allSubmissionsMap]);
 
-  // Générer en 1 clic les photos IA contextuelles (Nano Banana) pour tous les exercices d'une évaluation
+  // Générer en 1 clic les visuels pédagogiques UNIQUEMENT pour les exercices qui en ont besoin (Art, Légende, Doc, Diagramme, Figure, Courbe) et retirer les images décoratives
   const handleBatchGenerateNanoPhotosForEval = async (targetEval: OnlineEvaluation, isInsideEditor = false) => {
     if (!targetEval || !targetEval.assessments || targetEval.assessments.length === 0) return;
     setBatchNanoEvalId(targetEval.id);
-    setBatchNanoProgressText('🍌 Nano Banana IA : analyse des exercices…');
+    setBatchNanoProgressText('📐 Analyse des exercices (Art, Légende, Doc, Figure, Courbe)…');
     try {
-      const { updatedAssessments, generatedCount } = await generateNanoBananaPhotosForAssessments({
+      const { updatedAssessments, generatedCount, removedDecorativeCount } = await generateNanoBananaPhotosForAssessments({
         assessments: targetEval.assessments,
         subject: targetEval.subject || currentSubject || '',
         gradeLevel: targetEval.grade || currentGrade || 'PEI',
         unitTitle: targetEval.unitTitle || targetEval.title,
         visualStyle: nanoVisualStyle,
         overwriteExisting: true,
-        onlyContextualExercises: false,
+        onlyContextualExercises: true,
+        removeDecorativeVisuals: true,
         onProgress: (curr, tot, title) => {
-          setBatchNanoProgressText(`🍌 Photo IA (${curr}/${tot}) : ${title.slice(0, 26)}…`);
+          setBatchNanoProgressText(`📐 Support visuel (${curr}/${tot}) : ${title.slice(0, 26)}…`);
         },
       });
 
@@ -1595,7 +1584,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       if (isInsideEditor) {
         setEditingEvaluation(saved);
       }
-      console.log(`✅ ${generatedCount} photo(s) contextuelle(s) Nano Banana générée(s) pour ${saved.title}`);
+      console.log(`✅ ${generatedCount} support(s) visuel(s) généré(s), ${removedDecorativeCount || 0} image(s) décorative(s) retirée(s) pour ${saved.title}`);
     } catch (err) {
       console.error('Erreur génération Nano Banana par lot:', err);
     } finally {
