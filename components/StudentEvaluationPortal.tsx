@@ -2555,7 +2555,18 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
                         {/* Énoncé global / Contexte de l'exercice */}
                         {ex.content && (
-                          <div className="bg-slate-50/90 p-4 rounded-2xl border border-slate-200/80">
+                          <div className="bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 p-4 sm:p-5 rounded-2xl border-2 border-slate-200/90 border-l-4 border-l-indigo-600 shadow-2xs space-y-2">
+                            <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-slate-200/70">
+                              <span className="text-[11px] font-black uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
+                                <span>📖</span>
+                                <span>{isEn ? 'Task Context & Instructions' : 'Mise en situation & Consigne'}</span>
+                              </span>
+                              {hasSubQuestions && (
+                                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
+                                  {isEn ? `${subQuestions.length} structured questions below` : `${subQuestions.length} questions structurées ci-dessous`}
+                                </span>
+                              )}
+                            </div>
                             <RichExerciseContent content={ex.content} />
                           </div>
                         )}
@@ -2657,30 +2668,63 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
                                   {/* B. VRAI OU FAUX */}
                                   {subQType === 'true_false' && (
-                                    <div className="space-y-2.5 pt-1">
-                                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                                        {isEn ? 'Select your answer:' : 'Indiquez votre réponse :'}
+                                    <div className="space-y-2.5 pt-1 bg-white p-3.5 rounded-xl border border-purple-200/80 shadow-2xs">
+                                      <label className="text-xs font-bold text-purple-950 uppercase tracking-wide block">
+                                        {isEn ? '⚖️ True or False — Select your answer:' : '⚖️ Vrai ou Faux — Indiquez votre choix :'}
                                       </label>
                                       <div className="grid grid-cols-2 gap-3 max-w-xs">
                                         {(isEn ? ['True', 'False'] : ['Vrai', 'Faux']).map(opt => {
                                           const isSelected = subAnswer.startsWith(opt);
+                                          const existingJustif = subAnswer.includes(' — ') ? subAnswer.split(' — ').slice(1).join(' — ') : '';
                                           return (
                                             <button
                                               key={opt}
                                               type="button"
-                                              onClick={() => handleResponseChange(subKey, opt)}
-                                              className={`py-2.5 px-4 rounded-xl font-bold text-xs border-2 transition flex items-center justify-center gap-2 ${
+                                              onClick={() =>
+                                                handleResponseChange(
+                                                  subKey,
+                                                  existingJustif ? `${opt} — ${existingJustif}` : opt
+                                                )
+                                              }
+                                              className={`py-2.5 px-4 rounded-xl font-black text-xs border-2 transition flex items-center justify-center gap-2 ${
                                                 isSelected
-                                                  ? 'bg-purple-600 border-purple-600 text-white shadow-md'
-                                                  : 'bg-white border-slate-200 hover:border-purple-300 text-slate-700'
+                                                  ? opt === 'Vrai' || opt === 'True'
+                                                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-md'
+                                                    : 'bg-rose-600 border-rose-600 text-white shadow-md'
+                                                  : 'bg-slate-50 border-slate-200 hover:border-purple-300 text-slate-700'
                                               }`}
                                             >
                                               {isSelected && <Check size={14} />}
-                                              <span>{opt}</span>
+                                              <span>{opt === 'Vrai' || opt === 'True' ? `✓ ${opt}` : `✕ ${opt}`}</span>
                                             </button>
                                           );
                                         })}
                                       </div>
+                                      <input
+                                        type="text"
+                                        value={subAnswer.includes(' — ') ? subAnswer.split(' — ').slice(1).join(' — ') : ''}
+                                        onChange={e => {
+                                          const currentChoice = subAnswer.startsWith('Vrai')
+                                            ? 'Vrai'
+                                            : subAnswer.startsWith('Faux')
+                                            ? 'Faux'
+                                            : subAnswer.startsWith('True')
+                                            ? 'True'
+                                            : subAnswer.startsWith('False')
+                                            ? 'False'
+                                            : isEn
+                                            ? 'True'
+                                            : 'Vrai';
+                                          const j = e.target.value;
+                                          handleResponseChange(subKey, j ? `${currentChoice} — ${j}` : currentChoice);
+                                        }}
+                                        placeholder={
+                                          isEn
+                                            ? 'Optional: Briefly justify your choice (True/False)...'
+                                            : 'Justification brève (si demandée dans la consigne)...'
+                                        }
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-purple-500 rounded-xl text-xs text-slate-800 outline-none"
+                                      />
                                     </div>
                                   )}
 

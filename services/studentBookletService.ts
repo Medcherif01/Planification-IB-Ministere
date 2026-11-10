@@ -1,6 +1,6 @@
-import { StudentBooklet, StudentSubjectReport, StudentATLSkillRatings, ATLLevel, ClassStudent } from '../types';
+import { StudentBooklet, StudentSubjectReport, StudentATLSkillRatings, ATLLevel, ClassStudent, OnlineEvaluation, StudentSubmission } from '../types';
 import { getEvaluations, getSubmissionsForEvaluation } from './onlineEvaluationService';
-import { convertGoogleDriveUrl } from './studentRosterService';
+import { convertGoogleDriveUrl, fetchAllStudents } from './studentRosterService';
 
 export { convertGoogleDriveUrl };
 
@@ -681,4 +681,191 @@ export function setGlobalIbLogo(url: string): void {
     localStorage.setItem('global_ib_logo_url', url);
   } catch {}
 }
+
+/**
+ * Transmet automatiquement la note et l'appréciation d'une copie corrigée (par IA ou manuellement)
+ * directement vers le Livret Scolaire officiel de l'élève pour la matière et le semestre concernés.
+ */
+export async function syncEvaluationGradeToStudentBooklet(
+  evaluation: OnlineEvaluation,
+  submission: StudentSubmission,
+  teacherNameOverride?: string
+): Promise<boolean> {
+  if (!evaluation || !submission) return false;
+
+  try {
+    const grade = (evaluation.grade || 'PEI 1').trim();
+    const targetTerm =
+      (evaluation.semester || '').includes('2') || (evaluation.title || '').toLowerCase().includes('semestre 2')
+        ? 'Semestre 2'
+        : 'Semestre 1';
+    const isSem2 = targetTerm === 'Semestre 2';
+    const bookletSubject = matchBookletSubject(evaluation.subject || '');
+
+    const normMat = (v?: string) => String(v || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+    const subMat = normMat(submission.studentNumber);
+    const subName = (submission.studentName || '').trim().toLowerCase();
+
+    // 1. Rechercher le livret existant de l'élève pour ce semestre
+    const existingBooklets = await fetchBooklets(grade, '2026/2027', targetTerm);
+    let targetBooklet = existingBooklets.find(b => {
+      const bMat = normMat(b.studentNumber);
+      const bName = (b.studentName || '').trim().toLowerCase();
+      return (subMat && bMat && subMat === bMat) || (subName && bName && subName === bName);
+    });
+
+    // 2. Si le livret n'existe pas encore, le créer à partir de la liste officielle de la classe ou des infos de la copie
+    if (!targetBooklet) {
+      let matchedStudent: ClassStudent | undefined;
+      try {
+        const roster = await fetchAllStudents(grade);
+        matchedStudent = roster.find(st => {
+          const stMat = normMat(st.studentNumber);
+          const stName = (st.name || '').trim().toLowerCase();
+          return (subMat && stMat && subMat === stMat) || (subName && stName && subName === stName);
+        });
+      } catch {}
+
+      const studentRecord: ClassStudent = matchedStudent || {
+        id: submission.studentNumber || `st_${Date.now()}`,
+        studentNumber: submission.studentNumber || '',
+        name: submission.studentName || 'Élève',
+        grade,
+        birthDate: '',
+        photoUrl: '',
+      };
+
+      targetBooklet = createDefaultBooklet(studentRecord, '2026/2027', targetTerm);
+    }
+
+    // 3. Calculer les meilleures notes par critère sur l'ensemble des évaluations du semestre + la copie actuelle
+    const imported = await importStudentScoresFromOnlineEvaluations(
+      grade,
+      bookletSubject,
+      submission.studentNumber || '',
+      submission.studentName || '',
+      targetTerm
+    );
+
+    const bestCriteria: Record<'A' | 'B' | 'C' | 'D', number | null> = {
+      A: imported.criteria.A ?? null,
+      B: imported.criteria.B ?? null,
+      C: imported.criteria.C ?? null,
+      D: imported.criteria.D ?? null,
+    };
+
+    // Fusionner avec les notes par critère de la copie qui vient d'être corrigée
+    if (submission.criteriaScores) {
+      (['A', 'B', 'C', 'D'] as const).forEach(c => {
+        const val = submission.criteriaScores?.[c];
+        if (typeof val === 'number' && !isNaN(val) && val > 0) {
+          const clamped = Math.min(8, Math.max(1, Math.round(val)));
+          bestCriteria[c] = bestCriteria[c] ? Math.max(bestCriteria[c]!, clamped) : clamped;
+        }
+      });
+    }
+
+    // Vérifier aussi les scores stockés dans submission.answers
+    if (Array.isArray(submission.answers)) {
+      const answerMaxByCrit: Partial<Record<'A' | 'B' | 'C' | 'D', number>> = {};
+      submission.answers.forEach(ans => {
+        const c = (ans.criterion || '').trim().toUpperCase() as 'A' | 'B' | 'C' | 'D';
+        if (['A', 'B', 'C', 'D'].includes(c) && typeof ans.score === 'number' && ans.score > 0) {
+          answerMaxByCrit[c] = Math.max(answerMaxByCrit[c] || 0, Math.min(8, Math.round(ans.score)));
+        }
+      });
+      (['A', 'B', 'C', 'D'] as const).forEach(c => {
+        if (answerMaxByCrit[c]) {
+          bestCriteria[c] = bestCriteria[c] ? Math.max(bestCriteria[c]!, answerMaxByCrit[c]!) : answerMaxByCrit[c]!;
+        }
+      });
+    }
+
+    // 4. Mettre à jour la matière dans le livret
+    const criteriaMeta = SUBJECT_CRITERIA_NAMES[bookletSubject] || {
+      A: 'Connaissances et compréhension',
+      B: 'Recherche et développement',
+      C: 'Communication',
+      D: 'Pensée critique',
+    };
+
+    const existingSubReport: StudentSubjectReport = targetBooklet.subjects?.[bookletSubject] || {
+      subject: bookletSubject,
+      teacherName: teacherNameOverride || evaluation.teacherName || '',
+      criteria: {
+        A: { name: criteriaMeta.A, t1: null, t2: null, final: null },
+        B: { name: criteriaMeta.B, t1: null, t2: null, final: null },
+        C: { name: criteriaMeta.C, t1: null, t2: null, final: null },
+        D: { name: criteriaMeta.D, t1: null, t2: null, final: null },
+      },
+      seuil32: null,
+      finalGrade: null,
+      observations: '',
+    };
+
+    const updatedCriteria = { ...existingSubReport.criteria };
+    (['A', 'B', 'C', 'D'] as const).forEach(c => {
+      const prev = updatedCriteria[c] || { name: criteriaMeta[c], t1: null, t2: null, final: null };
+      const bestNew = bestCriteria[c];
+      if (bestNew !== null && bestNew > 0) {
+        const t1Val = !isSem2 ? Math.max(prev.t1 || 0, bestNew) : prev.t1;
+        const t2Val = isSem2 ? Math.max(prev.t2 || 0, bestNew) : prev.t2;
+        const finalVal = Math.max(prev.final || 0, t1Val || 0, t2Val || 0, bestNew);
+        updatedCriteria[c] = {
+          ...prev,
+          name: prev.name || criteriaMeta[c],
+          t1: t1Val,
+          t2: t2Val,
+          final: finalVal,
+        };
+      }
+    });
+
+    const totalSeuil32 =
+      (updatedCriteria.A?.final || 0) +
+      (updatedCriteria.B?.final || 0) +
+      (updatedCriteria.C?.final || 0) +
+      (updatedCriteria.D?.final || 0);
+
+    const hasAnyCriterionScore = (['A', 'B', 'C', 'D'] as const).some(
+      c => typeof updatedCriteria[c]?.final === 'number' && updatedCriteria[c]!.final! > 0
+    );
+
+    const computedFinalGrade = hasAnyCriterionScore ? calculateIBFinalGrade(totalSeuil32) : existingSubReport.finalGrade;
+
+    const cleanFeedback = (submission.overallFeedback || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\*\*/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const updatedObservations = cleanFeedback
+      ? cleanFeedback
+      : existingSubReport.observations || (imported.extractedComments.length > 0 ? imported.extractedComments.join(' | ') : '');
+
+    const updatedBooklet: StudentBooklet = {
+      ...targetBooklet,
+      subjects: {
+        ...(targetBooklet.subjects || {}),
+        [bookletSubject]: {
+          ...existingSubReport,
+          subject: bookletSubject,
+          teacherName: existingSubReport.teacherName || teacherNameOverride || evaluation.teacherName || '',
+          criteria: updatedCriteria,
+          seuil32: hasAnyCriterionScore ? totalSeuil32 : existingSubReport.seuil32,
+          finalGrade: computedFinalGrade,
+          observations: updatedObservations,
+        },
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    await saveBooklet(updatedBooklet);
+    return true;
+  } catch (err) {
+    console.warn('[StudentBookletSync] Erreur lors de la transmission automatique au livret:', err);
+    return false;
+  }
+}
+
 

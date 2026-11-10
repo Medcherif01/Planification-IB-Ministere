@@ -11,6 +11,7 @@ import EvaluationPrintView from './EvaluationPrintView';
 import GenerateCriterialQuestionModal from './GenerateCriterialQuestionModal';
 import StudentViewLayoutEditorModal from './StudentViewLayoutEditorModal';
 import { optimizeEvaluationWithAI, formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
+import { syncEvaluationGradeToStudentBooklet } from '../services/studentBookletService';
 import RichExerciseContent from './RichExerciseContent';
 import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import {
@@ -1387,7 +1388,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     alert(`📋 Le Code d'Accès Unique (${managingCodesEval.accessCode}), le lien direct et la liste des ${codes.length} matricules élèves ont été copiés !`);
   };
 
-  // ── CORRECTION AUTOMATIQUE PAR IA (GEMINI) ─────────────────────────────────
+  // ── CORRECTION AUTOMATIQUE PAR IA (GEMINI) + ENREGISTREMENT & TRANSMISSION AUTOMATIQUE VERS LES LIVRETS ──
   const handleAiAutoGrading = async () => {
     if (!selectedEvaluation || !activeSubmission) return;
 
@@ -1415,7 +1416,45 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
       });
       setEditedComments(newComments);
 
-      alert('✨ Correction automatique par IA terminée !\n\nLes niveaux de réussite (1-8), les commentaires de justification et l\'appréciation générale ont été pré-remplis. Vous pouvez les ajuster manuellement avant d\'enregistrer.');
+      // Enregistrement automatique immédiat de la copie corrigée
+      const updatedAnswers = activeSubmission.answers.map(ans => {
+        const comment = newComments[`${ans.criterion}_${ans.exerciseIndex}`] || ans.teacherComment || '';
+        const critScore = aiResult.criteriaScores[ans.criterion];
+        return {
+          ...ans,
+          teacherComment: comment,
+          score: critScore !== undefined ? critScore : ans.score,
+        };
+      });
+
+      const total = Object.values(aiResult.criteriaScores).reduce((sum, v) => sum + (Number(v) || 0), 0);
+
+      const graded = await gradeSubmission(activeSubmission.id, {
+        criteriaScores: aiResult.criteriaScores,
+        totalScore: total,
+        overallFeedback: feedbackText,
+        answers: updatedAnswers,
+        gradedBy: currentUser?.displayName || selectedEvaluation.teacherName || 'Enseignant (IA)',
+      });
+
+      setActiveSubmission(graded);
+      setSubmissions(prev => {
+        const next = prev.map(s => (s.id === graded.id ? graded : s));
+        if (selectedEvaluation?.id) {
+          setAllSubmissionsMap(m => ({ ...m, [selectedEvaluation.id]: next }));
+        }
+        return next;
+      });
+
+      // Transmission automatique de la note et de l'appréciation vers le Livret Scolaire de l'élève
+      await syncEvaluationGradeToStudentBooklet(
+        selectedEvaluation,
+        graded,
+        currentUser?.displayName || selectedEvaluation.teacherName || 'Enseignant'
+      );
+
+      setSaveGradeSuccess(true);
+      setTimeout(() => setSaveGradeSuccess(false), 6000);
     } catch (err: any) {
       alert(`Erreur correction IA : ${err.message || 'Impossible de joindre le service d\'IA'}`);
     } finally {
@@ -1423,7 +1462,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     }
   };
 
-  // ── ENREGISTRER LA CORRECTION (MANUELLE OU VALIDÉE) ─────────────────────────
+  // ── ENREGISTRER LA CORRECTION (MANUELLE OU VALIDÉE) + TRANSMISSION AU LIVRET ─────────────────────────
   const handleSaveGrading = async () => {
     if (!activeSubmission) return;
 
@@ -1459,8 +1498,18 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         }
         return next;
       });
+
+      // Transmission automatique vers le Livret Scolaire de l'élève
+      if (selectedEvaluation) {
+        await syncEvaluationGradeToStudentBooklet(
+          selectedEvaluation,
+          graded,
+          currentUser?.displayName || selectedEvaluation.teacherName || 'Enseignant'
+        );
+      }
+
       setSaveGradeSuccess(true);
-      setTimeout(() => setSaveGradeSuccess(false), 3000);
+      setTimeout(() => setSaveGradeSuccess(false), 5000);
     } catch (err: any) {
       alert(`Erreur enregistrement note : ${err.message || 'Veuillez réessayer'}`);
     } finally {
@@ -3027,8 +3076,8 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
               <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
                 <div className="text-xs">
                   {saveGradeSuccess && (
-                    <span className="flex items-center gap-1.5 text-green-600 font-bold">
-                      <CheckCircle size={15} /> Correction enregistrée avec succès !
+                    <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl font-bold shadow-2xs">
+                      <CheckCircle size={15} className="text-emerald-600" /> Correction enregistrée automatiquement & Note transmise au Livret Scolaire !
                     </span>
                   )}
                 </div>

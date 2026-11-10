@@ -1,4 +1,4 @@
-import { AssessmentData, AssessmentExercise, AssessmentSubQuestion, UnitPlan } from '../types';
+import { AssessmentData, AssessmentExercise, AssessmentSubQuestion, InteractiveExerciseModule, UnitPlan } from '../types';
 import {
   stripHtmlTags,
   detectAndAttachEducationalDiagram,
@@ -221,9 +221,60 @@ function convertMarkdownInlineToHtml(text: string): string {
 }
 
 /**
+ * Met automatiquement en gras (<strong>) tous les verbes d'action et mots-clés de consigne IB MYP
+ * (français et anglais) lorsqu'ils ne sont pas déjà à l'intérieur d'une balise <strong> ou <b>.
+ */
+function highlightCommandTermsInHtml(html: string): string {
+  if (!html) return '';
+  const COMMAND_TERMS_PATTERN = new RegExp(
+    '(^|[\\s(>«"\\\'•\\-:\\.;!?])(' +
+      'En\\s+d[ée]duire|Vrai\\s+ou\\s+Faux|Vrai\\s*\\/\\s*Faux|True\\s+or\\s+False|True\\s*\\/\\s*False|' +
+      'Calculer|Calculez|Calcule|D[ée]terminer|D[ée]terminez|D[ée]termine|Justifier|Justifiez|Justifie|' +
+      'Expliquer|Expliquez|Explique|Analyser|Analysez|Analyse|Comparer|Comparez|Compare|' +
+      'D[ée]crire|D[ée]crivez|D[ée]cris|Identifier|Identifiez|Identifie|D[ée]montrer|D[ée]montrez|D[ée]montre|' +
+      'Montrer|Montrez|Montre|R[ée]soudre|R[ée]solvez|R[ée]sous|D[ée]duire|D[ée]duisez|D[ée]duis|' +
+      'Interpr[ée]ter|Interpr[ée]tez|Interpr[èe]te|L[ée]gender|L[ée]gendez|L[ée]gende|Classer|Classez|Classe|' +
+      'Nommer|Nommez|Nomme|[ÉE]valuer|[ÉE]valuez|[ÉE]value|Discuter|Discutez|Discute|' +
+      'Formuler|Formulez|Formule|Tracer|Tracez|Trace|Repr[ée]senter|Repr[ée]sentez|Repr[ée]sente|' +
+      'Indiquer|Indiquez|Indique|Citer|Citez|Cite|Synth[ée]tiser|Synth[ée]tisez|Synth[ée]tise|' +
+      'Argumenter|Argumentez|Argumente|V[ée]rifier|V[ée]rifiez|V[ée]rifie|Compl[ée]ter|Compl[ée]tez|Compl[èe]te|' +
+      'Associer|Associez|Associe|Cocher|Cochez|Coche|Relier|Reliez|Relie|Placer|Placez|Place|' +
+      'D[ée]finir|D[ée]finissez|D[ée]finis|R[ée]diger|R[ée]digez|R[ée]dige|Proposer|Proposez|Propose|' +
+      'Pr[ée]ciser|Pr[ée]cisez|Pr[ée]cise|Exprimer|Exprimez|Exprime|Construire|Construisez|Construis|' +
+      'Simplifier|Simplifiez|Factoriser|Factorisez|D[ée]velopper|D[ée]veloppez|Mesurer|Mesurez|' +
+      'Calculate|Determine|Justify|Explain|Analyze|Analyse|Compare|Contrast|Describe|Identify|' +
+      'Demonstrate|Solve|Deduce|Interpret|Label|Classify|State|Evaluate|Discuss|Formulate|' +
+      'Plot|Sketch|Draw|Outline|Summarize|Summarise|Argue|Verify|Complete|Match|Select|Define' +
+    ')(?=[\\s.,;:!?)»"\\\'<]|$)',
+    'gi'
+  );
+
+  const tokens = html.split(/(<[^>]+>)/g);
+  let boldDepth = 0;
+
+  return tokens
+    .map(token => {
+      if (token.startsWith('<')) {
+        if (/^<(?:strong|b|th|code)\b/i.test(token) && !/\/>$/.test(token)) {
+          boldDepth++;
+        } else if (/^<\/(?:strong|b|th|code)\b/i.test(token)) {
+          boldDepth = Math.max(0, boldDepth - 1);
+        }
+        return token;
+      }
+      if (boldDepth > 0 || !token.trim()) {
+        return token;
+      }
+      return token.replace(COMMAND_TERMS_PATTERN, '$1<strong>$2</strong>');
+    })
+    .join('');
+}
+
+/**
  * Nettoie, structure et sécurise le format HTML professionnel généré par l'IA ou saisi par l'enseignant.
  * Conserve et valorise les balises sémantiques valides (<p>, <strong>, <b>, <em>, <i>, <ul>, <ol>, <li>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <br>, <code>, <blockquote>).
- * Convertit systématiquement le Markdown (**gras**, *italique*, ###, tableaux) en HTML propre sans aucun symbole brut.
+ * Convertit systématiquement le Markdown (**gras**, *italique*, ###, tableaux) en HTML propre sans aucun symbole brut,
+ * et met automatiquement les mots-clés de consigne (verbes d'action IB) en gras.
  */
 export function formatProfessionalHtml(content?: string): string {
   if (!content) return '';
@@ -264,7 +315,7 @@ export function formatProfessionalHtml(content?: string): string {
 
   // Mise en valeur automatique des intitulés structurants s'ils ne sont pas déjà en gras
   str = str.replace(
-    /(^|<p>|<br\s*\/?>|\n)\s*(Mise en situation|Contexte|Consigne|Instructions?|Données|Document(?:\s+\d+)?| Hypothèse| Problématique|Rappel)\s*:/gi,
+    /(^|<p>|<br\s*\/?>|\n)\s*(Mise en situation|Contexte|Consigne|Instructions?|Données|Document(?:\s+\d+)?|Hypothèse|Problématique|Rappel|Affirmation)\s*:/gi,
     '$1<strong>$2 :</strong>'
   );
 
@@ -290,6 +341,9 @@ export function formatProfessionalHtml(content?: string): string {
       str = `<p>${str}</p>`;
     }
   }
+
+  // Mettre automatiquement en gras les mots-clés de consigne IB (Calculer, Justifier, Expliquer, Déterminer...)
+  str = highlightCommandTermsInHtml(str);
 
   return str.trim();
 }
@@ -674,7 +728,7 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
         );
       }
 
-      return validated;
+      return autoEnrichAssessmentsWithLabelsAndTrueFalse(validated, subject, unitTitle);
     }
     return sanitizeAndFormatLocalAssessments(filteredExisting, subject, unitTitle, gradeLevel);
   } catch (error) {
@@ -683,10 +737,387 @@ Retourne UNIQUEMENT un tableau JSON valide [ { ... }, { ... } ] où chaque élé
   }
 }
 
+function isTrueFalseQuestionText(text: string): boolean {
+  const plain = stripHtmlTags(text || '');
+  return /\b(vrai\s+ou\s+faux|vrai\s*\/\s*faux|true\s+or\s+false|true\s*\/\s*false|affirmation\s+(?:suivante\s+)?est\s+vraie\s+ou\s+fausse|indiquer\s+si\s+l'affirmation|r[ée]pondre\s+par\s+vrai\s+ou\s+faux)\b/i.test(plain);
+}
+
+function needsDragLabelsActivity(text: string): boolean {
+  const plain = stripHtmlTags(text || '');
+  return /\b(l[ée]gender|l[ée]gendez|[ée]tiquette|[ée]tiquettes|associer|associez|relier|reliez|replacer\s+les\s+(?:termes|[ée]tiquettes)|compl[ée]ter\s+le\s+sch[ée]ma|placer\s+sur\s+(?:la\s+figure|le\s+sch[ée]ma)|label\s+the|match\s+the|drag\s+and\s+drop|place\s+the\s+labels)\b/i.test(plain);
+}
+
+/**
+ * Construit un module d'étiquettes interactives (drag_labels) contextualisé à l'exercice, la matière et l'unité.
+ */
+export function buildContextualDragLabelsModule(
+  ex: AssessmentExercise,
+  subject: string = '',
+  unitTitle: string = ''
+): InteractiveExerciseModule {
+  const isEn = isLanguageAcquisitionSubject(subject) || /english|anglais|acquisition/i.test(subject);
+  const s = (subject || '').toLowerCase();
+  const fullText = stripHtmlTags(`${ex.title || ''} ${ex.content || ''} ${ex.answer || ''} ${unitTitle || ''}`);
+
+  // Extraire les termes en gras de l'énoncé ou du corrigé s'ils existent
+  const boldMatches = Array.from(
+    `${ex.content || ''} ${ex.answer || ''}`.matchAll(/<(?:strong|b)>([^<]{3,38})<\/(?:strong|b)>/gi)
+  )
+    .map(m => stripHtmlTags(m[1]).replace(/[:.;!?]+$/, '').trim())
+    .filter(
+      w =>
+        w.length >= 3 &&
+        w.length <= 36 &&
+        !/^(mise en situation|contexte|consigne|instructions?|données|document|rappel|affirmation|calculer|déterminer|justifier|expliquer|identifier|analyser|comparer|décrire|vrai ou faux|true or false)$/i.test(w)
+    );
+
+  const uniqueTerms = Array.from(new Set(boldMatches)).slice(0, 4);
+
+  if (uniqueTerms.length >= 3) {
+    return {
+      type: 'drag_labels',
+      title: isEn ? 'Interactive Concept & Label Matching' : 'Étiquettes des notions clés à associer',
+      instructions: isEn
+        ? 'Click or drag each key term label to its corresponding analytical step or definition below.'
+        : 'Glissez-déposez chaque étiquette (ou cliquez sur une étiquette puis sur l\'emplacement correspondant) pour structurer votre réponse.',
+      labels: uniqueTerms,
+      dropZones: uniqueTerms.slice(0, 3).map((term, idx) => ({
+        id: `zone_${idx + 1}`,
+        prompt: isEn
+          ? `${idx + 1}. Key element #${idx + 1} identified in this task`
+          : `${idx + 1}. Notion ou étape clé n°${idx + 1} mobilisée dans l'exercice`,
+        correctLabel: term,
+      })),
+    };
+  }
+
+  if (s.includes('math')) {
+    const isGeo = /triangle|cercle|angle|vecteur|droite|segment|pythagore|thal[èe]s|figure/i.test(fullText);
+    const labels = isGeo
+      ? ['Hypoténuse / Segment principal', 'Relation géométrique (Théorème)', 'Calcul de la longueur / angle', 'Conclusion avec unité']
+      : ['Données & Inconnue (x)', 'Formule / Équation mathématique', 'Développement & Calcul', 'Résultat final vérifié'];
+    return {
+      type: 'drag_labels',
+      title: 'Étiquettes méthodologiques & Repères à associer',
+      instructions: 'Associez chaque étiquette à l\'étape correspondante de la résolution mathématique :',
+      labels,
+      dropZones: [
+        { id: 'zone_1', prompt: '1. Identification des données de départ sur la figure / l\'énoncé', correctLabel: labels[0] },
+        { id: 'zone_2', prompt: '2. Propriété, théorème ou modèle algébrique appliqué', correctLabel: labels[1] },
+        { id: 'zone_3', prompt: '3. Validation et interprétation du résultat final', correctLabel: labels[3] },
+      ],
+    };
+  }
+
+  if (s.includes('science') || s.includes('physique') || s.includes('chimie') || s.includes('biologie') || s.includes('svt')) {
+    const labels = ['Variable indépendante (Cause)', 'Variable dépendante (Effet mesuré)', 'Hypothèse scientifique testable', 'Interprétation & Conclusion'];
+    return {
+      type: 'drag_labels',
+      title: 'Étiquettes scientifiques à placer et associer',
+      instructions: 'Glissez ou cliquez sur chaque étiquette scientifique pour l\'associer au bon repère de l\'étude :',
+      labels,
+      dropZones: [
+        { id: 'zone_1', prompt: '1. Facteur modifié ou contrôlé lors de l\'observation / expérience', correctLabel: labels[0] },
+        { id: 'zone_2', prompt: '2. Grandeur mesurée ou phénomène observé sur le graphique / document', correctLabel: labels[1] },
+        { id: 'zone_3', prompt: '3. Validation expérimentale et conclusion scientifique', correctLabel: labels[3] },
+      ],
+    };
+  }
+
+  if (s.includes('individu') || s.includes('soci') || s.includes('histoire') || s.includes('géo') || s.includes('éco')) {
+    const labels = ['Facteur historique / spatial', 'Acteurs & Enjeux économiques/sociaux', 'Conséquence à court et long terme', 'Synthèse argumentée'];
+    return {
+      type: 'drag_labels',
+      title: 'Étiquettes d\'analyse documentaire (Individus et Sociétés)',
+      instructions: 'Associez chaque étiquette au repère d\'analyse correspondant :',
+      labels,
+      dropZones: [
+        { id: 'zone_1', prompt: '1. Origine ou contexte spatiotemporel du document étudié', correctLabel: labels[0] },
+        { id: 'zone_2', prompt: '2. Dynamique principale et acteurs impliqués', correctLabel: labels[1] },
+        { id: 'zone_3', prompt: '3. Impact global et mise en perspective', correctLabel: labels[2] },
+      ],
+    };
+  }
+
+  const labels = isEn
+    ? ['Main Concept / Thesis', 'Supporting Evidence from Text', 'Critical Analysis & Structure', 'justified Conclusion']
+    : ['Idée directrice / Concept clé', 'Indice ou procédé relevé dans le support', 'Interprétation & Mise en relation', 'Bilan synthétique justifié'];
+  return {
+    type: 'drag_labels',
+    title: isEn ? 'Interactive Labels to Match' : 'Étiquettes de repérage et d\'analyse à associer',
+    instructions: isEn
+      ? 'Click or drag each label to match it with the corresponding analytical prompt below.'
+      : 'Glissez ou cliquez sur chaque étiquette pour la placer face au repère correspondant :',
+    labels,
+    dropZones: [
+      { id: 'zone_1', prompt: isEn ? '1. Primary element identified in the stimulus' : '1. Premier repère identifié dans le support d\'étude', correctLabel: labels[0] },
+      { id: 'zone_2', prompt: isEn ? '2. Textual or visual evidence supporting the analysis' : '2. Justification ou indice précis tiré de l\'énoncé', correctLabel: labels[1] },
+      { id: 'zone_3', prompt: isEn ? '3. Synthesis and reasoned interpretation' : '3. Interprétation globale et conclusion', correctLabel: labels[3] },
+    ],
+  };
+}
+
+/**
+ * Structure automatiquement un exercice :
+ * 1. Sépare proprement la mise en situation / le document support (`content`) des sous-questions (`subQuestions` 1), 2), a), b))
+ *    afin d'éviter toute répétition des questions dans l'encadré d'énoncé et de bien mettre chaque question et sous-question en place.
+ * 2. Détecte automatiquement les questions Vrai/Faux (`true_false`) et les activités d'étiquettes (`drag_labels`).
+ */
+export function autoStructureExerciseAndInteractiveTypes(
+  ex: AssessmentExercise,
+  criterionLetter: string,
+  strands: string[] = [],
+  subject: string = '',
+  unitTitle: string = '',
+  exIdx: number = 0
+): AssessmentExercise {
+  const isEn = isLanguageAcquisitionSubject(subject) || /english|anglais|acquisition/i.test(subject);
+  const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v'];
+
+  const resolveStrandMeta = (idx: number, explicitRoman?: string, explicitText?: string) => {
+    const r = (explicitRoman || romanNumerals[idx % romanNumerals.length] || 'i').toLowerCase();
+    const matched = (strands || []).find(
+      s => s.toLowerCase().trim().startsWith(`${r}.`) || s.toLowerCase().trim().startsWith(`${r})`)
+    );
+    const desc = stripHtmlTags(matched ? matched.replace(/^[ivx]+[\.\)]\s*/i, '') : explicitText || '');
+    return { strandIndex: r, strandText: desc };
+  };
+
+  let rawContent = ex.content || '';
+  let subQuestions: AssessmentSubQuestion[] | undefined =
+    Array.isArray(ex.subQuestions) && ex.subQuestions.length > 0
+      ? ex.subQuestions.map((sq, sqIdx) => {
+          const meta = resolveStrandMeta(sqIdx, sq.strandIndex, sq.strandText);
+          const formattedSqContent = formatProfessionalHtml(sq.content || '');
+          const detectedType = isTrueFalseQuestionText(formattedSqContent) ? 'true_false' : (sq.type || 'open');
+          return {
+            ...sq,
+            id: sq.id || `sub_${sqIdx + 1}`,
+            label: stripHtmlTags(sq.label || `${sqIdx + 1})`),
+            content: formattedSqContent,
+            strandIndex: meta.strandIndex,
+            strandText: meta.strandText,
+            type: detectedType,
+            options: sq.options ? sq.options.map(o => stripHtmlTags(o)) : undefined,
+          };
+        })
+      : undefined;
+
+  // Convertir le HTML en lignes logiques pour détecter des sous-questions intégrées 1), 2), a), b)
+  const textWithLineBreaks = rawContent
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/div>/gi, '\n');
+  const rawLines = textWithLineBreaks
+    .split('\n')
+    .map(l => stripHtmlTags(l).trim())
+    .filter(Boolean);
+
+  const subQRegex = /^(?:question\s*\d+\s*[:\.\-\)]|\d+[\)\.]|[a-d][\)\.])\s+(.+)/i;
+
+  if (!subQuestions || subQuestions.length === 0) {
+    // Vérifier si l'énoncé contient au moins 2 sous-questions numérotées/lettrées (ex: 1) ... 2) ... ou a) ... b) ...)
+    const matchingLines = rawLines.filter(l => subQRegex.test(l));
+    if (matchingLines.length >= 2) {
+      const introLines: string[] = [];
+      const extracted: { label: string; text: string }[] = [];
+
+      for (const line of rawLines) {
+        const m = line.match(/^((?:question\s*\d+\s*[:\.\-\)]|\d+[\)\.]|[a-d][\)\.]))\s+(.+)/i);
+        if (m) {
+          const cleanLabel = m[1].replace(/\s+/g, ' ').trim();
+          extracted.push({
+            label: cleanLabel.endsWith(')') || cleanLabel.endsWith('.') || cleanLabel.endsWith(':') ? cleanLabel : `${cleanLabel})`,
+            text: m[2].trim(),
+          });
+        } else if (extracted.length === 0) {
+          introLines.push(line);
+        } else {
+          // Rattaché à la sous-question précédente
+          extracted[extracted.length - 1].text += ` ${line}`;
+        }
+      }
+
+      if (extracted.length >= 2) {
+        subQuestions = extracted.map((item, sIdx) => {
+          const meta = resolveStrandMeta(sIdx);
+          const formattedQ = formatProfessionalHtml(item.text);
+          return {
+            id: `sub_${sIdx + 1}`,
+            label: item.label,
+            content: formattedQ,
+            strandIndex: meta.strandIndex,
+            strandText: meta.strandText,
+            type: isTrueFalseQuestionText(formattedQ) ? 'true_false' : 'open',
+          };
+        });
+
+        rawContent =
+          introLines.length > 0
+            ? introLines.join('\n\n')
+            : isEn
+            ? `<p><strong>Instructions:</strong> <strong>Analyze</strong> the context and <strong>answer</strong> each sub-question below methodically.</p>`
+            : `<p><strong>Consigne :</strong> <strong>Analyser</strong> les données de l'exercice et <strong>répondre</strong> méthodiquement aux sous-questions ci-dessous.</p>`;
+      }
+    }
+  } else {
+    // Si subQuestions existe déjà, nettoyer `rawContent` pour retirer les lignes 1) ... 2) ... dupliquées
+    const filteredIntroLines = rawLines.filter(line => !subQRegex.test(line));
+    if (filteredIntroLines.length > 0 && filteredIntroLines.length < rawLines.length) {
+      rawContent = filteredIntroLines.join('\n\n');
+    }
+  }
+
+  const formattedContent = formatProfessionalHtml(rawContent);
+  const allSubText = (subQuestions || []).map(sq => sq.content).join(' ');
+  const combinedText = `${ex.title || ''} ${formattedContent} ${allSubText}`;
+
+  const detectedMainType =
+    (!subQuestions || subQuestions.length === 0) && isTrueFalseQuestionText(formattedContent)
+      ? 'true_false'
+      : ex.type || 'open';
+
+  let interactiveModule = ex.interactiveModule;
+  if (!interactiveModule && needsDragLabelsActivity(combinedText)) {
+    interactiveModule = buildContextualDragLabelsModule(
+      { ...ex, content: formattedContent, subQuestions },
+      subject,
+      unitTitle
+    );
+  }
+
+  const mainStrandMeta = resolveStrandMeta(exIdx, ex.strandIndex, ex.strandText);
+
+  return {
+    ...ex,
+    content: formattedContent,
+    strandIndex: mainStrandMeta.strandIndex,
+    strandText: mainStrandMeta.strandText,
+    type: detectedMainType,
+    interactiveModule,
+    subQuestions,
+  };
+}
+
+/**
+ * Enrichit automatiquement l'évaluation lorsque cela est nécessaire :
+ * - Garantit que les exercices qui demandent de légender/associer/classer (ou le 1er exercice de connaissances si aucun n'existe)
+ *   disposent d'étiquettes mobiles interactives (`drag_labels`) si pertinent.
+ * - Garantit la présence d'au moins une question/sous-question interactive Vrai / Faux (`true_false`) si l'évaluation n'en comporte aucune.
+ */
+export function autoEnrichAssessmentsWithLabelsAndTrueFalse(
+  assessments: AssessmentData[],
+  subject: string = '',
+  unitTitle: string = ''
+): AssessmentData[] {
+  if (!Array.isArray(assessments) || assessments.length === 0) return assessments;
+  const isEn = isLanguageAcquisitionSubject(subject) || /english|anglais|acquisition/i.test(subject);
+
+  // 1. Structurer chaque exercice individuellement
+  const structured = assessments.map(crit => ({
+    ...crit,
+    exercises: (crit.exercises || []).map((ex, exIdx) =>
+      autoStructureExerciseAndInteractiveTypes(ex, crit.criterion, crit.strands || [], subject, unitTitle, exIdx)
+    ),
+  }));
+
+  // 2. Vérifier si l'évaluation possède déjà une question Vrai/Faux et un module d'étiquettes
+  let hasAnyTrueFalse = false;
+  let hasAnyDragLabels = false;
+
+  structured.forEach(crit => {
+    (crit.exercises || []).forEach(ex => {
+      if (ex.type === 'true_false') hasAnyTrueFalse = true;
+      if (ex.interactiveModule?.type === 'drag_labels') hasAnyDragLabels = true;
+      (ex.subQuestions || []).forEach(sq => {
+        if (sq.type === 'true_false') hasAnyTrueFalse = true;
+      });
+    });
+  });
+
+  // 3. Si aucun module d'étiquettes n'est présent, en attacher un sur l'exercice le plus adapté (avec figure/schéma ou Critère A Ex 1)
+  if (!hasAnyDragLabels && structured[0]?.exercises?.length > 0) {
+    let targetCritIdx = 0;
+    let targetExIdx = 0;
+    for (let c = 0; c < structured.length; c++) {
+      const foundIdx = (structured[c].exercises || []).findIndex(e => Boolean(e.imageUrl) && !e.interactiveModule);
+      if (foundIdx !== -1) {
+        targetCritIdx = c;
+        targetExIdx = foundIdx;
+        break;
+      }
+    }
+    const targetEx = structured[targetCritIdx].exercises[targetExIdx];
+    if (targetEx && !targetEx.interactiveModule) {
+      targetEx.interactiveModule = buildContextualDragLabelsModule(targetEx, subject, unitTitle);
+    }
+  }
+
+  // 4. Si aucune question Vrai/Faux n'est présente dans toute l'évaluation, ajouter une sous-question de vérification Vrai/Faux
+  if (!hasAnyTrueFalse && structured[0]?.exercises?.length > 0) {
+    const firstCrit = structured[0];
+    const targetEx = firstCrit.exercises[0];
+    if (targetEx) {
+      const existingSubs = Array.isArray(targetEx.subQuestions) ? [...targetEx.subQuestions] : [];
+      const alreadyHasAutoTf = existingSubs.some(sq => sq.id === 'sub_tf_verif' || sq.type === 'true_false');
+      if (!alreadyHasAutoTf) {
+        const tfContent = isEn
+          ? formatProfessionalHtml(
+              `<p><strong>True or False:</strong> Based on the concepts studied in "${unitTitle || targetEx.title || subject}", <strong>identify</strong> whether the main statement/hypothesis presented in this task is true or false, and <strong>justify</strong> your answer in one sentence.</p>`
+            )
+          : formatProfessionalHtml(
+              `<p><strong>Vrai ou Faux :</strong> D'après les notions étudiées dans « ${unitTitle || targetEx.title || subject} », <strong>indiquer</strong> si l'affirmation ou propriété principale mobilisée dans cet exercice est exacte (Vrai) ou erronée (Faux), puis <strong>justifier</strong> brièvement.</p>`
+            );
+
+        if (existingSubs.length > 0) {
+          existingSubs.push({
+            id: 'sub_tf_verif',
+            label: `${existingSubs.length + 1})`,
+            content: tfContent,
+            strandIndex: existingSubs[existingSubs.length - 1]?.strandIndex || 'ii',
+            strandText: existingSubs[existingSubs.length - 1]?.strandText || '',
+            type: 'true_false',
+          });
+          targetEx.subQuestions = existingSubs;
+        } else if (targetEx.type === 'open') {
+          // Transformer l'exercice en 2 sous-questions structurées : 1) Question principale + 2) Vrai/Faux de vérification
+          const firstStrand = (firstCrit.strands || [])[0]?.replace(/^[ivx]+[\.\)]\s*/i, '') || '';
+          const secondStrand = (firstCrit.strands || [])[1]?.replace(/^[ivx]+[\.\)]\s*/i, '') || firstStrand;
+          targetEx.subQuestions = [
+            {
+              id: 'sub_1',
+              label: '1)',
+              content: targetEx.content,
+              strandIndex: targetEx.strandIndex || 'i',
+              strandText: targetEx.strandText || firstStrand,
+              type: 'open',
+            },
+            {
+              id: 'sub_tf_verif',
+              label: '2)',
+              content: tfContent,
+              strandIndex: 'ii',
+              strandText: secondStrand,
+              type: 'true_false',
+            },
+          ];
+          targetEx.content = isEn
+            ? formatProfessionalHtml(`<p><strong>Context:</strong> Study the task elements below and <strong>complete</strong> both questions in order.</p>`)
+            : formatProfessionalHtml(`<p><strong>Mise en situation :</strong> Prenez connaissance des éléments de l'exercice ci-dessous et <strong>répondez</strong> aux questions dans l'ordre.</p>`);
+        }
+      }
+    }
+  }
+
+  return structured;
+}
+
 /**
  * Nettoyage et formatage local de sécurité :
  * Élimine les doublons exacts, applique le format HTML soigné sans aucun symbole **,
- * respecte les objectifs spécifiques IB sauvegardés par les enseignants,
+ * met en gras tous les mots-clés de consigne, structure automatiquement les questions et sous-questions,
+ * ajoute automatiquement les questions d'étiquettes et Vrai/Faux si besoin,
  * et ne conserve/génère des visuels QUE pour les exercices de courbe, figure, diagramme, légende ou art.
  */
 export function sanitizeAndFormatLocalAssessments(
@@ -698,7 +1129,7 @@ export function sanitizeAndFormatLocalAssessments(
   const isEn = isLanguageAcquisitionSubject(subject) || /english|anglais|acquisition/i.test(subject);
   const savedCriteriaConfig = gradeLevel ? getCriteriaSync(subject, gradeLevel) : null;
 
-  return assessments.map(crit => {
+  const cleanedCriteria = assessments.map(crit => {
     const savedCrit = savedCriteriaConfig?.criteria?.find(c => c.criterion === crit.criterion);
     const officialCriterionName = stripHtmlTags(savedCrit?.criterionName || crit.criterionName || (isEn ? `Criterion ${crit.criterion}` : `Critère ${crit.criterion}`));
     const officialStrands = (savedCrit?.strands?.length ? [...savedCrit.strands] : crit.strands || []).map(s => stripHtmlTags(s));
@@ -780,5 +1211,7 @@ export function sanitizeAndFormatLocalAssessments(
       exercises: uniqueExercises,
     };
   });
+
+  return autoEnrichAssessmentsWithLabelsAndTrueFalse(cleanedCriteria, subject, unitTitle);
 }
 

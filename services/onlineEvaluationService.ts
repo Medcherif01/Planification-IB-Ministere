@@ -1,6 +1,6 @@
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentData } from '../types';
 import { sanitizeExerciseVisualsForDisplay, stripHtmlTags } from './educationalDiagramService';
-import { formatProfessionalHtml } from './evaluationAiOptimizerService';
+import { formatProfessionalHtml, autoEnrichAssessmentsWithLabelsAndTrueFalse } from './evaluationAiOptimizerService';
 
 const API_BASE = '/api/online-evaluations';
 const LOCAL_STORAGE_EVALS_KEY = 'ib_online_evaluations_cache';
@@ -10,7 +10,8 @@ const LOCAL_STORAGE_SUBS_KEY = 'ib_online_submissions_cache';
  * Normalise une évaluation pour garantir :
  * 1) Aucune photo décorative ou hors-sujet : seuls les exercices nécessitant une courbe (Maths, IS, Éco, Sciences),
  *    une figure géométrique, un diagramme, un schéma à légender ou une œuvre d'art conservent/reçoivent leur visuel exact.
- * 2) Un HTML propre et structuré sans aucun symbole Markdown brut (**gras**, ###, etc.).
+ * 2) Un HTML propre et structuré sans aucun symbole Markdown brut (**gras**, ###, etc.), avec les mots-clés de consigne en gras.
+ * 3) Les questions et sous-questions 1), 2), 3) parfaitement séparées et structurées + ajout automatique d'étiquettes et Vrai/Faux si besoin.
  */
 export function normalizeEvaluationForCleanDisplay(evalItem: OnlineEvaluation): OnlineEvaluation {
   if (!evalItem) return evalItem;
@@ -57,12 +58,14 @@ export function normalizeEvaluationForCleanDisplay(evalItem: OnlineEvaluation): 
     }),
   }));
 
+  const structuredAssessments = autoEnrichAssessmentsWithLabelsAndTrueFalse(cleanAssessments, subject, unitTitle);
+
   return {
     ...evalItem,
     title: stripHtmlTags(evalItem.title || ''),
     unitTitle: evalItem.unitTitle ? stripHtmlTags(evalItem.unitTitle) : undefined,
     statementOfInquiry: evalItem.statementOfInquiry ? stripHtmlTags(evalItem.statementOfInquiry) : undefined,
-    assessments: cleanAssessments,
+    assessments: structuredAssessments,
   };
 }
 

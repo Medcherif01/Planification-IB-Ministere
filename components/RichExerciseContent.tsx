@@ -26,8 +26,8 @@ export const RichExerciseContent: React.FC<RichExerciseContentProps> = ({
     <div
       className={`rich-exercise-html leading-relaxed text-slate-800 text-sm sm:text-base space-y-2.5 font-normal
         [&_p]:mb-2.5 [&_p:last-child]:mb-0
-        [&_strong]:font-black [&_strong]:text-slate-900
-        [&_b]:font-black [&_b]:text-slate-900
+        [&_strong]:font-extrabold [&_strong]:text-indigo-950
+        [&_b]:font-extrabold [&_b]:text-indigo-950
         [&_em]:italic [&_em]:text-slate-700
         [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-2.5 [&_ul]:space-y-1.5
         [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:my-2.5 [&_ol]:space-y-1.5
