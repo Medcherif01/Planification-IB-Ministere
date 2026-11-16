@@ -1,4 +1,4 @@
-import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentData } from '../types';
+import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentData, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { sanitizeExerciseVisualsForDisplay, stripHtmlTags } from './educationalDiagramService';
 import { formatProfessionalHtml, autoEnrichAssessmentsWithLabelsAndTrueFalse } from './evaluationAiOptimizerService';
 
@@ -7,13 +7,209 @@ const LOCAL_STORAGE_EVALS_KEY = 'ib_online_evaluations_cache';
 const LOCAL_STORAGE_SUBS_KEY = 'ib_online_submissions_cache';
 
 /**
+ * Résout de manière ultra-résiliente la réponse d'un élève pour un exercice donné,
+ * même si l'évaluation a été réorganisée, si les identifiants de sous-questions ont changé
+ * ou si la réponse a été enregistrée dans studentResponse vs subAnswers.
+ */
+export function resolveStudentAnswerForExercise(
+  submission: StudentSubmission | null | undefined,
+  criterionLetter: string,
+  exerciseIndex: number,
+  exerciseTitle?: string,
+  globalFlatIndex?: number
+): StudentAnswer | undefined {
+  if (!submission || !Array.isArray(submission.answers) || submission.answers.length === 0) {
+    return undefined;
+  }
+
+  const answers = submission.answers.filter(Boolean);
+  const critUpper = String(criterionLetter || '').trim().toUpperCase();
+  const normTitle = (t?: string) =>
+    stripHtmlTags(String(t || ''))
+      .toLowerCase()
+      .replace(/[^a-z0-9àâçéèêëîïôûùüÿñæœ]+/gi, ' ')
+      .trim();
+  const targetTitle = normTitle(exerciseTitle);
+
+  // 1. Correspondance exacte (critère + exerciseIndex)
+  let found = answers.find(
+    a => String(a.criterion || '').trim().toUpperCase() === critUpper && Number(a.exerciseIndex) === Number(exerciseIndex)
+  );
+
+  // 2. Correspondance par critère + titre d'exercice
+  if (!found && targetTitle) {
+    found = answers.find(
+      a => String(a.criterion || '').trim().toUpperCase() === critUpper && normTitle(a.exerciseTitle) === targetTitle
+    );
+  }
+
+  // 3. Correspondance par position au sein du même critère
+  if (!found) {
+    const sameCritAnswers = answers.filter(a => String(a.criterion || '').trim().toUpperCase() === critUpper);
+    if (sameCritAnswers[exerciseIndex]) {
+      found = sameCritAnswers[exerciseIndex];
+    }
+  }
+
+  // 4. Correspondance par titre d'exercice global
+  if (!found && targetTitle) {
+    found = answers.find(a => normTitle(a.exerciseTitle) === targetTitle);
+  }
+
+  // 5. Repli par index global si le nombre total de questions correspond
+  if (!found && typeof globalFlatIndex === 'number' && answers[globalFlatIndex]) {
+    found = answers[globalFlatIndex];
+  }
+
+  return found;
+}
+
+/**
+ * Extrait le texte complet de la réponse d'un élève pour un exercice (combinant studentResponse,
+ * les champs alternatifs éventuels et les sous-questions subAnswers).
+ */
+export function resolveMainExerciseResponseText(ans: StudentAnswer | null | undefined, exercise?: AssessmentExercise): string {
+  if (!ans) return '';
+  const rawAny = ans as any;
+  const directCandidates = [
+    ans.studentResponse,
+    rawAny.response,
+    rawAny.answer,
+    rawAny.text,
+    rawAny.value,
+    rawAny.selectedOption,
+  ];
+
+  let mainText = '';
+  for (const cand of directCandidates) {
+    if (typeof cand === 'string' && cand.trim() && cand.trim() !== '(Sans réponse)' && cand.trim() !== '(Aucune réponse fournie)') {
+      mainText = cand.trim();
+      break;
+    }
+  }
+
+  // Extraire aussi les réponses des sous-questions si présentes
+  if (ans.subAnswers && typeof ans.subAnswers === 'object') {
+    const entries = Object.entries(ans.subAnswers);
+    const subParts: string[] = [];
+    entries.forEach(([key, val], idx) => {
+      const respStr = typeof val === 'string' ? val : (val?.response || (val as any)?.text || '');
+      const cleanResp = String(respStr || '').trim();
+      if (cleanResp) {
+        const subObj = exercise?.subQuestions?.find(sq => sq.id === key) || exercise?.subQuestions?.[idx];
+        const label = subObj?.label || `${idx + 1})`;
+        subParts.push(`${label} ${cleanResp}`);
+      }
+    });
+    if (subParts.length > 0) {
+      if (!mainText) {
+        return subParts.join('\n');
+      }
+      // Si mainText ne contient pas déjà les sous-réponses, on les combine proprement
+      const missingSubParts = subParts.filter(sp => {
+        const contentOnly = sp.replace(/^[0-9a-zA-Z]+[).]\s*/, '').trim();
+        return contentOnly && !mainText.includes(contentOnly);
+      });
+      if (missingSubParts.length > 0) {
+        return `${mainText}\n${missingSubParts.join('\n')}`.trim();
+      }
+    }
+  }
+
+  return mainText;
+}
+
+/**
+ * Extrait la réponse et le dessin éventuel d'un élève pour une sous-question spécifique,
+ * avec repli intelligent sur l'index de la sous-question ou sur studentResponse.
+ */
+export function resolveSubQuestionResponse(
+  ans: StudentAnswer | null | undefined,
+  sub: AssessmentSubQuestion,
+  subIdx: number,
+  totalSubQuestions: number
+): { response: string; drawingDataUrl?: string } {
+  if (!ans) return { response: '' };
+
+  const subId = sub.id || `sub_${subIdx + 1}`;
+  const stdId = `sub_${subIdx + 1}`;
+  const subAnswers = ans.subAnswers && typeof ans.subAnswers === 'object' ? ans.subAnswers : undefined;
+
+  if (subAnswers) {
+    // 1. Clé exacte sub.id ou clé standard sub_1, sub_2...
+    const directHit = subAnswers[subId] || subAnswers[stdId] || (sub.label ? subAnswers[sub.label] : undefined);
+    if (directHit) {
+      const text = typeof directHit === 'string' ? directHit : (directHit.response || (directHit as any).text || '');
+      if (String(text || '').trim() || directHit.drawingDataUrl) {
+        return {
+          response: String(text || '').trim(),
+          drawingDataUrl: directHit.drawingDataUrl,
+        };
+      }
+    }
+
+    // 2. Correspondance par position dans les clés de subAnswers (si les IDs ont été régénérés)
+    const keys = Object.keys(subAnswers);
+    if (keys[subIdx] && !keys.includes(subId) && !keys.includes(stdId)) {
+      const posHit = subAnswers[keys[subIdx]];
+      if (posHit) {
+        const text = typeof posHit === 'string' ? posHit : (posHit.response || (posHit as any).text || '');
+        if (String(text || '').trim() || posHit.drawingDataUrl) {
+          return {
+            response: String(text || '').trim(),
+            drawingDataUrl: posHit.drawingDataUrl,
+          };
+        }
+      }
+    }
+  }
+
+  // 3. Repli sur studentResponse si subAnswers est vide ou ne contient pas cette sous-question
+  const rawMain = String(ans.studentResponse || (ans as any).response || '').trim();
+  if (rawMain && rawMain !== '(Sans réponse)' && rawMain !== '(Aucune réponse fournie)') {
+    // Chercher un motif [1)] ..., 1) ..., a) ..., [sub_1] ...
+    const lines = rawMain.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const labelClean = String(sub.label || `${subIdx + 1})`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regexLabel = new RegExp(`^(?:\\[${labelClean}\\]|\\[sub_${subIdx + 1}\\]|${labelClean}|Q${subIdx + 1}\\s*[:.)]|${subIdx + 1}\\s*[).:-])\\s*(.+)$`, 'i');
+    for (const line of lines) {
+      const m = line.match(regexLabel);
+      if (m && m[1]?.trim()) {
+        return { response: m[1].trim(), drawingDataUrl: subIdx === 0 ? ans.drawingDataUrl : undefined };
+      }
+    }
+
+    // Si l'exercice n'avait qu'une seule question quand l'élève a répondu (subAnswers vide),
+    // afficher la réponse complète de l'élève sur la première sous-question (ou l'unique sous-question)
+    const hasAnySubAnswer = subAnswers && Object.values(subAnswers).some(v => {
+      const t = typeof v === 'string' ? v : v?.response;
+      return Boolean(String(t || '').trim() || v?.drawingDataUrl);
+    });
+    if (!hasAnySubAnswer) {
+      if (totalSubQuestions <= 1 || subIdx === 0) {
+        return { response: rawMain, drawingDataUrl: ans.drawingDataUrl };
+      }
+      // Si le nombre de lignes correspond exactement au nombre de sous-questions
+      if (lines.length === totalSubQuestions && lines[subIdx]) {
+        return { response: lines[subIdx] };
+      }
+    }
+  }
+
+  return { response: '', drawingDataUrl: (!subAnswers && subIdx === 0) ? ans.drawingDataUrl : undefined };
+}
+
+/**
  * Normalise une évaluation pour garantir :
  * 1) Aucune photo décorative ou hors-sujet : seuls les exercices nécessitant une courbe (Maths, IS, Éco, Sciences),
- *    une figure géométrique, un diagramme, un schéma à légender ou une œuvre d'art conservent/reçoivent leur visuel exact.
+ *    une figure géométrique, un diagramme, un schéma à légender ou une œuvre d'art conservent/reçoivent leur visuel exact,
+ *    SAUF si l'enseignant a explicitement attaché une image Google Drive / locale ou un document/audio/vidéo.
  * 2) Un HTML propre et structuré sans aucun symbole Markdown brut (**gras**, ###, etc.), avec les mots-clés de consigne en gras.
- * 3) Les questions et sous-questions 1), 2), 3) parfaitement séparées et structurées + ajout automatique d'étiquettes et Vrai/Faux si besoin.
+ * 3) Préserve intégralement les modifications manuelles de l'enseignant (questions, sous-questions, documents, audios, vidéos).
  */
-export function normalizeEvaluationForCleanDisplay(evalItem: OnlineEvaluation): OnlineEvaluation {
+export function normalizeEvaluationForCleanDisplay(
+  evalItem: OnlineEvaluation,
+  options?: { autoEnrich?: boolean }
+): OnlineEvaluation {
   if (!evalItem) return evalItem;
   const subject = evalItem.subject || '';
   const unitTitle = evalItem.unitTitle || evalItem.title || '';
@@ -30,21 +226,36 @@ export function normalizeEvaluationForCleanDisplay(evalItem: OnlineEvaluation): 
       const subQuestionsText = (ex.subQuestions || [])
         .map(sq => stripHtmlTags(sq.content || ''))
         .join(' ');
-      const sanitizedVisual = sanitizeExerciseVisualsForDisplay({
-        subject,
-        unitTitle,
-        exerciseTitle: ex.title || '',
-        exerciseContent: ex.content || '',
-        subQuestionsText,
-        imageUrl: ex.imageUrl,
-        imageCaption: ex.imageCaption,
-      });
+      const isTeacherCustomImage = Boolean(
+        ex.imageUrl &&
+        (ex.imageUrl.includes('drive.google.com') ||
+         ex.imageUrl.includes('googleusercontent.com') ||
+         ex.imageUrl.startsWith('data:image/') ||
+         ex.imageUrl.startsWith('/api/image-proxy'))
+      );
+      const sanitizedVisual = isTeacherCustomImage
+        ? { imageUrl: ex.imageUrl, imageCaption: ex.imageCaption }
+        : sanitizeExerciseVisualsForDisplay({
+            subject,
+            unitTitle,
+            exerciseTitle: ex.title || '',
+            exerciseContent: ex.content || '',
+            subQuestionsText,
+            imageUrl: ex.imageUrl,
+            imageCaption: ex.imageCaption,
+          });
       return {
         ...ex,
         title: stripHtmlTags(ex.title || ''),
         content: formatProfessionalHtml(ex.content || ''),
         imageUrl: sanitizedVisual.imageUrl,
         imageCaption: sanitizedVisual.imageCaption ? stripHtmlTags(sanitizedVisual.imageCaption) : undefined,
+        documentTitle: ex.documentTitle ? stripHtmlTags(ex.documentTitle) : undefined,
+        documentContent: ex.documentContent ? formatProfessionalHtml(ex.documentContent) : undefined,
+        audioUrl: ex.audioUrl ? ex.audioUrl.trim() : undefined,
+        audioCaption: ex.audioCaption ? stripHtmlTags(ex.audioCaption) : undefined,
+        videoUrl: ex.videoUrl ? ex.videoUrl.trim() : undefined,
+        videoCaption: ex.videoCaption ? stripHtmlTags(ex.videoCaption) : undefined,
         answer: ex.answer ? formatProfessionalHtml(ex.answer) : undefined,
         options: ex.options ? ex.options.map(o => stripHtmlTags(o)) : undefined,
         subQuestions: ex.subQuestions?.map(sq => ({
@@ -58,7 +269,9 @@ export function normalizeEvaluationForCleanDisplay(evalItem: OnlineEvaluation): 
     }),
   }));
 
-  const structuredAssessments = autoEnrichAssessmentsWithLabelsAndTrueFalse(cleanAssessments, subject, unitTitle);
+  const structuredAssessments = options?.autoEnrich
+    ? autoEnrichAssessmentsWithLabelsAndTrueFalse(cleanAssessments, subject, unitTitle)
+    : cleanAssessments;
 
   return {
     ...evalItem,
@@ -79,7 +292,7 @@ function getLocalEvaluations(): OnlineEvaluation[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((e): e is OnlineEvaluation => Boolean(e && typeof e === 'object' && (e.id || e.accessCode)))
-      .map(normalizeEvaluationForCleanDisplay)
+      .map(e => normalizeEvaluationForCleanDisplay(e))
       .filter((e): e is OnlineEvaluation => Boolean(e && typeof e === 'object' && (e.id || e.accessCode)));
   } catch {
     return [];
@@ -90,7 +303,7 @@ function saveLocalEvaluations(evals: OnlineEvaluation[]): void {
   try {
     const valid = (evals || [])
       .filter((e): e is OnlineEvaluation => Boolean(e && typeof e === 'object' && (e.id || e.accessCode)))
-      .map(normalizeEvaluationForCleanDisplay)
+      .map(e => normalizeEvaluationForCleanDisplay(e))
       .slice(0, 40);
     localStorage.setItem(LOCAL_STORAGE_EVALS_KEY, JSON.stringify(valid));
   } catch {}
@@ -184,7 +397,7 @@ export async function getEvaluations(filter?: {
       if (Array.isArray(data)) {
         const cleaned = data
           .filter((e): e is OnlineEvaluation => Boolean(e && typeof e === 'object' && (e.id || e.accessCode)))
-          .map(normalizeEvaluationForCleanDisplay);
+          .map(e => normalizeEvaluationForCleanDisplay(e));
         if (cleaned.length > 0) {
           saveLocalEvaluations(cleaned);
           return cleaned;

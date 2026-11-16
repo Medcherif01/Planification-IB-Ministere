@@ -1,7 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders, Calculator, Layers, BookOpen, Calendar, Clock } from 'lucide-react';
-import { OnlineEvaluation, StudentSubmission, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
-import { getEvaluations, createOrUpdateEvaluation, deleteEvaluation, getSubmissionsForEvaluation, gradeSubmission, generateAIGradingWithGemini, deleteStudentSubmission } from '../services/onlineEvaluationService';
+import { OnlineEvaluation, StudentSubmission, StudentAnswer, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
+import {
+  getEvaluations,
+  createOrUpdateEvaluation,
+  deleteEvaluation,
+  getSubmissionsForEvaluation,
+  getLocalSubmissions,
+  gradeSubmission,
+  generateAIGradingWithGemini,
+  deleteStudentSubmission,
+  resolveStudentAnswerForExercise,
+  resolveMainExerciseResponseText,
+  resolveSubQuestionResponse,
+} from '../services/onlineEvaluationService';
 import { generateCleanStudentCodesForEvaluation, fetchAllStudents, convertGoogleDriveUrl } from '../services/studentRosterService';
 import { GenerateQuestionOptions, isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import { getCriteriaSync } from '../services/ibCriteriaService';
@@ -340,13 +352,90 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     }
   };
 
-  // Ouvrir la correction d'une copie
+  // Ouvrir la correction d'une copie (avec récupération résiliente des réponses de l'élève)
   const handleOpenGrading = (sub: StudentSubmission) => {
-    setActiveSubmission(sub);
-    setEditedCriteriaScores(sub.criteriaScores || {});
-    setEditedOverallFeedback(sub.overallFeedback || '');
+    let enrichedSub: StudentSubmission = JSON.parse(JSON.stringify(sub));
+
+    // 1. Vérifier s'il existe une copie locale ou un brouillon local contenant des réponses plus complètes
+    try {
+      const localSubs = getLocalSubmissions();
+      const localMatch = localSubs.find(
+        ls => ls && (ls.id === sub.id || (ls.evaluationId === sub.evaluationId && ls.studentNumber?.trim().toLowerCase() === sub.studentNumber?.trim().toLowerCase()))
+      );
+      let lockedBackup: StudentSubmission | null = null;
+      const cleanCode = (sub.accessCode || selectedEvaluation?.accessCode || '').trim().toUpperCase();
+      const cleanNum = (sub.studentNumber || '').trim();
+      if (cleanCode && cleanNum) {
+        const rawLocked = localStorage.getItem(`ib_locked_${cleanCode}_${cleanNum}`);
+        if (rawLocked) {
+          lockedBackup = JSON.parse(rawLocked);
+        }
+      }
+
+      const candidateBackups = [localMatch, lockedBackup].filter(Boolean) as StudentSubmission[];
+      for (const backup of candidateBackups) {
+        if (Array.isArray(backup.answers) && backup.answers.length > 0) {
+          if (!Array.isArray(enrichedSub.answers) || enrichedSub.answers.length === 0) {
+            enrichedSub.answers = backup.answers;
+          } else {
+            enrichedSub.answers = enrichedSub.answers.map((ans, idx) => {
+              const bAns = resolveStudentAnswerForExercise(backup, ans.criterion, ans.exerciseIndex, ans.exerciseTitle, idx);
+              if (!bAns) return ans;
+              const curText = resolveMainExerciseResponseText(ans);
+              const bText = resolveMainExerciseResponseText(bAns);
+              return {
+                ...bAns,
+                ...ans,
+                studentResponse: curText ? (ans.studentResponse || curText) : (bAns.studentResponse || bText || ''),
+                drawingDataUrl: ans.drawingDataUrl || bAns.drawingDataUrl,
+                subAnswers: (ans.subAnswers && Object.values(ans.subAnswers).some(v => Boolean(v?.response?.trim() || v?.drawingDataUrl)))
+                  ? ans.subAnswers
+                  : (bAns.subAnswers || ans.subAnswers),
+              };
+            });
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Si l'évaluation sélectionnée comporte des exercices qui ne figurent pas dans enrichedSub.answers, les aligner
+    if (selectedEvaluation && Array.isArray(selectedEvaluation.assessments)) {
+      const alignedAnswers: StudentAnswer[] = [];
+      let flatIdx = 0;
+      selectedEvaluation.assessments.forEach(crit => {
+        (crit.exercises || []).forEach((ex, exIdx) => {
+          const matchedAns = resolveStudentAnswerForExercise(enrichedSub, crit.criterion, exIdx, ex.title, flatIdx);
+          const fullResp = resolveMainExerciseResponseText(matchedAns, ex);
+          alignedAnswers.push({
+            criterion: crit.criterion,
+            exerciseIndex: exIdx,
+            exerciseTitle: ex.title || matchedAns?.exerciseTitle || `Exercice ${flatIdx + 1}`,
+            criterionReference: ex.criterionReference || matchedAns?.criterionReference,
+            strandIndex: ex.strandIndex || matchedAns?.strandIndex,
+            strandText: ex.strandText || matchedAns?.strandText,
+            questionType: ex.type || matchedAns?.questionType,
+            questionContent: ex.content || matchedAns?.questionContent || '',
+            studentResponse: fullResp || matchedAns?.studentResponse || '',
+            drawingDataUrl: matchedAns?.drawingDataUrl,
+            subAnswers: matchedAns?.subAnswers,
+            score: matchedAns?.score ?? enrichedSub.criteriaScores?.[crit.criterion],
+            teacherComment: matchedAns?.teacherComment,
+            aiFeedback: matchedAns?.aiFeedback,
+          });
+          flatIdx++;
+        });
+      });
+
+      if (alignedAnswers.length > 0) {
+        enrichedSub.answers = alignedAnswers;
+      }
+    }
+
+    setActiveSubmission(enrichedSub);
+    setEditedCriteriaScores(enrichedSub.criteriaScores || {});
+    setEditedOverallFeedback(enrichedSub.overallFeedback || '');
     const comments: Record<string, string> = {};
-    sub.answers.forEach(a => {
+    (enrichedSub.answers || []).forEach(a => {
       comments[`${a.criterion}_${a.exerciseIndex}`] = a.teacherComment || a.aiFeedback || '';
     });
     setEditedComments(comments);
@@ -1106,10 +1195,9 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
 
       setEvaluations(prev => [newEval, ...prev]);
       setShowCreateModal(false);
-      // Ouvrir directement l'éditeur de l'évaluation créée pour que l'enseignant puisse tout voir et modifier
-      setEditingEvaluation(JSON.parse(JSON.stringify(newEval)));
+      // Ouvrir directement la Copie Vierge (Studio 3 colonnes) pour que l'enseignant visualise, organise et ajoute documents/audios/photos/vidéos
+      setStudentPreviewEvaluation(JSON.parse(JSON.stringify(newEval)));
       setEditingCriterionIdx(0);
-      alert(`✅ Évaluation créée avec succès !\n\n🔑 Code d'Accès Unique : ${code}\nElle est ouverte ci-dessous dans l'éditeur : chaque question est organisée, claire et 100% modifiable.`);
     } catch (err: any) {
       alert(`Erreur création : ${err.message || 'Impossible de créer l\'évaluation'}`);
     } finally {
@@ -2966,6 +3054,17 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                     const colors = CRITERION_COLORS[ans.criterion] || CRITERION_COLORS.A;
                     const commentKey = `${ans.criterion}_${ans.exerciseIndex}`;
                     const commentValue = editedComments[commentKey] || '';
+                    const critObj = (selectedEvaluation.assessments || []).find(a => a.criterion === ans.criterion);
+                    const exObj = critObj?.exercises?.[ans.exerciseIndex];
+                    const fullResponseText = resolveMainExerciseResponseText(ans, exObj);
+                    const hasNonEmptySubAnswers = Boolean(
+                      ans.subAnswers &&
+                      Object.keys(ans.subAnswers).length > 0 &&
+                      Object.values(ans.subAnswers).some(sv => {
+                        const r = typeof sv === 'string' ? sv : sv?.response;
+                        return Boolean(String(r || '').trim() || sv?.drawingDataUrl);
+                      })
+                    );
 
                     return (
                       <div key={idx} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3.5 shadow-2xs">
@@ -2974,7 +3073,7 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                             <span className={`w-6 h-6 rounded-md ${colors.badge} text-white text-xs font-black flex items-center justify-center`}>
                               {ans.criterion}
                             </span>
-                            <span className="font-bold text-sm text-slate-900">{ans.exerciseTitle || `Question ${idx + 1}`}</span>
+                            <span className="font-bold text-sm text-slate-900">{ans.exerciseTitle || exObj?.title || `Question ${idx + 1}`}</span>
                             {ans.criterionReference && (
                               <span className="text-xs text-slate-500 italic">({ans.criterionReference})</span>
                             )}
@@ -2986,41 +3085,84 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
                           )}
                         </div>
 
-                        {/* Énoncé de la question au format HTML soigné (tableaux, listes, repères) */}
+                        {/* Énoncé de la question au format HTML soigné */}
                         <div className="bg-white p-3.5 rounded-xl border border-slate-200">
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block mb-1">Énoncé / Tâche :</span>
-                          <RichExerciseContent content={ans.questionContent} />
+                          <RichExerciseContent content={ans.questionContent || exObj?.content || ''} />
                         </div>
 
-                        {/* Réponse de l'élève */}
+                        {/* Réponse de l'élève (résolution résiliente des sous-questions et de la réponse principale) */}
                         <div>
                           <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
-                            Réponse soumise par l'élève :
+                            ✍️ Réponse soumise par l'élève :
                           </span>
-                          {ans.subAnswers && Object.keys(ans.subAnswers).length > 0 ? (
+                          {exObj?.subQuestions && exObj.subQuestions.length > 0 ? (
                             <div className="space-y-2">
-                              {Object.entries(ans.subAnswers).map(([sKey, sVal], sIdx) => (
-                                <div key={sKey} className="bg-white p-3 rounded-xl border border-slate-200 text-xs font-mono text-slate-800">
-                                  <span className="font-bold text-purple-900 block font-sans text-[11px] mb-1">Sous-question {sIdx + 1}) :</span>
-                                  <div className="whitespace-pre-wrap leading-relaxed">
-                                    {sVal.response || <em className="text-slate-400 font-sans">Aucune réponse</em>}
-                                  </div>
-                                  {sVal.drawingDataUrl && (
-                                    <div className="mt-2 text-center pt-2 border-t border-slate-100">
-                                      <span className="text-[10px] font-sans font-bold text-slate-500 block mb-1">Tracé / Figure géométrique :</span>
-                                      <img src={sVal.drawingDataUrl} alt="Tracé élève" className="max-h-36 max-w-full mx-auto border rounded bg-white" />
+                              {exObj.subQuestions.map((sub, sIdx) => {
+                                const resolvedSub = resolveSubQuestionResponse(ans, sub, sIdx, exObj.subQuestions?.length || 1);
+                                return (
+                                  <div key={sub.id || sIdx} className="bg-white p-3 rounded-xl border border-slate-200 text-xs font-mono text-slate-800 space-y-1">
+                                    <div className="font-sans text-[11px] font-bold text-purple-900 flex items-center justify-between gap-2">
+                                      <span>Sous-question {sub.label || `${sIdx + 1})`} :</span>
+                                      {sub.strandIndex && (
+                                        <span className="text-[10px] text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
+                                          Aspect ({sub.strandIndex})
+                                        </span>
+                                      )}
                                     </div>
-                                  )}
+                                    <div className="text-[11px] font-sans text-slate-500 mb-1">
+                                      <RichExerciseContent content={sub.content} />
+                                    </div>
+                                    <div className="whitespace-pre-wrap leading-relaxed bg-purple-50/40 p-2.5 rounded-lg border border-purple-100 text-slate-900 font-semibold">
+                                      {resolvedSub.response || <em className="text-slate-400 font-sans font-normal">Aucune réponse saisie pour cette sous-question</em>}
+                                    </div>
+                                    {resolvedSub.drawingDataUrl && (
+                                      <div className="mt-2 text-center pt-2 border-t border-slate-100">
+                                        <span className="text-[10px] font-sans font-bold text-slate-500 block mb-1">Tracé / Figure géométrique :</span>
+                                        <img src={resolvedSub.drawingDataUrl} alt="Tracé élève" className="max-h-36 max-w-full mx-auto border rounded bg-white" />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {fullResponseText && !exObj.subQuestions.some((sq, sIdx) => {
+                                const r = resolveSubQuestionResponse(ans, sq, sIdx, exObj.subQuestions?.length || 1).response;
+                                return r && fullResponseText.includes(r);
+                              }) && (
+                                <div className="bg-white p-3 rounded-xl border border-purple-200 text-xs font-mono text-slate-900 whitespace-pre-wrap leading-relaxed">
+                                  <span className="font-bold text-purple-900 block font-sans text-[11px] mb-1">Réponse globale de l'élève :</span>
+                                  {fullResponseText}
                                 </div>
-                              ))}
+                              )}
+                            </div>
+                          ) : hasNonEmptySubAnswers && ans.subAnswers ? (
+                            <div className="space-y-2">
+                              {Object.entries(ans.subAnswers).map(([sKey, sVal], sIdx) => {
+                                const respText = typeof sVal === 'string' ? sVal : sVal?.response;
+                                const drawUrl = typeof sVal === 'object' ? sVal?.drawingDataUrl : undefined;
+                                return (
+                                  <div key={sKey} className="bg-white p-3 rounded-xl border border-slate-200 text-xs font-mono text-slate-800">
+                                    <span className="font-bold text-purple-900 block font-sans text-[11px] mb-1">Sous-question {sIdx + 1}) :</span>
+                                    <div className="whitespace-pre-wrap leading-relaxed bg-purple-50/40 p-2.5 rounded-lg border border-purple-100 text-slate-900 font-semibold">
+                                      {respText || <em className="text-slate-400 font-sans font-normal">Aucune réponse</em>}
+                                    </div>
+                                    {drawUrl && (
+                                      <div className="mt-2 text-center pt-2 border-t border-slate-100">
+                                        <span className="text-[10px] font-sans font-bold text-slate-500 block mb-1">Tracé / Figure géométrique :</span>
+                                        <img src={drawUrl} alt="Tracé élève" className="max-h-36 max-w-full mx-auto border rounded bg-white" />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           ) : (
-                            <div className="bg-white p-3 rounded-xl border border-slate-200 text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed">
-                              {ans.studentResponse || <em className="text-slate-400 font-sans">Aucune réponse fournie</em>}
+                            <div className="bg-white p-3.5 rounded-xl border border-purple-200 text-xs font-mono text-slate-900 whitespace-pre-wrap leading-relaxed font-semibold">
+                              {fullResponseText || <em className="text-slate-400 font-sans font-normal">Aucune réponse fournie</em>}
                             </div>
                           )}
 
-                          {ans.drawingDataUrl && !ans.subAnswers && (
+                          {ans.drawingDataUrl && (
                             <div className="mt-2 text-center p-2 bg-white rounded-xl border border-slate-200">
                               <span className="text-[10px] font-bold text-slate-500 block mb-1">Figure géométrique / Tracé de l'élève :</span>
                               <img src={ans.drawingDataUrl} alt="Figure élève" className="max-h-40 max-w-full mx-auto border rounded bg-white" />

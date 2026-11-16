@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { OnlineEvaluation, StudentSubmission } from '../types';
-import { getAllSubmissions, getEvaluations } from '../services/onlineEvaluationService';
+import { getAllSubmissions, getEvaluations, resolveMainExerciseResponseText } from '../services/onlineEvaluationService';
 import { SUBJECTS, PEI_GRADES } from '../constants';
 
 interface GradedEvaluationsRecapModalProps {
@@ -36,6 +36,8 @@ interface FlattenedStudentGrade {
     criterion: string;
     exerciseTitle: string;
     exerciseIndex: number;
+    studentResponse: string;
+    drawingDataUrl?: string;
     score?: number;
     comment: string;
   }[];
@@ -110,12 +112,17 @@ export const GradedEvaluationsRecapModal: React.FC<GradedEvaluationsRecapModalPr
 
       const questionComments: FlattenedStudentGrade['questionComments'] = [];
       (sub.answers || []).forEach(ans => {
+        const critObj = (parentEval?.assessments || []).find(a => a.criterion === ans.criterion);
+        const exObj = critObj?.exercises?.[ans.exerciseIndex];
+        const studentResponse = resolveMainExerciseResponseText(ans, exObj);
         const comment = ans.teacherComment || ans.aiFeedback || '';
-        if (comment) {
+        if (comment || studentResponse || ans.score !== undefined || ans.drawingDataUrl) {
           questionComments.push({
             criterion: ans.criterion,
-            exerciseTitle: ans.exerciseTitle,
+            exerciseTitle: ans.exerciseTitle || exObj?.title || `Exercice ${ans.exerciseIndex + 1}`,
             exerciseIndex: ans.exerciseIndex,
+            studentResponse,
+            drawingDataUrl: ans.drawingDataUrl,
             score: ans.score,
             comment,
           });
@@ -587,19 +594,19 @@ export const GradedEvaluationsRecapModal: React.FC<GradedEvaluationsRecapModalPr
                               {row.questionComments.length > 0 ? (
                                 <div className="space-y-2">
                                   <h6 className="font-bold text-[11px] text-slate-700 uppercase tracking-wide">
-                                    Commentaires et conseils par question :
+                                    Réponses de l'élève, notes et commentaires par question :
                                   </h6>
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                                     {row.questionComments.map((qc, i) => {
                                       const col = CRITERION_COLORS[qc.criterion] || CRITERION_COLORS.A;
                                       return (
-                                        <div key={i} className="p-2.5 bg-white rounded-xl border border-slate-200 text-xs space-y-1">
+                                        <div key={i} className="p-3 bg-white rounded-xl border border-slate-200 text-xs space-y-1.5 shadow-2xs">
                                           <div className="flex items-center justify-between">
                                             <span className={`px-2 py-0.5 rounded text-[10px] font-black ${col.badge} text-white`}>
                                               Critère {qc.criterion}
                                             </span>
                                             {qc.score !== undefined && (
-                                              <span className="text-[10px] font-black text-slate-700">
+                                              <span className="text-[10px] font-black text-purple-900 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
                                                 Niveau {qc.score}/8
                                               </span>
                                             )}
@@ -607,9 +614,37 @@ export const GradedEvaluationsRecapModal: React.FC<GradedEvaluationsRecapModalPr
                                           <h6 className="font-bold text-slate-800 text-[11px] truncate">
                                             {qc.exerciseTitle}
                                           </h6>
-                                          <p className="text-slate-600 text-[11px] leading-relaxed">
-                                            {qc.comment}
-                                          </p>
+                                          <div className="p-2 bg-slate-50 rounded-lg border border-slate-200">
+                                            <span className="text-[9.5px] font-bold text-slate-500 uppercase block mb-0.5">
+                                              ✍️ Réponse de l'élève :
+                                            </span>
+                                            {qc.studentResponse ? (
+                                              <p className="text-slate-900 font-medium text-[11px] whitespace-pre-wrap leading-relaxed">
+                                                {qc.studentResponse}
+                                              </p>
+                                            ) : (
+                                              <p className="text-slate-400 italic text-[10.5px]">
+                                                (Aucune réponse texte saisie)
+                                              </p>
+                                            )}
+                                            {qc.drawingDataUrl && (
+                                              <img
+                                                src={qc.drawingDataUrl}
+                                                alt="Tracé élève"
+                                                className="mt-1.5 max-h-28 rounded border border-slate-300 bg-white"
+                                              />
+                                            )}
+                                          </div>
+                                          {qc.comment && (
+                                            <div className="p-2 bg-emerald-50/70 rounded-lg border border-emerald-200">
+                                              <span className="text-[9.5px] font-bold text-emerald-800 uppercase block mb-0.5">
+                                                💬 Commentaire de l'enseignant :
+                                              </span>
+                                              <p className="text-slate-700 text-[11px] leading-relaxed italic">
+                                                {qc.comment}
+                                              </p>
+                                            </div>
+                                          )}
                                         </div>
                                       );
                                     })}
@@ -617,7 +652,7 @@ export const GradedEvaluationsRecapModal: React.FC<GradedEvaluationsRecapModalPr
                                 </div>
                               ) : (
                                 <p className="text-xs text-slate-500 italic">
-                                  Aucun commentaire spécifique par question n'a été enregistré pour cette copie.
+                                  Aucun détail par question n'a été enregistré pour cette copie.
                                 </p>
                               )}
                             </td>

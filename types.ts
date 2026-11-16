@@ -10,6 +10,8 @@ export interface AssessmentSubQuestion {
   answer?: string; // Corrigé indicatif pour la sous-question
   points?: number;
   expectedLines?: number; // Hauteur de la zone de réponse (nombre de lignes)
+  imageUrl?: string;
+  imageCaption?: string;
 }
 
 export interface InteractiveDropZone {
@@ -46,6 +48,12 @@ export interface AssessmentExercise {
   expectedLines?: number; // Hauteur de la zone de réponse (nombre de lignes)
   imageUrl?: string; // Photo / oeuvre d'art / figure géométrique
   imageCaption?: string; // Légende de l'oeuvre (titre, artiste, date)
+  documentTitle?: string; // Titre du document / texte de référence généré ou ajouté
+  documentContent?: string; // Contenu du document / texte / extrait / tableau source
+  audioUrl?: string; // Audio Google Drive / MP3 / compréhension orale
+  audioCaption?: string; // Titre ou consigne d'écoute de l'audio
+  videoUrl?: string; // Vidéo Google Drive / YouTube / MP4
+  videoCaption?: string; // Titre ou légende de la vidéo
   subQuestions?: AssessmentSubQuestion[]; // Sous-questions 1), 2), 3)... avec chacune son sous-aspect individuel
   interactiveModule?: InteractiveExerciseModule; // Tableau à remplir, étiquettes à déplacer ou labo virtuel
 }

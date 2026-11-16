@@ -1,12 +1,17 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Printer, Award, Clock, Download } from 'lucide-react';
-import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion } from '../types';
+import { OnlineEvaluation, StudentSubmission, AssessmentSubQuestion, StudentAnswer } from '../types';
 import { isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import { stripHtmlTags, sanitizeExerciseVisualsForDisplay } from '../services/educationalDiagramService';
 import { formatProfessionalHtml } from '../services/evaluationAiOptimizerService';
 import { resolveArtworkOrImage, generateDynamicMuseumArtCard } from '../services/artworkService';
 import { convertGoogleDriveUrl } from '../services/studentRosterService';
+import {
+  resolveStudentAnswerForExercise,
+  resolveMainExerciseResponseText,
+  resolveSubQuestionResponse,
+} from '../services/onlineEvaluationService';
 import RichExerciseContent from './RichExerciseContent';
 
 interface EvaluationPrintViewProps {
@@ -936,7 +941,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
 
         {/* ── 4. TÂCHES D'ÉVALUATION ET QUESTIONS (SANS DUPLICATION, STYLE EXAMEN PRO) ── */}
         <main className="space-y-4">
-          {evaluation.assessments.map((crit) => {
+          {evaluation.assessments.map((crit, cIdx) => {
             return (
               <div key={crit.criterion} className="space-y-3">
                 {/* Bandeau d'intitulé de Critère */}
@@ -981,29 +986,50 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
 
                 {/* Exercices / Tâches du critère */}
                 {(crit.exercises || []).map((ex, exIdx) => {
-                  const studentAns = submission?.answers.find(
-                    ans => ans.criterion === crit.criterion && ans.exerciseIndex === exIdx
+                  const flatOffset = (evaluation.assessments || [])
+                    .slice(0, cIdx)
+                    .reduce((acc, prevC) => acc + (prevC.exercises?.length || 0), 0) + exIdx;
+                  const studentAns = resolveStudentAnswerForExercise(
+                    submission,
+                    crit.criterion,
+                    exIdx,
+                    ex.title,
+                    flatOffset
                   );
+                  const fullMainResponse = resolveMainExerciseResponseText(studentAns, ex);
 
                   // Décomposition propre du stimulus et des sous-questions sans duplication
                   const { stimulusText, subQuestions } = parseExerciseContent(ex, crit.criterion, crit.strands);
                   const hasSubQuestions = subQuestions.length > 0;
                   const strandInfo = getQuestionStrandLabel(crit.criterion, crit.strands, ex, exIdx, isEn);
 
-                  // Filtrage strict : n'afficher un visuel QUE si l'exercice nécessite une courbe (Maths, IS, Éco, Sciences),
-                  // une figure géométrique, un diagramme, un schéma à légender ou une œuvre d'art
                   const subQuestionsText = (ex.subQuestions || [])
                     .map(sq => stripHtmlTags(sq.content || ''))
                     .join(' ');
-                  const sanitizedVisual = sanitizeExerciseVisualsForDisplay({
-                    subject: evaluation.subject || '',
-                    unitTitle: evaluation.unitTitle || evaluation.title || '',
-                    exerciseTitle: ex.title || '',
-                    exerciseContent: ex.content || '',
-                    subQuestionsText,
-                    imageUrl: ex.imageUrl,
-                    imageCaption: ex.imageCaption,
-                  });
+                  const isCustomImage = Boolean(
+                    ex.imageUrl &&
+                    (ex.imageUrl.includes('drive.google.com') ||
+                     ex.imageUrl.includes('googleusercontent.com') ||
+                     ex.imageUrl.startsWith('data:image/') ||
+                     ex.imageUrl.startsWith('/api/image-proxy'))
+                  );
+                  const sanitizedVisual = isCustomImage
+                    ? { imageUrl: ex.imageUrl, imageCaption: ex.imageCaption }
+                    : sanitizeExerciseVisualsForDisplay({
+                        subject: evaluation.subject || '',
+                        unitTitle: evaluation.unitTitle || evaluation.title || '',
+                        exerciseTitle: ex.title || '',
+                        exerciseContent: ex.content || '',
+                        subQuestionsText,
+                        imageUrl: ex.imageUrl,
+                        imageCaption: ex.imageCaption,
+                      });
+
+                  // Pré-calculer les réponses par sous-question pour savoir si la réponse globale doit aussi être affichée
+                  const resolvedSubList = hasSubQuestions
+                    ? subQuestions.map((sub, sIdx) => resolveSubQuestionResponse(studentAns, sub, sIdx, subQuestions.length))
+                    : [];
+                  const anySubAnswered = resolvedSubList.some(r => Boolean(r.response || r.drawingDataUrl));
 
                   return (
                     <div
@@ -1027,6 +1053,19 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                         )}
                       </div>
 
+                      {/* Document ou Texte de référence généré / attaché par l'enseignant */}
+                      {ex.documentContent && (
+                        <div className="my-2 p-2.5 bg-amber-50/70 border-l-4 border-amber-600 text-slate-800 text-[11px] leading-relaxed rounded-r avoid-break">
+                          <div className="font-black uppercase text-[9.5px] text-amber-900 tracking-wider flex items-center gap-1.5 mb-1">
+                            <span>📚</span>
+                            <span>{stripHtmlTags(ex.documentTitle || (isEn ? 'Reference Document' : 'Document de référence'))}</span>
+                          </div>
+                          <div className="font-serif text-slate-800 leading-relaxed text-[11px]">
+                            <CleanFormattedText text={ex.documentContent} />
+                          </div>
+                        </div>
+                      )}
+
                       {/* Illustration / Courbe / Figure / Schéma / Œuvre d'Art strictement liée à l'exercice */}
                       {sanitizedVisual.imageUrl && (
                         <PrintSafeImage
@@ -1036,12 +1075,24 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                         />
                       )}
 
+                      {/* Mention Audio / Vidéo si présente */}
+                      {(ex.audioUrl || ex.videoUrl) && (
+                        <div className="flex flex-wrap gap-2 my-1.5 text-[10px] text-indigo-900 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded avoid-break">
+                          {ex.audioUrl && (
+                            <span className="font-bold">🎧 Support Audio : {ex.audioCaption || 'Fichier audio joint sur le portail numérique'}</span>
+                          )}
+                          {ex.videoUrl && (
+                            <span className="font-bold">🎬 Support Vidéo : {ex.videoCaption || 'Vidéo jointe sur le portail numérique'}</span>
+                          )}
+                        </div>
+                      )}
+
                       {/* TEXTE SUPPORT / STIMULUS (SANS BALISES HTML RÉSIDUELLES) */}
                       {stimulusText && (
                         <div className="my-2 p-2.5 bg-purple-50/50 border-l-4 border-purple-700 text-slate-800 text-[11px] leading-relaxed rounded-r avoid-break">
                           <div className="font-black uppercase text-[9.5px] text-purple-900 tracking-wider flex items-center gap-1.5 mb-1 not-italic">
                             <span>📄</span>
-                            <span>{isEn ? 'Document / Context Stimulus :' : 'Document / Contexte de la tâche :'}</span>
+                            <span>{isEn ? 'Document / Context Stimulus :' : 'Mise en situation & Consigne :'}</span>
                           </div>
                           <div className="font-sans text-slate-800 leading-relaxed text-[11px]">
                             <CleanFormattedText text={stimulusText} />
@@ -1055,9 +1106,9 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                           {subQuestions.map((sub, sIdx) => {
                             const subStrand = getSubQuestionStrandLabel(crit.criterion, crit.strands, sub, sIdx, isEn);
                             const subId = sub.id || `sub_${sIdx + 1}`;
-                            const subAnswerData = studentAns?.subAnswers?.[subId];
-                            const subResponseText = subAnswerData?.response;
-                            const subDrawing = subAnswerData?.drawingDataUrl;
+                            const resolvedSub = resolvedSubList[sIdx] || { response: '' };
+                            const subResponseText = resolvedSub.response;
+                            const subDrawing = resolvedSub.drawingDataUrl;
 
                             return (
                               <div
@@ -1102,14 +1153,16 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                                 {/* Réponse libre */}
                                 {sub.type !== 'multiple_choice' && (
                                   isCorrectedCopy ? (
-                                    subResponseText ? (
+                                    subResponseText || subDrawing ? (
                                       <div className="mt-1 bg-slate-50 border border-slate-200 rounded p-2 text-xs">
                                         <span className="text-[9.5px] font-bold text-slate-500 uppercase block mb-0.5">
                                           {isEn ? `Student's response (${sub.label}):` : `Réponse de l'élève (${sub.label}) :`}
                                         </span>
-                                        <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
-                                          {subResponseText}
-                                        </p>
+                                        {subResponseText && (
+                                          <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
+                                            {subResponseText}
+                                          </p>
+                                        )}
                                         {subDrawing && (
                                           <div className="mt-2 pt-1 border-t border-slate-200 text-center">
                                             <span className="text-[9.5px] font-bold text-slate-500 block mb-0.5">
@@ -1139,6 +1192,32 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                               </div>
                             );
                           })}
+
+                          {/* Si la réponse globale de l'élève existe mais n'était pas répartie par sous-question */}
+                          {isCorrectedCopy && !anySubAnswered && (fullMainResponse || studentAns?.drawingDataUrl) && (
+                            <div className="mt-2 bg-slate-50 border border-slate-200 rounded p-2 text-xs">
+                              <span className="text-[9.5px] font-bold text-slate-500 uppercase block mb-0.5">
+                                {isEn ? "Student's written response:" : "Réponse rédigée par l'élève :"}
+                              </span>
+                              {fullMainResponse && (
+                                <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
+                                  {fullMainResponse}
+                                </p>
+                              )}
+                              {studentAns?.drawingDataUrl && (
+                                <div className="mt-2 pt-1 border-t border-slate-200 text-center">
+                                  <span className="text-[9.5px] font-bold text-slate-500 block mb-0.5">
+                                    {isEn ? "Student's drawing / diagram:" : "Figure / Tracé de l'élève :"}
+                                  </span>
+                                  <img
+                                    src={studentAns.drawingDataUrl}
+                                    alt="Figure élève"
+                                    className="max-h-44 max-w-full mx-auto border border-slate-300 rounded bg-white"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           {/* Commentaire enseignant pour la tâche complète */}
                           {isCorrectedCopy && (studentAns?.teacherComment || studentAns?.aiFeedback) && (
@@ -1172,7 +1251,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                             <div className="space-y-1 pt-1">
                               {(ex.options || (isEn ? ['Option A', 'Option B', 'Option C', 'Option D'] : ['Proposition A', 'Proposition B', 'Proposition C', 'Proposition D'])).map((opt, oIdx) => {
                                 const cleanOpt = stripHtmlTags(opt);
-                                const isChosen = studentAns?.studentResponse === cleanOpt || studentAns?.studentResponse === opt;
+                                const isChosen = fullMainResponse === cleanOpt || fullMainResponse === opt || studentAns?.studentResponse === cleanOpt || studentAns?.studentResponse === opt;
                                 return (
                                   <div key={oIdx} className="flex items-center gap-2 text-xs">
                                     <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center font-bold text-[9px] ${
@@ -1190,16 +1269,18 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                           {/* Réponse libre */}
                           {ex.type !== 'multiple_choice' && (
                             isCorrectedCopy ? (
-                              studentAns?.studentResponse ? (
+                              fullMainResponse || studentAns?.drawingDataUrl ? (
                                 <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-xs">
                                   <span className="text-[9.5px] font-bold text-slate-500 uppercase block mb-0.5">
                                     {isEn ? "Student's written response:" : "Réponse rédigée par l'élève :"}
                                   </span>
-                                  <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
-                                    {studentAns.studentResponse}
-                                  </p>
+                                  {fullMainResponse && (
+                                    <p className="text-slate-900 font-serif text-[11px] whitespace-pre-wrap leading-relaxed">
+                                      {fullMainResponse}
+                                    </p>
+                                  )}
 
-                                  {studentAns.drawingDataUrl && (
+                                  {studentAns?.drawingDataUrl && (
                                     <div className="mt-2 pt-1 border-t border-slate-200 text-center">
                                       <span className="text-[9.5px] font-bold text-slate-500 block mb-0.5">
                                         {isEn ? "Student's drawing / diagram:" : "Figure / Tracé de l'élève :"}
@@ -1213,7 +1294,7 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                                   )}
 
                                   {/* Commentaire enseignant */}
-                                  {(studentAns.teacherComment || studentAns.aiFeedback) && (
+                                  {(studentAns?.teacherComment || studentAns?.aiFeedback) && (
                                     <div className="mt-2 p-1.5 bg-purple-50 border border-purple-200 rounded text-[10.5px]">
                                       <span className="text-[9px] font-bold text-purple-900 block uppercase">
                                         {isEn ? "Teacher's comment:" : "Commentaire de l'enseignant :"}
@@ -1225,8 +1306,20 @@ const EvaluationPrintView: React.FC<EvaluationPrintViewProps> = ({
                                   )}
                                 </div>
                               ) : (
-                                <div className="mt-1 px-2.5 py-1 bg-slate-50 border border-dashed border-slate-200 rounded text-[10px] text-slate-400 italic">
-                                  {isEn ? 'Not answered by student' : "Non répondu par l'élève"}
+                                <div className="space-y-1.5">
+                                  <div className="mt-1 px-2.5 py-1 bg-slate-50 border border-dashed border-slate-200 rounded text-[10px] text-slate-400 italic">
+                                    {isEn ? 'Not answered by student' : "Non répondu par l'élève"}
+                                  </div>
+                                  {(studentAns?.teacherComment || studentAns?.aiFeedback) && (
+                                    <div className="p-1.5 bg-purple-50 border border-purple-200 rounded text-[10.5px]">
+                                      <span className="text-[9px] font-bold text-purple-900 block uppercase">
+                                        {isEn ? "Teacher's comment:" : "Commentaire de l'enseignant :"}
+                                      </span>
+                                      <p className="text-purple-950 italic">
+                                        {studentAns.teacherComment || studentAns.aiFeedback}
+                                      </p>
+                                    </div>
+                                  )}
                                 </div>
                               )
                             ) : (

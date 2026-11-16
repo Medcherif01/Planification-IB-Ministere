@@ -170,12 +170,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(404).json({ error: 'Soumission non trouvée' });
           }
 
+          const existingAnswers = Array.isArray(inMemorySubmissions[idx].answers) ? inMemorySubmissions[idx].answers : [];
+          const mergedAnswers = Array.isArray(answers) && answers.length > 0
+            ? answers.map((inc: any, aIdx: number) => {
+                const match = existingAnswers.find(
+                  (ea: any) => ea && ea.criterion === inc?.criterion && Number(ea.exerciseIndex) === Number(inc?.exerciseIndex)
+                ) || existingAnswers[aIdx];
+                if (!match) return inc;
+                const incResp = String(inc?.studentResponse || '').trim();
+                const matchResp = String(match?.studentResponse || '').trim();
+                return {
+                  ...match,
+                  ...inc,
+                  studentResponse: (incResp && incResp !== '(Sans réponse)' && incResp !== '(Aucune réponse fournie)') ? inc.studentResponse : (matchResp || inc.studentResponse || ''),
+                  drawingDataUrl: inc?.drawingDataUrl || match?.drawingDataUrl,
+                  subAnswers: (inc?.subAnswers && Object.keys(inc.subAnswers).length > 0)
+                    ? { ...(match?.subAnswers || {}), ...inc.subAnswers }
+                    : (match?.subAnswers || inc?.subAnswers),
+                };
+              })
+            : existingAnswers;
+
           inMemorySubmissions[idx] = {
             ...inMemorySubmissions[idx],
             criteriaScores,
             totalScore,
             overallFeedback,
-            answers: answers || inMemorySubmissions[idx].answers,
+            answers: mergedAnswers,
             status: 'graded',
             gradedAt: new Date().toISOString(),
             gradedBy: gradedBy || 'Enseignant',
@@ -377,11 +398,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (action === 'grade') {
         const { submissionId, criteriaScores, totalScore, overallFeedback, answers, gradedBy } = req.body;
+        const existingDoc = await subCol.findOne({ id: submissionId });
+        const existingAnswers = Array.isArray(existingDoc?.answers) ? existingDoc.answers : [];
+        const mergedAnswers = Array.isArray(answers) && answers.length > 0
+          ? answers.map((inc: any, aIdx: number) => {
+              const match = existingAnswers.find(
+                (ea: any) => ea && ea.criterion === inc?.criterion && Number(ea.exerciseIndex) === Number(inc?.exerciseIndex)
+              ) || existingAnswers[aIdx];
+              if (!match) return inc;
+              const incResp = String(inc?.studentResponse || '').trim();
+              const matchResp = String(match?.studentResponse || '').trim();
+              return {
+                ...match,
+                ...inc,
+                studentResponse: (incResp && incResp !== '(Sans réponse)' && incResp !== '(Aucune réponse fournie)') ? inc.studentResponse : (matchResp || inc.studentResponse || ''),
+                drawingDataUrl: inc?.drawingDataUrl || match?.drawingDataUrl,
+                subAnswers: (inc?.subAnswers && Object.keys(inc.subAnswers).length > 0)
+                  ? { ...(match?.subAnswers || {}), ...inc.subAnswers }
+                  : (match?.subAnswers || inc?.subAnswers),
+              };
+            })
+          : existingAnswers;
+
         const update = {
           criteriaScores,
           totalScore,
           overallFeedback,
-          answers,
+          answers: mergedAnswers,
           status: 'graded',
           gradedAt: new Date().toISOString(),
           gradedBy: gradedBy || 'Enseignant',
@@ -393,7 +436,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           { returnDocument: 'after' }
         );
 
-        return res.status(200).json({ success: true, submission: result || update });
+        return res.status(200).json({ success: true, submission: result || { ...(existingDoc || {}), ...update } });
       }
 
       const evaluation = req.body;

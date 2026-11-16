@@ -15,7 +15,7 @@ import RichExerciseContent from './RichExerciseContent';
 import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, findMatchingArtwork, generateDynamicMuseumArtCard, getSafeArtworkImageUrl } from '../services/artworkService';
 import { sanitizeExerciseVisualsForDisplay, stripHtmlTags } from '../services/educationalDiagramService';
-import { getEvaluationByAccessCode, getStudentSubmission, getLocalSubmissions, createOrUpdateEvaluation, submitStudentEvaluation } from '../services/onlineEvaluationService';
+import { getEvaluationByAccessCode, getStudentSubmission, getLocalSubmissions, createOrUpdateEvaluation, submitStudentEvaluation, resolveMainExerciseResponseText } from '../services/onlineEvaluationService';
 
 interface StudentEvaluationPortalProps {
   initialAccessCode?: string;
@@ -1914,7 +1914,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                     </div>
 
                     {/* Affichage des réponses par sous-question si présentes */}
-                    {ans.subAnswers && Object.keys(ans.subAnswers).length > 0 ? (
+                    {ans.subAnswers && Object.keys(ans.subAnswers).length > 0 && Object.values(ans.subAnswers).some(sd => Boolean(sd?.response?.trim() || sd?.drawingDataUrl)) ? (
                       <div className="space-y-3 pt-2">
                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">
                           Détail de vos réponses par sous-question :
@@ -1948,7 +1948,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                           Votre réponse saisie :
                         </span>
                         <p className="text-xs text-slate-800 whitespace-pre-wrap bg-purple-50/40 p-3 rounded-xl border border-purple-100 leading-relaxed font-mono">
-                          {ans.studentResponse || '(Aucune réponse)'}
+                          {resolveMainExerciseResponseText(ans) || ans.studentResponse || '(Aucune réponse)'}
                         </p>
 
                         {ans.drawingDataUrl && (
@@ -2502,15 +2502,24 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                     const subQuestionsText = (ex.subQuestions || [])
                       .map(sq => stripHtmlTags(sq.content || ''))
                       .join(' ');
-                    const sanitizedVisual = sanitizeExerciseVisualsForDisplay({
-                      subject: evaluation.subject || '',
-                      unitTitle: evaluation.unitTitle || evaluation.title || '',
-                      exerciseTitle: ex.title || '',
-                      exerciseContent: ex.content || '',
-                      subQuestionsText,
-                      imageUrl: ex.imageUrl,
-                      imageCaption: ex.imageCaption,
-                    });
+                    const isCustomImage = Boolean(
+                      ex.imageUrl &&
+                      (ex.imageUrl.includes('drive.google.com') ||
+                       ex.imageUrl.includes('googleusercontent.com') ||
+                       ex.imageUrl.startsWith('data:image/') ||
+                       ex.imageUrl.startsWith('/api/image-proxy'))
+                    );
+                    const sanitizedVisual = isCustomImage
+                      ? { imageUrl: ex.imageUrl, imageCaption: ex.imageCaption }
+                      : sanitizeExerciseVisualsForDisplay({
+                          subject: evaluation.subject || '',
+                          unitTitle: evaluation.unitTitle || evaluation.title || '',
+                          exerciseTitle: ex.title || '',
+                          exerciseContent: ex.content || '',
+                          subQuestionsText,
+                          imageUrl: ex.imageUrl,
+                          imageCaption: ex.imageCaption,
+                        });
 
                     return (
                       <div
@@ -2544,6 +2553,20 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                           </div>
                         </div>
 
+                        {/* DOCUMENT / TEXTE SUPPORT DE RÉFÉRENCE AJOUTÉ PAR L'ENSEIGNANT */}
+                        {ex.documentContent && (
+                          <div className="bg-amber-50/70 border-2 border-amber-200 border-l-4 border-l-amber-600 rounded-2xl p-4 sm:p-5 space-y-2 shadow-2xs">
+                            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-900 border-b border-amber-200/70 pb-1.5">
+                              <span>📚</span>
+                              <span>{stripHtmlTags(ex.documentTitle || 'Document de référence')}</span>
+                            </div>
+                            <RichExerciseContent
+                              content={ex.documentContent}
+                              className="text-sm sm:text-[15px] text-slate-800 leading-relaxed font-serif"
+                            />
+                          </div>
+                        )}
+
                         {/* COURBE / FIGURE / DIAGRAMME / OEUVRE D'ART STRICTEMENT LIÉE À L'EXERCICE (AVEC ZOOM PLEIN ÉCRAN) */}
                         {sanitizedVisual.imageUrl && (
                           <SafeExerciseImage
@@ -2551,6 +2574,64 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                             imageCaption={sanitizedVisual.imageCaption ? stripHtmlTags(sanitizedVisual.imageCaption) : undefined}
                             onZoom={(src, caption) => setZoomedDoc({ src, caption })}
                           />
+                        )}
+
+                        {/* LECTEUR AUDIO INTÉGRÉ (COMPRÉHENSION ORALE / MUSIQUE / DRIVE) */}
+                        {ex.audioUrl && (
+                          <div className="bg-indigo-50/70 border border-indigo-200 rounded-2xl p-3.5 space-y-2">
+                            <div className="text-xs font-black text-indigo-950 flex items-center gap-2">
+                              <span>🎧</span>
+                              <span>{stripHtmlTags(ex.audioCaption || 'Support Audio – Écoutez attentivement le document sonore')}</span>
+                            </div>
+                            {extractGoogleDriveId(ex.audioUrl) ? (
+                              <iframe
+                                src={`https://drive.google.com/file/d/${extractGoogleDriveId(ex.audioUrl)}/preview`}
+                                className="w-full h-16 rounded-xl border border-indigo-200 bg-white"
+                                allow="autoplay"
+                                title="Lecteur Audio"
+                              />
+                            ) : (
+                              <audio controls src={ex.audioUrl} className="w-full h-10" />
+                            )}
+                          </div>
+                        )}
+
+                        {/* LECTEUR VIDÉO INTÉGRÉ (YOUTUBE / GOOGLE DRIVE / MP4) */}
+                        {ex.videoUrl && (
+                          <div className="bg-slate-900 rounded-2xl p-3.5 space-y-2 text-white">
+                            <div className="text-xs font-black text-indigo-200 flex items-center gap-2">
+                              <span>🎬</span>
+                              <span>{stripHtmlTags(ex.videoCaption || 'Support Vidéo à visionner')}</span>
+                            </div>
+                            {(() => {
+                              const driveId = extractGoogleDriveId(ex.videoUrl);
+                              const ytMatch = ex.videoUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+                              if (ytMatch?.[1]) {
+                                return (
+                                  <iframe
+                                    src={`https://www.youtube.com/embed/${ytMatch[1]}`}
+                                    className="w-full aspect-video rounded-xl border border-slate-700 bg-black"
+                                    allowFullScreen
+                                    title="Vidéo"
+                                  />
+                                );
+                              }
+                              if (driveId) {
+                                return (
+                                  <iframe
+                                    src={`https://drive.google.com/file/d/${driveId}/preview`}
+                                    className="w-full aspect-video rounded-xl border border-slate-700 bg-black"
+                                    allow="autoplay"
+                                    allowFullScreen
+                                    title="Vidéo Google Drive"
+                                  />
+                                );
+                              }
+                              return (
+                                <video controls src={ex.videoUrl} className="w-full max-h-80 rounded-xl bg-black mx-auto" />
+                              );
+                            })()}
+                          </div>
                         )}
 
                         {/* Énoncé global / Contexte de l'exercice */}
