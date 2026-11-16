@@ -13,7 +13,7 @@ import { sanitizeUnitPlan } from './services/geminiService';
 import { loadPlansFromDatabase, savePlansToDatabase, migrateLocalStorageToMongoDB, needsMigration, cleanupInvalidLocalStorageKeys } from './services/databaseService';
 import { mergePlansWithReplacement, deduplicatePlans } from './services/excelBackupService';
 import { loadCriteria } from './services/ibCriteriaService';
-import { getCurrentUser, setCurrentUser, type AppUser } from './services/authService';
+import { getCurrentUser, setCurrentUser, recordTeacherUnitChange, type AppUser } from './services/authService';
 
 // ─── Initialisation synchrone depuis localStorage ───────────────────────────
 function getInitialAuthState(): boolean {
@@ -100,10 +100,17 @@ const App: React.FC = () => {
   const [editingPlan, setEditingPlan] = useState<UnitPlan | undefined>(undefined);
   const [migrationDone, setMigrationDone] = useState(false);
   const [bookletGrade, setBookletGrade] = useState<string>('PEI 4');
+  const [reloadTrigger, setReloadTrigger] = useState<number>(0);
 
   // Ref pour suivre la session actuellement chargée et empêcher toute contamination inter-classes
   const loadedSessionKeyRef = React.useRef<string | null>(null);
   const loadSeqRef = React.useRef<number>(0);
+
+  useEffect(() => {
+    const handlePlansUpdated = () => setReloadTrigger(prev => prev + 1);
+    window.addEventListener('planifications_updated', handlePlansUpdated);
+    return () => window.removeEventListener('planifications_updated', handlePlansUpdated);
+  }, []);
 
   // Migration automatique au démarrage
   useEffect(() => {
@@ -129,8 +136,10 @@ const App: React.FC = () => {
     if (session && session.subject && session.grade) {
       const targetKey = `${session.subject.trim()}_${session.grade.trim()}`;
       const currentSeq = ++loadSeqRef.current;
-      loadedSessionKeyRef.current = null;
-      setCurrentPlans([]); // Nettoie immédiatement les plans de l'ancienne classe
+      if (loadedSessionKeyRef.current !== targetKey) {
+        loadedSessionKeyRef.current = null;
+        setCurrentPlans([]); // Nettoie immédiatement les plans de l'ancienne classe
+      }
 
       const loadPlans = async () => {
         try {
@@ -179,7 +188,7 @@ const App: React.FC = () => {
       loadedSessionKeyRef.current = null;
       setCurrentPlans([]);
     }
-  }, [session?.subject, session?.grade]);
+  }, [session?.subject, session?.grade, reloadTrigger]);
 
   // Sauvegarder automatiquement quand les plans changent APRÈS chargement complet
   useEffect(() => {
@@ -294,7 +303,6 @@ const App: React.FC = () => {
   };
 
   const handleCreateNew = () => {
-    // Only admin can create freely; teachers need approval (but we allow for now via request flow)
     setEditingPlan({
       ...sanitizeUnitPlan({}, session?.subject || '', session?.grade || ''),
       teacherName: currentUser?.displayName || '',
@@ -306,12 +314,6 @@ const App: React.FC = () => {
   };
 
   const handleEdit = (plan: UnitPlan) => {
-    // Protection côté serveur : seul admin peut modifier directement
-    const user = getCurrentUser();
-    if (user?.role === 'teacher') {
-      alert('Action refusée : utilisez le bouton "Demander une modification" pour soumettre une demande à l\'administrateur.');
-      return;
-    }
     const cleanPlan = sanitizeUnitPlan(
       plan,
       plan.subject || session?.subject || '',
@@ -323,13 +325,11 @@ const App: React.FC = () => {
   };
 
   const handleDelete = (id: string) => {
-    // Protection côté serveur : seul admin peut supprimer directement
-    const user = getCurrentUser();
-    if (user?.role === 'teacher') {
-      alert('Action refusée : vous ne pouvez pas supprimer d\'unité directement. Demandez une suppression via "Demander une modification".');
-      return;
-    }
     if (window.confirm('Êtes-vous sûr de vouloir supprimer ce plan ?')) {
+      const planToDelete = currentPlans.find(p => p.id === id);
+      const targetSubject = session?.subject || planToDelete?.subject || '';
+      const targetGrade = session?.grade || planToDelete?.gradeLevel || '';
+
       setCurrentPlans(prev => {
         const updated = prev.filter(p => p.id !== id);
         if (session && session.subject && session.grade) {
@@ -340,12 +340,26 @@ const App: React.FC = () => {
         }
         return updated;
       });
+
+      if (planToDelete && targetSubject && targetGrade) {
+        recordTeacherUnitChange({
+          user: currentUser,
+          subject: targetSubject,
+          grade: targetGrade,
+          requestType: 'deletion',
+          unitId: planToDelete.id,
+          unitTitle: planToDelete.title || 'Sans titre',
+          previousPlan: planToDelete,
+          newPlan: null,
+        });
+      }
     }
   };
 
   const handleSavePlan = (plan: UnitPlan) => {
     const targetSubject = session?.subject || plan.subject || '';
     const targetGrade = session?.grade || plan.gradeLevel || '';
+    const previousPlan = currentPlans.find(p => p.id === plan.id) || null;
     const planToSave = sanitizeUnitPlan(
       {
         ...plan,
@@ -365,6 +379,20 @@ const App: React.FC = () => {
       }
       return next;
     });
+
+    if (targetSubject && targetGrade) {
+      recordTeacherUnitChange({
+        user: currentUser,
+        subject: targetSubject,
+        grade: targetGrade,
+        requestType: previousPlan ? 'modification' : 'creation',
+        unitId: planToSave.id,
+        unitTitle: planToSave.title || 'Sans titre',
+        previousPlan,
+        newPlan: planToSave,
+      });
+    }
+
     setView(AppView.DASHBOARD);
     localStorage.setItem('currentView', AppView.DASHBOARD);
   };
@@ -437,12 +465,24 @@ const App: React.FC = () => {
       );
       return next;
     });
+
+    recordTeacherUnitChange({
+      user: currentUser,
+      subject: session.subject,
+      grade: session.grade,
+      requestType: 'creation',
+      unitId: signed.id,
+      unitTitle: signed.title || 'Sans titre',
+      previousPlan: null,
+      newPlan: signed,
+    });
   };
 
   const handleUpdateUnit = (plan: UnitPlan) => {
     if (!session) return;
     loadSeqRef.current++;
     loadedSessionKeyRef.current = `${session.subject.trim()}_${session.grade.trim()}`;
+    const previousPlan = currentPlans.find(p => p.id === plan.id) || null;
     const signed = sanitizeUnitPlan(
       { ...plan, subject: session.subject, gradeLevel: session.grade },
       session.subject,
@@ -454,6 +494,17 @@ const App: React.FC = () => {
         console.error('❌ Erreur sauvegarde mise à jour unité:', err)
       );
       return next;
+    });
+
+    recordTeacherUnitChange({
+      user: currentUser,
+      subject: session.subject,
+      grade: session.grade,
+      requestType: 'modification',
+      unitId: signed.id,
+      unitTitle: signed.title || 'Sans titre',
+      previousPlan,
+      newPlan: signed,
     });
   };
 

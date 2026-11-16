@@ -359,16 +359,73 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     );
   };
 
-  // ── Handle request action ─────────────────────────────────────────────────
+  // ── Handle request action (Approve = confirm / Reject = revert) ───────────
   const handleRequestAction = async (id: string, action: 'approved' | 'rejected', note?: string) => {
     try {
       const targetReq = requests.find(r => r.id === id);
-      if (action === 'approved' && targetReq && targetReq.requestType === 'deletion' && targetReq.subject && targetReq.grade) {
+      if (targetReq && targetReq.subject && targetReq.grade) {
         const existingPlans = await loadPlansFromDatabase(targetReq.subject, targetReq.grade);
-        const filtered = existingPlans.filter(p => p.id !== targetReq.unitId && p.title !== targetReq.unitTitle);
-        await savePlansToDatabase(targetReq.subject, targetReq.grade, filtered);
-        window.dispatchEvent(new CustomEvent('planifications_updated'));
+
+        if (action === 'approved') {
+          // L'administrateur accepte : on s'assure que le changement est bien appliqué
+          if (targetReq.requestType === 'deletion') {
+            const filtered = existingPlans.filter(
+              p => p.id !== targetReq.unitId && (!targetReq.previousPlan?.id || p.id !== targetReq.previousPlan.id)
+            );
+            await savePlansToDatabase(targetReq.subject, targetReq.grade, filtered);
+          } else if (targetReq.newPlan) {
+            const exists = existingPlans.some(
+              p => p.id === targetReq.unitId || p.id === targetReq.newPlan.id
+            );
+            const updated = exists
+              ? existingPlans.map(p =>
+                  p.id === targetReq.unitId || p.id === targetReq.newPlan.id ? targetReq.newPlan : p
+                )
+              : [...existingPlans, targetReq.newPlan];
+            await savePlansToDatabase(targetReq.subject, targetReq.grade, updated);
+          }
+          window.dispatchEvent(new CustomEvent('planifications_updated'));
+        } else if (action === 'rejected') {
+          // L'administrateur refuse : on annule la modification de l'enseignant et on restaure l'état précédent
+          if (targetReq.requestType === 'creation') {
+            // Annuler un ajout = supprimer l'unité ajoutée
+            const filtered = existingPlans.filter(
+              p =>
+                p.id !== targetReq.unitId &&
+                (!targetReq.newPlan?.id || p.id !== targetReq.newPlan.id)
+            );
+            await savePlansToDatabase(targetReq.subject, targetReq.grade, filtered);
+          } else if (targetReq.requestType === 'modification' && targetReq.previousPlan) {
+            // Annuler une modification = restaurer l'ancienne version de l'unité
+            const found = existingPlans.some(
+              p => p.id === targetReq.unitId || p.id === targetReq.previousPlan.id
+            );
+            const restored = found
+              ? existingPlans.map(p =>
+                  p.id === targetReq.unitId || p.id === targetReq.previousPlan.id
+                    ? targetReq.previousPlan
+                    : p
+                )
+              : [...existingPlans, targetReq.previousPlan];
+            await savePlansToDatabase(targetReq.subject, targetReq.grade, restored);
+          } else if (targetReq.requestType === 'deletion' && targetReq.previousPlan) {
+            // Annuler une suppression = réinsérer l'unité supprimée
+            const alreadyThere = existingPlans.some(
+              p => p.id === targetReq.unitId || p.id === targetReq.previousPlan.id
+            );
+            const restored = alreadyThere
+              ? existingPlans.map(p =>
+                  p.id === targetReq.unitId || p.id === targetReq.previousPlan.id
+                    ? targetReq.previousPlan
+                    : p
+                )
+              : [...existingPlans, targetReq.previousPlan];
+            await savePlansToDatabase(targetReq.subject, targetReq.grade, restored);
+          }
+          window.dispatchEvent(new CustomEvent('planifications_updated'));
+        }
       }
+
       await updateRequestStatus(id, action, note);
       await loadRequests();
     } catch (e: any) {
@@ -1254,7 +1311,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
               <div className="space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-3">
                   <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                    <Bell size={16} /> Demandes de modification
+                    <Bell size={16} /> Validation des modifications enseignants
                   </h3>
                   <div className="flex gap-2">
                     {(['all', 'pending', 'approved', 'rejected', 'completed'] as const).map(f => (
@@ -1267,12 +1324,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
                       >
-                        {f === 'all' ? 'Toutes' : f === 'pending' ? 'En attente' : f === 'approved' ? 'Approuvées' : f === 'rejected' ? 'Refusées' : 'Terminées'}
+                        {f === 'all' ? 'Toutes' : f === 'pending' ? 'En attente' : f === 'approved' ? 'Acceptées' : f === 'rejected' ? 'Refusées (Annulées)' : 'Terminées'}
                       </button>
                     ))}
                     <button onClick={loadRequests} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg transition" title="Actualiser">
                       <RefreshCw size={14} />
                     </button>
+                  </div>
+                </div>
+
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-900 flex items-start gap-2.5">
+                  <AlertCircle size={15} className="text-indigo-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Fonctionnement sans blocage :</strong> Les ajouts, modifications et suppressions d'unités effectués par les enseignants s'appliquent immédiatement afin de ne jamais les bloquer. Cliquez sur <strong>Accepter</strong> pour confirmer définitivement le changement, ou sur <strong>Refuser &amp; Annuler</strong> pour annuler la modification et restaurer automatiquement l'état précédent.
                   </div>
                 </div>
 
@@ -1283,7 +1347,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                 ) : requests.length === 0 ? (
                   <div className="text-center py-12 text-slate-400">
                     <Bell size={32} className="mx-auto mb-2 opacity-30" />
-                    <p>Aucune demande {requestFilter === 'pending' ? 'en attente' : ''}</p>
+                    <p>Aucune modification {requestFilter === 'pending' ? 'en attente' : ''}</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1519,6 +1583,13 @@ const RequestCard: React.FC<RequestCardProps> = ({ request, onApprove, onReject 
     setAction(null);
   };
 
+  const typeConfig: Record<string, { label: string; cls: string }> = {
+    creation: { label: '➕ Ajout d\'unité', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+    modification: { label: '✏️ Modification d\'unité', cls: 'bg-blue-100 text-blue-800 border-blue-200' },
+    deletion: { label: '🗑️ Suppression d\'unité', cls: 'bg-rose-100 text-rose-800 border-rose-200' },
+  };
+  const reqType = typeConfig[request.requestType || 'modification'] || typeConfig.modification;
+
   return (
     <div className={`bg-white border rounded-xl p-4 shadow-sm ${
       request.status === 'pending' ? 'border-yellow-200' :
@@ -1532,12 +1603,15 @@ const RequestCard: React.FC<RequestCardProps> = ({ request, onApprove, onReject 
             <span className="text-slate-400 text-xs">·</span>
             <span className="text-xs text-indigo-600 font-medium">{request.subject}</span>
             {request.grade && <><span className="text-slate-400 text-xs">·</span><span className="text-xs text-slate-500">{request.grade}</span></>}
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${reqType.cls}`}>
+              {reqType.label}
+            </span>
             <StatusBadgeLocal status={request.status} />
           </div>
           <p className="text-sm font-medium text-slate-700 mb-1">
             📄 {request.unitTitle}
           </p>
-          <p className="text-xs text-slate-500 line-clamp-2">{request.description}</p>
+          <p className="text-xs text-slate-500">{request.description}</p>
           <p className="text-xs text-slate-400 mt-1">{new Date(request.createdAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
           {request.adminNote && (
             <p className="text-xs text-slate-600 mt-1 italic bg-slate-50 rounded p-1.5 border border-slate-200">
@@ -1547,18 +1621,20 @@ const RequestCard: React.FC<RequestCardProps> = ({ request, onApprove, onReject 
         </div>
 
         {request.status === 'pending' && (
-          <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
               onClick={() => { setAction('approve'); setShowNote(true); }}
               className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold transition"
+              title="Accepter et conserver cette modification"
             >
-              <CheckCircle size={12} /> Approuver
+              <CheckCircle size={12} /> Accepter
             </button>
             <button
               onClick={() => { setAction('reject'); setShowNote(true); }}
               className="flex items-center gap-1 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg text-xs font-semibold transition"
+              title="Refuser et annuler automatiquement cette modification"
             >
-              <XCircle size={12} /> Refuser
+              <XCircle size={12} /> Refuser &amp; Annuler
             </button>
           </div>
         )}
@@ -1573,7 +1649,11 @@ const RequestCard: React.FC<RequestCardProps> = ({ request, onApprove, onReject 
             type="text"
             value={note}
             onChange={e => setNote(e.target.value)}
-            placeholder="Ex: Approuvé, vous pouvez modifier la section évaluation"
+            placeholder={
+              action === 'approve'
+                ? 'Ex: Modification validée par l\'administration'
+                : 'Ex: Modification annulée — l\'état précédent de l\'unité a été restauré'
+            }
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2 focus:ring-2 focus:ring-indigo-300 outline-none"
           />
           <div className="flex gap-2">
@@ -1583,13 +1663,17 @@ const RequestCard: React.FC<RequestCardProps> = ({ request, onApprove, onReject 
                 action === 'approve' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-500 hover:bg-red-600'
               }`}
             >
-              {action === 'approve' ? <><CheckCircle size={12} /> Confirmer l'approbation</> : <><XCircle size={12} /> Confirmer le refus</>}
+              {action === 'approve' ? (
+                <><CheckCircle size={12} /> Confirmer l'acceptation</>
+              ) : (
+                <><XCircle size={12} /> Confirmer le refus et annuler la modification</>
+              )}
             </button>
             <button
               onClick={() => { setShowNote(false); setNote(''); setAction(null); }}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition"
             >
-              Annuler
+              Fermer
             </button>
           </div>
         </div>
@@ -1600,9 +1684,9 @@ const RequestCard: React.FC<RequestCardProps> = ({ request, onApprove, onReject 
 
 function StatusBadgeLocal({ status }: { status: string }) {
   const config: Record<string, { cls: string; label: string }> = {
-    pending: { cls: 'bg-yellow-100 text-yellow-800 border-yellow-200', label: '⏳ En attente' },
-    approved: { cls: 'bg-green-100 text-green-800 border-green-200', label: '✅ Approuvée' },
-    rejected: { cls: 'bg-red-100 text-red-800 border-red-200', label: '❌ Refusée' },
+    pending: { cls: 'bg-yellow-100 text-yellow-800 border-yellow-200', label: '⏳ Appliquée (En attente validation)' },
+    approved: { cls: 'bg-green-100 text-green-800 border-green-200', label: '✅ Acceptée' },
+    rejected: { cls: 'bg-red-100 text-red-800 border-red-200', label: '↩️ Refusée & Annulée' },
     completed: { cls: 'bg-blue-100 text-blue-800 border-blue-200', label: '✔️ Terminée' },
   };
   const c = config[status] || config.pending;

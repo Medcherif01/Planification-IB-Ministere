@@ -4,7 +4,7 @@ import { Plus, Edit2, Trash2, FileText, Calendar, Layers, Loader2, Download, X, 
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { generateCourseFromChapters, generateInterdisciplinaryUnits, parseDriveFormTags, generateFromDriveForm, DRIVE_FORM_TAGS, InterdisciplinaryUnit, DriveFormConfig, generateServiceActionForGrade, regenerateAllUnitsFromSummary, UnitSummaryInput, generateAssessmentsForUnit, generateUnitDetailsWithAI, updateUnitFromConceptsAndObjectives, suggestUnitGroupingsFromSyllabus, generateCourseFromUnitGroupings, sanitizeUnitPlan } from '../services/geminiService';
 import { extractCriteriaLetters, formatCriterionFullName, getStandardIBCriterion, syncAssessmentsWithTargetCriteria, normalizeCriterionLetter } from '../services/ibCriteriaService';
-import type { AppUser } from '../services/authService';
+import { listModificationRequests, type AppUser, type ModificationRequest } from '../services/authService';
 import ModificationRequestModal from './ModificationRequestModal';
 import { exportUnitPlanToWord, exportAllUnitPlansToZip, exportAssessmentsToZip, exportConsolidatedPlanByGrade, exportOverviewToWord, exportInterdisciplinaryToWord, exportInterdisciplinaryOverviewToWord, exportSEAOverviewToWord, exportSEAPlanToWord, exportCompleteInterdisciplinaryThemePlan, exportInterdisciplinaryAssessmentsToZip } from '../services/wordExportService';
 import { checkSubjectCompletionAllGrades } from '../services/databaseService';
@@ -404,6 +404,30 @@ const Dashboard: React.FC<DashboardProps> = ({ currentSubject, currentGrade, pla
   const [modRequestPlan, setModRequestPlan] = useState<UnitPlan | null>(null);
   const [modRequestType, setModRequestType] = useState<'modification' | 'creation' | 'deletion'>('modification');
   const [showModRequestModal, setShowModRequestModal] = useState(false);
+  const [unitModRequests, setUnitModRequests] = useState<ModificationRequest[]>([]);
+
+  // Charger les modifications en attente pour afficher le statut de validation admin
+  useEffect(() => {
+    const fetchModReqs = async () => {
+      try {
+        const reqs = await listModificationRequests();
+        setUnitModRequests(
+          reqs.filter(
+            r =>
+              (!r.subject || r.subject === currentSubject) &&
+              (!r.grade || r.grade === currentGrade)
+          )
+        );
+      } catch {}
+    };
+    fetchModReqs();
+    window.addEventListener('modification_requests_updated', fetchModReqs);
+    window.addEventListener('planifications_updated', fetchModReqs);
+    return () => {
+      window.removeEventListener('modification_requests_updated', fetchModReqs);
+      window.removeEventListener('planifications_updated', fetchModReqs);
+    };
+  }, [currentSubject, currentGrade, plans.length]);
 
   // Vérifier la complétude de la matière sur tous les PEI au montage
   useEffect(() => {
@@ -1923,29 +1947,13 @@ Chapitre 4 : Algèbre et équations
                         Unités & Normes IB ({currentGrade})
                       </div>
 
-                      {isAdmin ? (
-                        <button
-                          onClick={() => { setOpenHeaderMenu(null); handleOpenAddUnit(); }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-blue-700 hover:bg-blue-50 transition text-left"
-                        >
-                          <Plus size={14} />
-                          <span>Ajouter une unité</span>
-                        </button>
-                      ) : (
-                        plans.length > 0 && (
-                          <button
-                            onClick={() => {
-                              setOpenHeaderMenu(null);
-                              setModRequestPlan(plans[0]);
-                              setShowModRequestModal(true);
-                            }}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-blue-700 hover:bg-blue-50 transition text-left"
-                          >
-                            <PenLine size={14} />
-                            <span>Demander une modification</span>
-                          </button>
-                        )
-                      )}
+                      <button
+                        onClick={() => { setOpenHeaderMenu(null); handleOpenAddUnit(); }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-blue-700 hover:bg-blue-50 transition text-left"
+                      >
+                        <Plus size={14} />
+                        <span>Ajouter une unité</span>
+                      </button>
 
                       <button
                         onClick={() => { setOpenHeaderMenu(null); setIsCriteriaEditorOpen(true); }}
@@ -1996,7 +2004,7 @@ Chapitre 4 : Algèbre et équations
                         <span>Calculateur d'heures (50h IB)</span>
                       </button>
 
-                      {isAdmin && plans.length > 0 && (
+                      {plans.length > 0 && (
                         <button
                           onClick={() => { setOpenHeaderMenu(null); handleOpenRegenAll(); }}
                           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-amber-800 hover:bg-amber-50 transition text-left border-t border-slate-100 mt-1 pt-2"
@@ -2267,9 +2275,28 @@ Chapitre 4 : Algèbre et équations
                       <div className="absolute inset-0 bg-gradient-to-br from-blue-50/0 via-indigo-50/0 to-violet-50/0 group-hover:from-blue-50/60 group-hover:via-indigo-50/30 group-hover:to-violet-50/20 transition-all duration-500 rounded-2xl pointer-events-none" />
                         <div className="relative z-10 flex justify-between items-start mb-4">
                             <div>
-                                <span className="inline-block px-2 py-1 text-xs font-bold bg-blue-100 text-blue-700 rounded mb-2">
-                                    {plan.subject || 'Sans matière'}
-                                </span>
+                                <div className="flex items-center gap-2 flex-wrap mb-2">
+                                  <span className="inline-block px-2 py-1 text-xs font-bold bg-blue-100 text-blue-700 rounded">
+                                      {plan.subject || 'Sans matière'}
+                                  </span>
+                                  {(() => {
+                                    const pendingReq = unitModRequests.find(
+                                      r => r.unitId === plan.id && r.status === 'pending'
+                                    );
+                                    if (!pendingReq) return null;
+                                    return (
+                                      <span
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 rounded-full"
+                                        title="Les modifications sont appliquées et visibles immédiatement. L'administrateur peut les confirmer ou les annuler."
+                                      >
+                                        <Clock size={11} />
+                                        {pendingReq.requestType === 'creation'
+                                          ? 'Ajout appliqué (en attente validation admin)'
+                                          : 'Modification appliquée (en attente validation admin)'}
+                                      </span>
+                                    );
+                                  })()}
+                                </div>
                                 <h3 className="text-lg font-bold text-slate-800 group-hover:text-blue-600 transition">{plan.title || 'Unité sans titre'}</h3>
                                 <p className="text-sm text-slate-500">{plan.gradeLevel} • {plan.duration}</p>
                                 {/* Affichage des concepts clés (un ou plusieurs) */}
@@ -2291,49 +2318,20 @@ Chapitre 4 : Algèbre et équations
                                 })()}
                             </div>
                             <div className="flex flex-col gap-2">
-                                {isAdmin ? (
-                                  <>
-                                    <button 
-                                        onClick={() => handleOpenEditUnit(plan)}
-                                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition ml-auto"
-                                        title="Modifier l'unité"
-                                    >
-                                        <Edit2 size={18} />
-                                    </button>
-                                    <button 
-                                        onClick={() => onDelete(plan.id)}
-                                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition ml-auto"
-                                        title="Supprimer"
-                                    >
-                                        <Trash2 size={18} />
-                                    </button>
-                                  </>
-                                ) : (
-                                  <div className="flex items-center gap-1 ml-auto">
-                                    <button
-                                      onClick={() => {
-                                        setModRequestPlan(plan);
-                                        setModRequestType('modification');
-                                        setShowModRequestModal(true);
-                                      }}
-                                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition"
-                                      title="Demander une modification de cette unité à l'administrateur"
-                                    >
-                                      <PenLine size={18} />
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setModRequestPlan(plan);
-                                        setModRequestType('deletion');
-                                        setShowModRequestModal(true);
-                                      }}
-                                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition"
-                                      title="Demander la suppression de cette unité (Autorisation administrateur requise)"
-                                    >
-                                      <Trash2 size={18} />
-                                    </button>
-                                  </div>
-                                )}
+                                <button 
+                                    onClick={() => handleOpenEditUnit(plan)}
+                                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition ml-auto"
+                                    title="Modifier l'unité"
+                                >
+                                    <Edit2 size={18} />
+                                </button>
+                                <button 
+                                    onClick={() => onDelete(plan.id)}
+                                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition ml-auto"
+                                    title="Supprimer l'unité"
+                                >
+                                    <Trash2 size={18} />
+                                </button>
                             </div>
                         </div>
                         
@@ -2452,41 +2450,28 @@ Chapitre 4 : Algèbre et équations
                             {/* Ligne 2 : Outils de mise à jour IB (unifiés sans doublon) & Travaux élèves */}
                             <div className="flex items-center justify-between gap-1.5 flex-wrap pt-1">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  {isAdmin ? (
-                                    <>
-                                      <button
-                                          onClick={() => handleUpdateUnitFromConcepts(plan)}
-                                          disabled={updatingUnitConceptsId === plan.id || updatingAssessmentId === plan.id}
-                                          className="flex items-center gap-1 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition font-semibold disabled:opacity-50 text-[11px]"
-                                          title="Mettre à jour cette unité et ses évaluations selon les concepts et les Objectifs Spécifiques IB enregistrés"
-                                      >
-                                          {updatingUnitConceptsId === plan.id || updatingAssessmentId === plan.id
-                                            ? <Loader2 className="animate-spin" size={12}/>
-                                            : <Sparkles size={12} className="text-indigo-600"/>}
-                                          <span>Maj Concepts & Objectifs IB</span>
-                                      </button>
-                                      <button
-                                          onClick={() => {
-                                            setDetailUpdatePlan(plan);
-                                            setIsDetailUpdateMode(true);
-                                          }}
-                                          className="flex items-center gap-1 bg-teal-50 text-teal-800 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition"
-                                          title="Ajouter des détails (séances, contexte élèves, réflexion, différenciation)"
-                                      >
-                                          <PenLine size={12}/>
-                                          <span>Détails IA</span>
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <button
-                                      onClick={() => { setModRequestPlan(plan); setShowModRequestModal(true); }}
-                                      className="flex items-center gap-1 bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg hover:bg-blue-100 text-[11px] font-semibold transition"
-                                      title="Demander une modification à l'administrateur"
-                                    >
+                                  <button
+                                      onClick={() => handleUpdateUnitFromConcepts(plan)}
+                                      disabled={updatingUnitConceptsId === plan.id || updatingAssessmentId === plan.id}
+                                      className="flex items-center gap-1 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition font-semibold disabled:opacity-50 text-[11px]"
+                                      title="Mettre à jour cette unité et ses évaluations selon les concepts et les Objectifs Spécifiques IB enregistrés"
+                                  >
+                                      {updatingUnitConceptsId === plan.id || updatingAssessmentId === plan.id
+                                        ? <Loader2 className="animate-spin" size={12}/>
+                                        : <Sparkles size={12} className="text-indigo-600"/>}
+                                      <span>Maj Concepts & Objectifs IB</span>
+                                  </button>
+                                  <button
+                                      onClick={() => {
+                                        setDetailUpdatePlan(plan);
+                                        setIsDetailUpdateMode(true);
+                                      }}
+                                      className="flex items-center gap-1 bg-teal-50 text-teal-800 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition"
+                                      title="Ajouter des détails (séances, contexte élèves, réflexion, différenciation)"
+                                  >
                                       <PenLine size={12}/>
-                                      <span>Demander modif.</span>
-                                    </button>
-                                  )}
+                                      <span>Détails IA</span>
+                                  </button>
                                 </div>
 
                                 <button

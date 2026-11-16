@@ -661,7 +661,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
               {currentUser.subjects.length > 0
                 ? <><span className="font-bold">{currentUser.subjects.join(', ')}</span>, aux unités interdisciplinaires et aux planifications SEA.</>
                 : 'toutes les matières (aucune restriction configurée).'}
-              <span className="ml-2 text-blue-600">Pour modifier des données, utilisez « Demander une modification ».</span>
+              <span className="ml-2 text-blue-600">Vous pouvez ajouter, modifier ou supprimer vos unités directement sans blocage (l'administrateur peut ensuite valider ou annuler ces modifications).</span>
             </div>
           </div>
         )}

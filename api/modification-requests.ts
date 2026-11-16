@@ -46,19 +46,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader('X-Storage-Mode', 'in-memory');
       if (req.method === 'GET') {
         let list = inMemoryModRequests;
-        if (callerRole !== 'admin') {
+        if (callerRole !== 'admin' && callerUsername) {
           list = list.filter(r => r.teacherUsername === callerUsername);
         }
         const status = req.query.status as string;
         if (status) list = list.filter(r => r.status === status);
+        const subject = req.query.subject as string;
+        if (subject) list = list.filter(r => r.subject === subject);
+        const grade = req.query.grade as string;
+        if (grade) list = list.filter(r => r.grade === grade);
         return res.status(200).json(list);
       }
       if (req.method === 'POST') {
-        const { teacherUsername, teacherDisplayName, subject, grade, unitId, unitTitle, requestType, description } = req.body;
+        const {
+          teacherUsername,
+          teacherDisplayName,
+          subject,
+          grade,
+          unitId,
+          unitTitle,
+          requestType,
+          description,
+          previousPlan,
+          newPlan,
+          appliedImmediately,
+        } = req.body;
         if (!teacherUsername || !subject || !unitTitle || !description) {
           return res.status(400).json({ error: 'Champs obligatoires manquants' });
         }
-        const id = `req_${Date.now()}`;
+
+        // Si une demande en attente existe déjà pour cette même unité, fusionner en conservant previousPlan original
+        if (appliedImmediately && unitId) {
+          const existingPending = inMemoryModRequests.find(
+            r => r.status === 'pending' && r.unitId === unitId && r.subject === subject && r.grade === (grade || '')
+          );
+          if (existingPending) {
+            if (existingPending.requestType === 'creation' && requestType === 'modification') {
+              existingPending.newPlan = newPlan ?? existingPending.newPlan;
+              existingPending.unitTitle = unitTitle || existingPending.unitTitle;
+              existingPending.description = description;
+              existingPending.updatedAt = new Date().toISOString();
+              return res.status(200).json({ success: true, id: existingPending.id, updatedExisting: true });
+            }
+            if (existingPending.requestType === 'modification' && requestType === 'modification') {
+              existingPending.newPlan = newPlan ?? existingPending.newPlan;
+              existingPending.unitTitle = unitTitle || existingPending.unitTitle;
+              existingPending.description = description;
+              existingPending.updatedAt = new Date().toISOString();
+              return res.status(200).json({ success: true, id: existingPending.id, updatedExisting: true });
+            }
+            if (requestType === 'deletion') {
+              existingPending.previousPlan = existingPending.previousPlan || existingPending.newPlan || previousPlan || null;
+              existingPending.newPlan = null;
+              existingPending.requestType = 'deletion';
+              existingPending.unitTitle = unitTitle || existingPending.unitTitle;
+              existingPending.description = description;
+              existingPending.updatedAt = new Date().toISOString();
+              return res.status(200).json({ success: true, id: existingPending.id, updatedExisting: true });
+            }
+          }
+        }
+
+        const id = `req_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const newReq = {
           id,
           _id: id,
@@ -72,9 +121,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           description,
           status: 'pending',
           createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
           adminNote: '',
           approvedAt: null,
+          rejectedAt: null,
           completedAt: null,
+          previousPlan: previousPlan || null,
+          newPlan: newPlan || null,
+          appliedImmediately: Boolean(appliedImmediately),
         };
         inMemoryModRequests.unshift(newReq);
         return res.status(201).json({ success: true, id });
@@ -109,23 +163,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── GET — Liste des demandes ─────────────────────────────────────────────
     if (req.method === 'GET') {
-      let filter: Record<string, unknown> = {};
-      // Admin voit tout, enseignant voit uniquement ses demandes
-      if (callerRole !== 'admin') {
-        filter = { teacherUsername: callerUsername };
+      const filter: Record<string, unknown> = {};
+      // Admin voit tout, enseignant voit ses demandes (ou celles de sa matière/classe)
+      if (callerRole !== 'admin' && callerUsername) {
+        filter.teacherUsername = callerUsername;
       }
       const status = req.query.status as string;
       if (status) filter.status = status;
+      const subject = req.query.subject as string;
+      if (subject) filter.subject = subject;
+      const grade = req.query.grade as string;
+      if (grade) filter.grade = grade;
       const requests = await col.find(filter).sort({ createdAt: -1 }).toArray();
       return res.status(200).json(requests.map(r => ({ ...r, id: r._id.toString() })));
     }
 
     // ── POST — Créer une demande (enseignant) ────────────────────────────────
     if (req.method === 'POST') {
-      const { teacherUsername, teacherDisplayName, subject, grade, unitId, unitTitle, requestType, description } = req.body;
+      const {
+        teacherUsername,
+        teacherDisplayName,
+        subject,
+        grade,
+        unitId,
+        unitTitle,
+        requestType,
+        description,
+        previousPlan,
+        newPlan,
+        appliedImmediately,
+      } = req.body;
       if (!teacherUsername || !subject || !unitTitle || !description) {
         return res.status(400).json({ error: 'Champs obligatoires manquants' });
       }
+
+      if (appliedImmediately && unitId) {
+        const existingPending = await col.findOne({
+          status: 'pending',
+          unitId,
+          subject,
+          grade: grade || '',
+        });
+        if (existingPending) {
+          const updateFields: Record<string, unknown> = {
+            unitTitle: unitTitle || existingPending.unitTitle,
+            description,
+            updatedAt: new Date().toISOString(),
+          };
+          if (existingPending.requestType === 'creation' && requestType === 'modification') {
+            updateFields.newPlan = newPlan ?? existingPending.newPlan;
+          } else if (existingPending.requestType === 'modification' && requestType === 'modification') {
+            updateFields.newPlan = newPlan ?? existingPending.newPlan;
+          } else if (requestType === 'deletion') {
+            updateFields.previousPlan = existingPending.previousPlan || existingPending.newPlan || previousPlan || null;
+            updateFields.newPlan = null;
+            updateFields.requestType = 'deletion';
+          }
+          await col.updateOne({ _id: existingPending._id }, { $set: updateFields });
+          return res.status(200).json({ success: true, id: existingPending._id.toString(), updatedExisting: true });
+        }
+      }
+
       const result = await col.insertOne({
         teacherUsername,
         teacherDisplayName: teacherDisplayName || teacherUsername,
@@ -137,9 +235,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         description,
         status: 'pending', // pending | approved | rejected | completed
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         adminNote: '',
         approvedAt: null,
+        rejectedAt: null,
         completedAt: null,
+        previousPlan: previousPlan || null,
+        newPlan: newPlan || null,
+        appliedImmediately: Boolean(appliedImmediately),
       });
       return res.status(201).json({ success: true, id: result.insertedId.toString() });
     }
@@ -161,7 +264,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } else {
         // Enseignant peut seulement marquer comme terminée (completed)
         if (status === 'completed') {
-          // Vérifier que la demande appartient à cet enseignant et est approved
           const existing = await col.findOne({ _id: new ObjectId(id as string) });
           if (!existing || existing.teacherUsername !== callerUsername) {
             return res.status(403).json({ error: 'Accès interdit' });
@@ -176,7 +278,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      await col.updateOne({ _id: new ObjectId(id as string) }, { $set: update });
+      try {
+        await col.updateOne({ _id: new ObjectId(id as string) }, { $set: update });
+      } catch {
+        await col.updateOne({ id: id as string }, { $set: update });
+      }
       return res.status(200).json({ success: true });
     }
 
@@ -187,7 +293,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const { id } = req.query;
       if (!id) return res.status(400).json({ error: 'id requis' });
-      await col.deleteOne({ _id: new ObjectId(id as string) });
+      try {
+        await col.deleteOne({ _id: new ObjectId(id as string) });
+      } catch {
+        await col.deleteOne({ id: id as string });
+      }
       return res.status(200).json({ success: true });
     }
 
