@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Award, CheckCircle, Copy, Eye, FileText, Filter, Loader2, LogOut, Plus, Printer, RefreshCw, Search, Sparkles, Trash2, User, X, ExternalLink, AlertTriangle, AlertCircle, ShieldCheck, ChevronRight, Check, Edit3, Download, Image as ImageIcon, Key, Lock, Unlock, Users, Sliders, Calculator, Layers, BookOpen, Calendar, Clock } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, UnitPlan, AssessmentData, AssessmentExercise, AssessmentSubQuestion, IndividualAccessCode } from '../types';
 import {
@@ -14,7 +14,13 @@ import {
   resolveMainExerciseResponseText,
   resolveSubQuestionResponse,
 } from '../services/onlineEvaluationService';
-import { generateCleanStudentCodesForEvaluation, fetchAllStudents, convertGoogleDriveUrl } from '../services/studentRosterService';
+import {
+  generateCleanStudentCodesForEvaluation,
+  fetchAllStudents,
+  convertGoogleDriveUrl,
+  replaceStudentMatricules,
+  normalizeMatricule,
+} from '../services/studentRosterService';
 import { GenerateQuestionOptions, isEnglishSubject } from '../services/criterialQuestionGeneratorService';
 import { getCriteriaSync } from '../services/ibCriteriaService';
 import { SUBJECTS, PEI_GRADES } from '../constants';
@@ -1251,7 +1257,27 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
     });
   };
 
-  // Sauvegarder toutes les modifications de noms et matricules des élèves
+  // Mémoriser les anciens matricules avant édition afin de remplacer l'ancien par le nouveau partout
+  const originalMatriculesSnapshotRef = useRef<{ evalId: string; rows: { studentNumber: string; studentName: string }[] }>({
+    evalId: '',
+    rows: [],
+  });
+
+  useEffect(() => {
+    if (managingCodesEval && managingCodesEval.id !== originalMatriculesSnapshotRef.current.evalId) {
+      originalMatriculesSnapshotRef.current = {
+        evalId: managingCodesEval.id,
+        rows: (managingCodesEval.studentAccessCodes || []).map(c => ({
+          studentNumber: normalizeMatricule(c.studentNumber),
+          studentName: (c.studentName || '').trim(),
+        })),
+      };
+    } else if (!managingCodesEval) {
+      originalMatriculesSnapshotRef.current = { evalId: '', rows: [] };
+    }
+  }, [managingCodesEval?.id]);
+
+  // Sauvegarder toutes les modifications de noms et matricules des élèves (et remplacer les anciens matricules partout)
   const handleSaveAllStudentMatricules = async (evalToSave?: OnlineEvaluation) => {
     const target = evalToSave || managingCodesEval;
     if (!target) return;
@@ -1262,13 +1288,64 @@ const TeacherEvaluationsManager: React.FC<TeacherEvaluationsManagerProps> = ({
         ...c,
         code: target.accessCode,
         studentName: (c.studentName || '').trim(),
-        studentNumber: (c.studentNumber || '').trim() || `PEI${gradeDigit}-${String(idx + 1).padStart(3, '0')}`,
+        studentNumber: normalizeMatricule(c.studentNumber) || `PEI${gradeDigit}-${String(idx + 1).padStart(3, '0')}`,
       }));
+
+      // Détecter tous les matricules modifiés (ancien -> nouveau) par ligne
+      const snapshotRows =
+        originalMatriculesSnapshotRef.current.evalId === target.id
+          ? originalMatriculesSnapshotRef.current.rows
+          : [];
+      const replacements: { oldMatricule: string; newMatricule: string; studentName?: string; grade?: string }[] = [];
+      normalizedCodes.forEach((c, idx) => {
+        const oldRow = snapshotRows[idx];
+        const oldMat = normalizeMatricule(oldRow?.studentNumber);
+        const newMat = normalizeMatricule(c.studentNumber);
+        if (oldMat && newMat && oldMat !== newMat) {
+          replacements.push({
+            oldMatricule: oldMat,
+            newMatricule: newMat,
+            studentName: c.studentName || oldRow?.studentName,
+            grade: target.grade,
+          });
+        }
+      });
+
       const updatedEval: OnlineEvaluation = {
         ...target,
         studentAccessCodes: normalizedCodes,
       };
       const saved = await createOrUpdateEvaluation(updatedEval);
+
+      // Si un ou plusieurs matricules ont été modifiés, remplacer les anciens matricules partout
+      // (registre de classe, autres évaluations de la classe, copies déjà soumises et livrets scolaires)
+      if (replacements.length > 0) {
+        await replaceStudentMatricules(replacements);
+        // Mettre à jour les copies actuellement affichées si on consulte cette évaluation
+        setSubmissions(prev =>
+          prev.map(sub => {
+            const matchedRep = replacements.find(
+              r => normalizeMatricule(r.oldMatricule) === normalizeMatricule(sub.studentNumber)
+            );
+            if (!matchedRep) return sub;
+            return {
+              ...sub,
+              studentNumber: matchedRep.newMatricule,
+              studentName: matchedRep.studentName || sub.studentName,
+            };
+          })
+        );
+      }
+
+      // Actualiser le snapshot avec les nouveaux matricules enregistrés
+      originalMatriculesSnapshotRef.current = {
+        evalId: saved.id,
+        rows: (saved.studentAccessCodes || []).map(c => ({
+          studentNumber: normalizeMatricule(c.studentNumber),
+          studentName: (c.studentName || '').trim(),
+        })),
+      };
+
       setManagingCodesEval(saved);
       setEvaluations(prev => prev.map(e => e.id === saved.id ? saved : e));
       if (selectedEvaluation?.id === saved.id) setSelectedEvaluation(saved);

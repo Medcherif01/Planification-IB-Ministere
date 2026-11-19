@@ -6,43 +6,70 @@ const DB_NAME = 'planpei';
 const COLLECTION = 'student_booklets';
 
 let cachedClient: MongoClient | null = null;
-let mongoDisabled = false;
+let connectingPromise: Promise<MongoClient | null> | null = null;
+let mongoRetryAfter = 0;
 const inMemoryBooklets = new Map<string, any>();
 
-async function connectToDatabase(): Promise<MongoClient | null> {
-  if (!MONGO_URL || mongoDisabled) return null;
-  if (cachedClient) {
-    try {
-      await cachedClient.db('admin').command({ ping: 1 });
-      return cachedClient;
-    } catch (_) {
-      try { await cachedClient.close(); } catch (_) {}
-      cachedClient = null;
-    }
-  }
+function normalizeMatStrict(val: any): string {
+  return String(val || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+}
 
+function normalizeMatDisplay(val: any): string {
+  return String(val || '').trim().toUpperCase();
+}
+
+function escapeRegex(val: string): string {
+  return val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function connectToDatabase(): Promise<MongoClient | null> {
+  if (!MONGO_URL) return null;
   if (!MONGO_URL.startsWith('mongodb://') && !MONGO_URL.startsWith('mongodb+srv://')) {
     return null;
   }
-
-  try {
-    const client = new MongoClient(MONGO_URL, {
-      serverApi: {
-        version: ServerApiVersion.v1,
-        strict: false,
-        deprecationErrors: false,
-      },
-      connectTimeoutMS: 5000,
-      socketTimeoutMS: 10000,
-      serverSelectionTimeoutMS: 5000,
-    });
-    await client.connect();
-    cachedClient = client;
-    return client;
-  } catch (_) {
-    mongoDisabled = true;
+  if (cachedClient) {
+    return cachedClient;
+  }
+  if (Date.now() < mongoRetryAfter) {
     return null;
   }
+  if (connectingPromise) {
+    return connectingPromise;
+  }
+
+  connectingPromise = (async () => {
+    try {
+      const client = new MongoClient(MONGO_URL, {
+        serverApi: {
+          version: ServerApiVersion.v1,
+          strict: false,
+          deprecationErrors: false,
+        },
+        maxPoolSize: 30,
+        minPoolSize: 1,
+        maxIdleTimeMS: 60_000,
+        connectTimeoutMS: 10_000,
+        socketTimeoutMS: 20_000,
+        serverSelectionTimeoutMS: 10_000,
+        retryWrites: true,
+        retryReads: true,
+      });
+      await client.connect();
+      client.on('topologyClosed', () => {
+        if (cachedClient === client) cachedClient = null;
+      });
+      cachedClient = client;
+      mongoRetryAfter = 0;
+      return client;
+    } catch (_) {
+      mongoRetryAfter = Date.now() + 10_000;
+      return null;
+    } finally {
+      connectingPromise = null;
+    }
+  })();
+
+  return connectingPromise;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -61,6 +88,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const callerRole = (req.headers['x-user-role'] as string) || '';
   const callerUsername = (req.headers['x-username'] as string) || '';
+  const action = typeof req.query.action === 'string' ? req.query.action.trim() : '';
 
   try {
     const client = await connectToDatabase();
@@ -87,6 +115,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         return res.status(200).json(list);
+      }
+
+      if (req.method === 'POST' && action === 'replace_matricules') {
+        const { replacements } = req.body || {};
+        if (!Array.isArray(replacements)) {
+          return res.status(400).json({ error: 'Tableau replacements requis' });
+        }
+        let updatedCount = 0;
+        for (const rep of replacements) {
+          const oldStrict = normalizeMatStrict(rep?.oldMatricule);
+          const newDisplay = normalizeMatDisplay(rep?.newMatricule);
+          const targetId = rep?.studentId ? String(rep.studentId) : '';
+          if (!newDisplay) continue;
+          for (const [key, b] of inMemoryBooklets.entries()) {
+            const matchId = Boolean(targetId && b.studentId === targetId);
+            const matchOld = Boolean(oldStrict && normalizeMatStrict(b.studentNumber) === oldStrict);
+            if (matchId || matchOld) {
+              inMemoryBooklets.set(key, {
+                ...b,
+                studentNumber: newDisplay,
+                studentName: rep?.studentName?.trim() || b.studentName,
+                updatedAt: new Date().toISOString(),
+              });
+              updatedCount++;
+            }
+          }
+        }
+        return res.status(200).json({ success: true, updatedCount });
       }
 
       if (req.method === 'POST' || req.method === 'PUT') {
@@ -133,7 +189,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const query: Record<string, any> = {};
       if (grade) {
-        query.grade = { $regex: new RegExp(`^${String(grade).trim()}$`, 'i') };
+        query.grade = { $regex: new RegExp(`^${escapeRegex(String(grade).trim())}$`, 'i') };
       }
       if (schoolYear) {
         query.schoolYear = String(schoolYear).trim();
@@ -149,8 +205,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json(list);
     }
 
+    if (req.method === 'POST' && action === 'replace_matricules') {
+      const { replacements } = req.body || {};
+      if (!Array.isArray(replacements)) {
+        return res.status(400).json({ error: 'Tableau replacements requis' });
+      }
+      let updatedCount = 0;
+      for (const rep of replacements) {
+        const oldRaw = String(rep?.oldMatricule || '').trim();
+        const newDisplay = normalizeMatDisplay(rep?.newMatricule);
+        const targetId = rep?.studentId ? String(rep.studentId) : '';
+        if (!newDisplay) continue;
+        const orClauses: any[] = [];
+        if (oldRaw) {
+          orClauses.push({ studentNumber: { $regex: new RegExp(`^\\s*${escapeRegex(oldRaw)}\\s*$`, 'i') } });
+        }
+        if (targetId) {
+          orClauses.push({ studentId: targetId });
+        }
+        if (orClauses.length === 0) continue;
+        const r = await collection.updateMany(
+          { $or: orClauses },
+          {
+            $set: {
+              studentNumber: newDisplay,
+              ...(rep?.studentName?.trim() ? { studentName: rep.studentName.trim() } : {}),
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        );
+        updatedCount += r.modifiedCount || 0;
+      }
+      return res.status(200).json({ success: true, updatedCount });
+    }
+
     if (req.method === 'POST' || req.method === 'PUT') {
-      const booklet = req.body;
+      const { _id, ...booklet } = req.body || {};
       if (!booklet || !booklet.grade || !booklet.studentId) {
         return res.status(400).json({ error: 'grade et studentId sont requis' });
       }

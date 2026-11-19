@@ -327,9 +327,151 @@ function saveLocalSubmissions(subs: StudentSubmission[]): void {
   try {
     const valid = (subs || [])
       .filter((s): s is StudentSubmission => Boolean(s && typeof s === 'object' && (s.id || s.evaluationId || s.studentNumber)))
-      .slice(0, 80);
+      .slice(0, 500);
     localStorage.setItem(LOCAL_STORAGE_SUBS_KEY, JSON.stringify(valid));
   } catch {}
+}
+
+const PENDING_SUBMISSIONS_QUEUE_KEY = 'ib_pending_submissions_queue_v1';
+
+function normalizeMatStrictLocal(val?: string): string {
+  return String(val || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+}
+
+function generateCollisionProofId(prefix: string): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `${prefix}_${crypto.randomUUID()}`;
+    }
+  } catch {}
+  const randA = Math.random().toString(36).slice(2, 9);
+  const randB = Math.random().toString(36).slice(2, 9);
+  return `${prefix}_${Date.now()}_${randA}${randB}`;
+}
+
+export function getPendingSubmissionsQueue(): StudentSubmission[] {
+  try {
+    const raw = localStorage.getItem(PENDING_SUBMISSIONS_QUEUE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingSubmissionsQueue(queue: StudentSubmission[]): void {
+  try {
+    if (!queue || queue.length === 0) {
+      localStorage.removeItem(PENDING_SUBMISSIONS_QUEUE_KEY);
+    } else {
+      localStorage.setItem(PENDING_SUBMISSIONS_QUEUE_KEY, JSON.stringify(queue.slice(0, 100)));
+    }
+  } catch {}
+}
+
+function enqueuePendingSubmission(sub: StudentSubmission): void {
+  const queue = getPendingSubmissionsQueue().filter(
+    q =>
+      !(
+        q.evaluationId === sub.evaluationId &&
+        normalizeMatStrictLocal(q.studentNumber) === normalizeMatStrictLocal(sub.studentNumber)
+      )
+  );
+  queue.unshift(sub);
+  savePendingSubmissionsQueue(queue);
+}
+
+function dequeuePendingSubmission(evaluationId: string, studentNumber: string): void {
+  const norm = normalizeMatStrictLocal(studentNumber);
+  const queue = getPendingSubmissionsQueue().filter(
+    q => !(q.evaluationId === evaluationId && normalizeMatStrictLocal(q.studentNumber) === norm)
+  );
+  savePendingSubmissionsQueue(queue);
+}
+
+/**
+ * Met à jour atomiquement l'accès d'un SEUL élève sur le serveur (évite d'écraser
+ * toute l'évaluation lorsque 30 élèves se connectent au même moment).
+ */
+export async function markStudentAccessUsed(params: {
+  evaluationId?: string;
+  accessCode?: string;
+  studentNumber: string;
+  studentName?: string;
+  consumeRetake?: boolean;
+  submissionId?: string;
+}): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}?action=mark_access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remplace les anciens matricules par les nouveaux dans le cache local des évaluations et des soumissions.
+ */
+export function applyMatriculeReplacementsToLocalEvaluationCache(
+  replacements: { oldMatricule: string; newMatricule: string; studentName?: string }[]
+): void {
+  if (!replacements || replacements.length === 0) return;
+
+  const evals = getLocalEvaluations();
+  let evalsChanged = false;
+  const updatedEvals = evals.map(ev => {
+    if (!Array.isArray(ev.studentAccessCodes)) return ev;
+    let codesChanged = false;
+    const mapped = ev.studentAccessCodes.map(sc => {
+      if (!sc) return sc;
+      const scStrict = normalizeMatStrictLocal(sc.studentNumber);
+      const match = replacements.find(r => normalizeMatStrictLocal(r.oldMatricule) === scStrict);
+      if (match && match.newMatricule.trim()) {
+        codesChanged = true;
+        return {
+          ...sc,
+          studentNumber: match.newMatricule.trim().toUpperCase(),
+          studentName: match.studentName?.trim() || sc.studentName,
+        };
+      }
+      return sc;
+    });
+    if (!codesChanged) return ev;
+    evalsChanged = true;
+    // Dédupliquer par matricule
+    const seen = new Set<string>();
+    const deduped = mapped.filter(sc => {
+      const k = normalizeMatStrictLocal(sc?.studentNumber);
+      if (!k) return true;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    return { ...ev, studentAccessCodes: deduped };
+  });
+  if (evalsChanged) saveLocalEvaluations(updatedEvals);
+
+  const subs = getLocalSubmissions();
+  let subsChanged = false;
+  const updatedSubs = subs.map(sub => {
+    const subStrict = normalizeMatStrictLocal(sub.studentNumber);
+    const match = replacements.find(r => normalizeMatStrictLocal(r.oldMatricule) === subStrict);
+    if (match && match.newMatricule.trim()) {
+      subsChanged = true;
+      return {
+        ...sub,
+        studentNumber: match.newMatricule.trim().toUpperCase(),
+        studentName: match.studentName?.trim() || sub.studentName,
+      };
+    }
+    return sub;
+  });
+  if (subsChanged) saveLocalSubmissions(updatedSubs);
 }
 
 // ── Evaluation Management ────────────────────────────────────────────────────
@@ -339,7 +481,7 @@ export async function createOrUpdateEvaluation(
 ): Promise<OnlineEvaluation> {
   const rawPayload = {
     ...evaluation,
-    id: evaluation.id || `eval_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    id: evaluation.id || generateCollisionProofId('eval'),
     accessCode: (evaluation.accessCode || `EVAL-${Math.floor(1000 + Math.random() * 9000)}`).toUpperCase(),
     status: evaluation.status || 'active',
     createdAt: evaluation.createdAt || new Date().toISOString(),
@@ -542,50 +684,162 @@ export async function deleteStudentSubmission(
   return true;
 }
 
-// ── Student Submissions ──────────────────────────────────────────────────────
+// ── Student Submissions (Livraison Garantie Haute Concurrence) ───────────────
 
-export async function submitStudentEvaluation(
-  submission: Omit<StudentSubmission, 'id' | 'submittedAt' | 'status'> & { id?: string }
-): Promise<StudentSubmission> {
-  const payload: StudentSubmission = {
-    ...submission,
-    id: submission.id || `sub_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-    submittedAt: new Date().toISOString(),
-    status: 'submitted',
-  };
-
+async function postSubmissionOnce(payload: StudentSubmission, timeoutMs = 25000): Promise<{
+  ok: boolean;
+  submission?: StudentSubmission;
+  error?: string;
+}> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${API_BASE}?action=submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
-    if (res.ok) {
-      const data = await res.json().catch(() => null);
-      const saved = (data?.submission && typeof data.submission === 'object' ? data.submission : null) as StudentSubmission | null;
-      if (saved && saved.id) {
-        const locals = getLocalSubmissions().filter(
-          s => s && !(s.evaluationId === saved.evaluationId && s.studentNumber === saved.studentNumber)
-        );
-        locals.unshift(saved);
-        saveLocalSubmissions(locals);
-        return saved;
-      }
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success === true && data?.submission && data.submission.id) {
+      return { ok: true, submission: data.submission as StudentSubmission };
     }
-  } catch (err) {
-    console.warn('[EvaluationService] API submit offline, fallback local:', err);
+    return {
+      ok: false,
+      error: data?.error || `Erreur serveur HTTP ${res.status}`,
+    };
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    return {
+      ok: false,
+      error: err?.name === 'AbortError' ? 'Délai dépassé (réseau chargé)' : (err?.message || 'Erreur réseau'),
+    };
+  }
+}
+
+export interface GuaranteedSubmitResult {
+  submission: StudentSubmission;
+  syncedToServer: boolean;
+  attempts: number;
+  errorMessage?: string;
+}
+
+/**
+ * Soumet la copie d'un élève avec garantie de livraison :
+ * - Identifiant unique anti-collision (UUID) même si 50 élèves envoient à la même milliseconde
+ * - Jusqu'à 5 tentatives automatiques avec backoff exponentiel + jitter aléatoire
+ * - File d'attente de synchronisation persistante en local si la connexion est coupée
+ */
+export async function submitStudentEvaluationGuaranteed(
+  submission: Omit<StudentSubmission, 'id' | 'submittedAt' | 'status'> & { id?: string; submittedAt?: string },
+  onRetryAttempt?: (attempt: number, maxAttempts: number) => void
+): Promise<GuaranteedSubmitResult> {
+  const payload: StudentSubmission = {
+    ...submission,
+    id: submission.id || generateCollisionProofId('sub'),
+    submittedAt: submission.submittedAt || new Date().toISOString(),
+    status: 'submitted',
+  };
+
+  // Sauvegarder immédiatement dans la file locale avant même l'envoi réseau (zéro perte possible)
+  enqueuePendingSubmission(payload);
+
+  const maxAttempts = 5;
+  const baseDelays = [0, 400, 950, 1800, 3200];
+  let lastError = '';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) {
+      onRetryAttempt?.(attempt, maxAttempts);
+      const jitter = Math.floor(Math.random() * 350);
+      await new Promise(resolve => setTimeout(resolve, (baseDelays[attempt - 1] || 2000) + jitter));
+    }
+
+    const result = await postSubmissionOnce(payload, 25000);
+    if (result.ok && result.submission) {
+      const saved = result.submission;
+      dequeuePendingSubmission(saved.evaluationId, saved.studentNumber);
+      const locals = getLocalSubmissions().filter(
+        s =>
+          s &&
+          !(
+            s.evaluationId === saved.evaluationId &&
+            normalizeMatStrictLocal(s.studentNumber) === normalizeMatStrictLocal(saved.studentNumber)
+          )
+      );
+      locals.unshift(saved);
+      saveLocalSubmissions(locals);
+      return { submission: saved, syncedToServer: true, attempts: attempt };
+    }
+    lastError = result.error || 'Échec de communication avec le serveur';
+    console.warn(`[EvaluationService] Tentative soumission ${attempt}/${maxAttempts} échouée:`, lastError);
   }
 
+  // Conserver dans le cache local + file d'attente pour renvoi automatique dès retour réseau
   const locals = getLocalSubmissions().filter(
-    s => s && !(s.evaluationId === payload.evaluationId && s.studentNumber === payload.studentNumber)
+    s =>
+      s &&
+      !(
+        s.evaluationId === payload.evaluationId &&
+        normalizeMatStrictLocal(s.studentNumber) === normalizeMatStrictLocal(payload.studentNumber)
+      )
   );
   locals.unshift(payload);
   saveLocalSubmissions(locals);
-  return payload;
+
+  return {
+    submission: payload,
+    syncedToServer: false,
+    attempts: maxAttempts,
+    errorMessage: lastError,
+  };
+}
+
+/**
+ * Renvoie automatiquement toutes les copies mises en file d'attente hors-ligne.
+ */
+export async function flushPendingSubmissions(): Promise<{ synced: number; remaining: number }> {
+  const queue = getPendingSubmissionsQueue();
+  if (queue.length === 0) return { synced: 0, remaining: 0 };
+
+  let synced = 0;
+  const remaining: StudentSubmission[] = [];
+
+  for (const sub of queue) {
+    const result = await postSubmissionOnce(sub, 20000);
+    if (result.ok && result.submission) {
+      synced++;
+      const locals = getLocalSubmissions().filter(
+        s =>
+          s &&
+          !(
+            s.evaluationId === result.submission!.evaluationId &&
+            normalizeMatStrictLocal(s.studentNumber) === normalizeMatStrictLocal(result.submission!.studentNumber)
+          )
+      );
+      locals.unshift(result.submission);
+      saveLocalSubmissions(locals);
+    } else {
+      remaining.push(sub);
+    }
+  }
+
+  savePendingSubmissionsQueue(remaining);
+  return { synced, remaining: remaining.length };
+}
+
+export async function submitStudentEvaluation(
+  submission: Omit<StudentSubmission, 'id' | 'submittedAt' | 'status'> & { id?: string }
+): Promise<StudentSubmission> {
+  const res = await submitStudentEvaluationGuaranteed(submission);
+  return res.submission;
 }
 
 export async function getSubmissionsForEvaluation(evaluationId: string): Promise<StudentSubmission[]> {
+  // Tenter de synchroniser d'abord toute copie en attente locale
+  flushPendingSubmissions().catch(() => {});
   try {
     const res = await fetch(`${API_BASE}?action=submissions&evalId=${encodeURIComponent(evaluationId)}`);
     if (res.ok) {

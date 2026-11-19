@@ -1,13 +1,49 @@
 import { MongoClient, ServerApiVersion, ObjectId } from 'mongodb';
+import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const MONGO_URL = (process.env.MONGO_URL || process.env.MONGODB_URI || '').trim();
 const DB_NAME = 'planpei';
 const COLLECTION = 'users';
 const STUDENTS_COLLECTION = 'class_students';
+const EVAL_COLLECTION = 'online_evaluations';
+const SUB_COLLECTION = 'online_submissions';
+const BOOKLETS_COLLECTION = 'student_booklets';
 
 let cachedClient: MongoClient | null = null;
+let connectingPromise: Promise<MongoClient | null> | null = null;
+let mongoRetryAfter = 0;
 let inMemoryStudents: any[] = [];
+
+function normalizeMatStrict(val: any): string {
+  return String(val || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+}
+
+function normalizeMatDisplay(val: any): string {
+  return String(val || '').trim().toUpperCase();
+}
+
+function normalizeStudentNameKey(val: any): string {
+  return String(val || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeRegex(val: string): string {
+  return val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function generateStudentId(): string {
+  try {
+    if (typeof crypto.randomUUID === 'function') {
+      return `stu_${crypto.randomUUID()}`;
+    }
+  } catch {}
+  return `stu_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+}
 
 // Simple password hash (SHA-256 via Web Crypto — available in Node 18+)
 async function hashPassword(password: string): Promise<string> {
@@ -33,26 +69,51 @@ const inMemoryUsers: any[] = [
   }
 ];
 
-let mongoDisabled = false;
-
 async function getDB() {
-  if (!MONGO_URL || mongoDisabled) return null;
+  if (!MONGO_URL) return null;
+  if (!MONGO_URL.startsWith('mongodb://') && !MONGO_URL.startsWith('mongodb+srv://')) return null;
+
   if (cachedClient) {
-    try { await cachedClient.db('admin').command({ ping: 1 }); return cachedClient.db(DB_NAME); }
-    catch (_) { try { await cachedClient.close(); } catch (_) {} cachedClient = null; }
+    return cachedClient.db(DB_NAME);
   }
-  try {
-    const client = new MongoClient(MONGO_URL, {
-      serverApi: { version: ServerApiVersion.v1, strict: false, deprecationErrors: false },
-      connectTimeoutMS: 5000, socketTimeoutMS: 10000, serverSelectionTimeoutMS: 5000,
-    });
-    await client.connect();
-    cachedClient = client;
-    return client.db(DB_NAME);
-  } catch (_) {
-    mongoDisabled = true;
+  if (Date.now() < mongoRetryAfter) {
     return null;
   }
+  if (connectingPromise) {
+    const c = await connectingPromise;
+    return c ? c.db(DB_NAME) : null;
+  }
+
+  connectingPromise = (async () => {
+    try {
+      const client = new MongoClient(MONGO_URL, {
+        serverApi: { version: ServerApiVersion.v1, strict: false, deprecationErrors: false },
+        maxPoolSize: 50,
+        minPoolSize: 2,
+        maxIdleTimeMS: 60_000,
+        connectTimeoutMS: 10_000,
+        socketTimeoutMS: 25_000,
+        serverSelectionTimeoutMS: 10_000,
+        retryWrites: true,
+        retryReads: true,
+      });
+      await client.connect();
+      client.on('topologyClosed', () => {
+        if (cachedClient === client) cachedClient = null;
+      });
+      cachedClient = client;
+      mongoRetryAfter = 0;
+      return client;
+    } catch (_) {
+      mongoRetryAfter = Date.now() + 10_000;
+      return null;
+    } finally {
+      connectingPromise = null;
+    }
+  })();
+
+  const client = await connectingPromise;
+  return client ? client.db(DB_NAME) : null;
 }
 
 // Seed admin user or migrate old Mohamed to Mohamed2020
@@ -101,6 +162,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ══════════════════════════════════════════════════════════════════════════
     if (req.query.entity === 'students') {
       const gradeFilter = typeof req.query.grade === 'string' ? req.query.grade.trim() : '';
+      const action = typeof req.query.action === 'string' ? req.query.action.trim() : '';
 
       if (!db) {
         res.setHeader('X-Storage-Mode', 'in-memory');
@@ -110,6 +172,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             : inMemoryStudents;
           return res.status(200).json(list);
         }
+        if (req.method === 'POST' && action === 'replace_matricules') {
+          const { replacements } = req.body || {};
+          if (!Array.isArray(replacements)) {
+            return res.status(400).json({ error: 'Tableau replacements requis' });
+          }
+          let updatedCount = 0;
+          for (const rep of replacements) {
+            const oldStrict = normalizeMatStrict(rep?.oldMatricule);
+            const newDisplay = normalizeMatDisplay(rep?.newMatricule);
+            const targetId = rep?.studentId ? String(rep.studentId) : '';
+            const targetNameKey = normalizeStudentNameKey(rep?.studentName);
+            const targetGrade = rep?.grade ? String(rep.grade).trim() : '';
+
+            if (!newDisplay) continue;
+            for (let i = 0; i < inMemoryStudents.length; i++) {
+              const s = inMemoryStudents[i];
+              const matchesId = Boolean(targetId && s.id === targetId);
+              const matchesOld = Boolean(oldStrict && normalizeMatStrict(s.studentNumber) === oldStrict);
+              const matchesName = Boolean(
+                targetNameKey &&
+                normalizeStudentNameKey(s.name) === targetNameKey &&
+                (!targetGrade || s.grade === targetGrade)
+              );
+              if (matchesId || matchesOld || matchesName) {
+                inMemoryStudents[i] = {
+                  ...s,
+                  name: rep?.studentName?.trim() || s.name,
+                  studentNumber: newDisplay,
+                };
+                updatedCount++;
+              }
+            }
+          }
+          return res.status(200).json({ success: true, updatedCount, students: inMemoryStudents });
+        }
         if (req.method === 'POST') {
           const { students, grade, replaceGrade } = req.body || {};
           if (Array.isArray(students)) {
@@ -118,14 +215,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
             for (const st of students) {
               if (!st || !st.name) continue;
-              const id = st.id || `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-              const existingIdx = inMemoryStudents.findIndex(x => x.id === id);
+              const targetGrade = String(st.grade || grade || 'PEI 1').trim();
+              const cleanName = String(st.name).trim();
+              const nameKey = normalizeStudentNameKey(cleanName);
+              const cleanMat = normalizeMatDisplay(st.studentNumber || '');
+              const existingIdx = inMemoryStudents.findIndex(
+                x =>
+                  (st.id && x.id === st.id) ||
+                  (x.grade === targetGrade && normalizeStudentNameKey(x.name) === nameKey)
+              );
+              const existing = existingIdx >= 0 ? inMemoryStudents[existingIdx] : null;
+              const id = existing?.id || st.id || generateStudentId();
               const record = {
                 id,
-                name: String(st.name).trim(),
-                studentNumber: String(st.studentNumber || '').trim(),
-                grade: String(st.grade || grade || 'PEI 1').trim(),
-                createdAt: st.createdAt || new Date().toISOString(),
+                name: cleanName,
+                studentNumber: cleanMat || existing?.studentNumber || '',
+                grade: targetGrade,
+                birthDate: st.birthDate !== undefined ? String(st.birthDate).trim() : (existing?.birthDate || ''),
+                photoUrl: st.photoUrl !== undefined ? String(st.photoUrl).trim() : (existing?.photoUrl || ''),
+                createdAt: existing?.createdAt || st.createdAt || new Date().toISOString(),
               };
               if (existingIdx >= 0) inMemoryStudents[existingIdx] = record;
               else inMemoryStudents.push(record);
@@ -152,6 +260,165 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const docs = await stuCol.find(query).toArray();
         return res.status(200).json(docs.map(d => ({ ...d, id: d.id || d._id.toString() })));
       }
+
+      // Remplacement atomique d'un ou plusieurs matricules dans class_students + evaluations + submissions + booklets
+      if (req.method === 'POST' && action === 'replace_matricules') {
+        const { replacements } = req.body || {};
+        if (!Array.isArray(replacements)) {
+          return res.status(400).json({ error: 'Tableau replacements requis' });
+        }
+
+        const evalCol = db.collection(EVAL_COLLECTION);
+        const subCol = db.collection(SUB_COLLECTION);
+        const bookletCol = db.collection(BOOKLETS_COLLECTION);
+
+        let updatedStudents = 0;
+        let updatedEvaluations = 0;
+        let updatedSubmissions = 0;
+        let updatedBooklets = 0;
+
+        const allStudents = await stuCol.find({}).toArray();
+        const allEvals = await evalCol.find({ studentAccessCodes: { $exists: true } }).toArray();
+
+        for (const rep of replacements) {
+          const oldRaw = String(rep?.oldMatricule || '').trim();
+          const oldStrict = normalizeMatStrict(oldRaw);
+          const newDisplay = normalizeMatDisplay(rep?.newMatricule);
+          const newStrict = normalizeMatStrict(newDisplay);
+          const targetId = rep?.studentId ? String(rep.studentId).trim() : '';
+          const targetNameKey = normalizeStudentNameKey(rep?.studentName);
+          const targetGrade = rep?.grade ? String(rep.grade).trim() : '';
+
+          if (!newDisplay) continue;
+
+          // 1. Remplacer dans class_students (et éviter tout doublon portant l'ancien matricule)
+          const matchingStudents = allStudents.filter(s => {
+            const byId = Boolean(targetId && s.id === targetId);
+            const byOld = Boolean(oldStrict && normalizeMatStrict(s.studentNumber) === oldStrict);
+            const byName = Boolean(
+              targetNameKey &&
+              normalizeStudentNameKey(s.name) === targetNameKey &&
+              (!targetGrade || s.grade === targetGrade)
+            );
+            return byId || byOld || byName;
+          });
+
+          if (matchingStudents.length > 0) {
+            const primary = matchingStudents[0];
+            const stuUpdate: Record<string, any> = { studentNumber: newDisplay };
+            if (rep?.studentName && String(rep.studentName).trim()) {
+              stuUpdate.name = String(rep.studentName).trim();
+            }
+            await stuCol.updateOne({ _id: primary._id }, { $set: stuUpdate });
+            primary.studentNumber = newDisplay;
+            updatedStudents++;
+
+            // Supprimer les éventuels doublons résiduels du même élève dans la même classe
+            if (matchingStudents.length > 1) {
+              const dupIds = matchingStudents.slice(1).map(d => d._id);
+              await stuCol.deleteMany({ _id: { $in: dupIds } });
+            }
+          }
+
+          if (!oldStrict || oldStrict === newStrict) continue;
+
+          // 2. Remplacer dans online_evaluations.studentAccessCodes
+          for (const ev of allEvals) {
+            if (!Array.isArray(ev.studentAccessCodes)) continue;
+            let changed = false;
+            const mapped = ev.studentAccessCodes.map((sc: any) => {
+              if (!sc) return sc;
+              const scStrict = normalizeMatStrict(sc.studentNumber);
+              const scNameKey = normalizeStudentNameKey(sc.studentName);
+              if (
+                scStrict === oldStrict ||
+                (targetNameKey && scNameKey === targetNameKey && scStrict !== newStrict)
+              ) {
+                changed = true;
+                return {
+                  ...sc,
+                  studentNumber: newDisplay,
+                  studentName: rep?.studentName?.trim() || sc.studentName,
+                };
+              }
+              return sc;
+            });
+
+            if (changed) {
+              // Dédupliquer si le nouveau matricule existait déjà
+              const deduped: any[] = [];
+              const seen = new Map<string, number>();
+              for (const item of mapped) {
+                const k = normalizeMatStrict(item?.studentNumber);
+                if (!k) { deduped.push(item); continue; }
+                const prevIdx = seen.get(k);
+                if (prevIdx === undefined) {
+                  seen.set(k, deduped.length);
+                  deduped.push(item);
+                } else {
+                  const prev = deduped[prevIdx];
+                  deduped[prevIdx] = {
+                    ...prev,
+                    ...item,
+                    studentName: item.studentName || prev.studentName,
+                    isUsed: Boolean(prev.isUsed || item.isUsed),
+                    usedAt: prev.usedAt || item.usedAt,
+                    submissionId: prev.submissionId || item.submissionId,
+                    allowedRetake: Boolean(prev.allowedRetake || item.allowedRetake),
+                  };
+                }
+              }
+              ev.studentAccessCodes = deduped;
+              await evalCol.updateOne({ _id: ev._id }, { $set: { studentAccessCodes: deduped } });
+              updatedEvaluations++;
+            }
+          }
+
+          // 3. Remplacer dans online_submissions
+          const escapedOld = escapeRegex(oldRaw);
+          const subUpdate: Record<string, any> = {
+            studentNumber: newDisplay,
+            normalizedStudentNumber: newStrict,
+          };
+          if (rep?.studentName && String(rep.studentName).trim()) {
+            subUpdate.studentName = String(rep.studentName).trim();
+          }
+          const subRes = await subCol.updateMany(
+            {
+              $or: [
+                { normalizedStudentNumber: oldStrict },
+                { studentNumber: { $regex: new RegExp(`^\\s*${escapedOld}\\s*$`, 'i') } },
+              ],
+            },
+            { $set: subUpdate }
+          );
+          updatedSubmissions += subRes.modifiedCount || 0;
+
+          // 4. Remplacer dans student_booklets
+          const bookletFilter: any = {
+            $or: [
+              { studentNumber: { $regex: new RegExp(`^\\s*${escapedOld}\\s*$`, 'i') } },
+              ...(targetId ? [{ studentId: targetId }] : []),
+            ],
+          };
+          const bRes = await bookletCol.updateMany(bookletFilter, {
+            $set: {
+              studentNumber: newDisplay,
+              ...(rep?.studentName?.trim() ? { studentName: rep.studentName.trim() } : {}),
+            },
+          });
+          updatedBooklets += bRes.modifiedCount || 0;
+        }
+
+        return res.status(200).json({
+          success: true,
+          updatedStudents,
+          updatedEvaluations,
+          updatedSubmissions,
+          updatedBooklets,
+        });
+      }
+
       if (req.method === 'POST') {
         const { students, grade, replaceGrade } = req.body || {};
         if (!Array.isArray(students)) {
@@ -160,15 +427,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (replaceGrade && grade) {
           await stuCol.deleteMany({ grade });
         }
+        const existingInDb = await stuCol.find(grade ? { grade } : {}).toArray();
+
         for (const st of students) {
           if (!st || !st.name) continue;
-          const id = st.id || `stu_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const targetGrade = String(st.grade || grade || 'PEI 1').trim();
+          const cleanName = String(st.name).trim();
+          const nameKey = normalizeStudentNameKey(cleanName);
+          const cleanMat = normalizeMatDisplay(st.studentNumber || '');
+
+          const existing = existingInDb.find(
+            x =>
+              (st.id && x.id === st.id) ||
+              (x.grade === targetGrade && normalizeStudentNameKey(x.name) === nameKey)
+          );
+          const id = existing?.id || st.id || generateStudentId();
           const record = {
             id,
-            name: String(st.name).trim(),
-            studentNumber: String(st.studentNumber || '').trim(),
-            grade: String(st.grade || grade || 'PEI 1').trim(),
-            createdAt: st.createdAt || new Date().toISOString(),
+            name: cleanName,
+            studentNumber: cleanMat || existing?.studentNumber || '',
+            grade: targetGrade,
+            birthDate: st.birthDate !== undefined ? String(st.birthDate).trim() : (existing?.birthDate || ''),
+            photoUrl: st.photoUrl !== undefined ? String(st.photoUrl).trim() : (existing?.photoUrl || ''),
+            createdAt: existing?.createdAt || st.createdAt || new Date().toISOString(),
           };
           await stuCol.updateOne({ id }, { $set: record }, { upsert: true });
         }
@@ -189,7 +470,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       return res.status(405).json({ error: 'Méthode non autorisée' });
     }
-    
+
     // In-memory fallback
     if (!db) {
       res.setHeader('X-Storage-Mode', 'in-memory');
@@ -251,7 +532,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(401).json({ error: 'Identifiants incorrects' });
       }
       const hash = await hashPassword(password);
-      const user = await col.findOne({ username: { $regex: new RegExp(`^${cleanUser}$`, 'i') }, passwordHash: hash, isActive: true });
+      const user = await col.findOne({ username: { $regex: new RegExp(`^${escapeRegex(cleanUser)}$`, 'i') }, passwordHash: hash, isActive: true });
       if (!user) {
         return res.status(401).json({ error: 'Identifiants incorrects' });
       }
@@ -344,4 +625,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json(inMemoryUsers.map(u => ({ ...u, passwordHash: undefined })));
   }
 }
-

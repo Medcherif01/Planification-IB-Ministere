@@ -63,6 +63,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [editStudentName, setEditStudentName] = useState('');
   const [editStudentNumber, setEditStudentNumber] = useState('');
+  const [isBatchEditingMatricules, setIsBatchEditingMatricules] = useState(false);
+  const [batchMatriculeDrafts, setBatchMatriculeDrafts] = useState<Record<string, { name: string; studentNumber: string }>>({});
+  const [matriculeUpdateNotice, setMatriculeUpdateNotice] = useState('');
   const [savingStudents, setSavingStudents] = useState(false);
 
   // ── Users state ───────────────────────────────────────────────────────────
@@ -250,12 +253,47 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
     setSavingStudents(true);
     try {
       await saveStudentsForGrade(
-        [{ id: stuId, name: editStudentName.trim(), studentNumber: editStudentNumber.trim(), grade: selectedStudentGrade }],
+        [{ id: stuId, name: editStudentName.trim(), studentNumber: editStudentNumber.trim().toUpperCase(), grade: selectedStudentGrade }],
         selectedStudentGrade,
         false
       );
       setEditingStudentId(null);
       await loadStudents();
+      setMatriculeUpdateNotice('✅ Matricule mis à jour : le nouveau matricule a remplacé l\'ancien partout (classe, évaluations, copies et livrets).');
+      setTimeout(() => setMatriculeUpdateNotice(''), 5000);
+    } finally {
+      setSavingStudents(false);
+    }
+  };
+
+  const handleStartBatchEditMatricules = () => {
+    const drafts: Record<string, { name: string; studentNumber: string }> = {};
+    studentsForCurrentGrade.forEach(s => {
+      drafts[s.id] = { name: s.name, studentNumber: s.studentNumber || '' };
+    });
+    setBatchMatriculeDrafts(drafts);
+    setEditingStudentId(null);
+    setIsBatchEditingMatricules(true);
+  };
+
+  const handleSaveBatchMatricules = async () => {
+    setSavingStudents(true);
+    try {
+      const updatedList = studentsForCurrentGrade.map(stu => {
+        const draft = batchMatriculeDrafts[stu.id];
+        return {
+          ...stu,
+          name: (draft?.name || stu.name).trim(),
+          studentNumber: (draft?.studentNumber || stu.studentNumber || '').trim().toUpperCase(),
+          grade: selectedStudentGrade,
+        };
+      });
+      await saveStudentsForGrade(updatedList, selectedStudentGrade, false);
+      setIsBatchEditingMatricules(false);
+      setBatchMatriculeDrafts({});
+      await loadStudents();
+      setMatriculeUpdateNotice('✅ Tous les matricules modifiés ont remplacé les anciens matricules dans la classe, les évaluations, les copies et les livrets.');
+      setTimeout(() => setMatriculeUpdateNotice(''), 6000);
     } finally {
       setSavingStudents(false);
     }
@@ -1045,9 +1083,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                   </div>
                 </div>
 
+                {/* Message de confirmation de remplacement de matricules */}
+                {matriculeUpdateNotice && (
+                  <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+                    <CheckCircle size={16} className="text-emerald-600 flex-shrink-0" />
+                    <span>{matriculeUpdateNotice}</span>
+                  </div>
+                )}
+
                 {/* Tableau des élèves de la classe sélectionnée */}
                 <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                  <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                  <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-xs text-slate-800">
                         Liste officielle — {selectedStudentGrade}
@@ -1057,13 +1103,47 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                       </span>
                     </div>
                     {studentsForCurrentGrade.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={handleClearClass}
-                        className="text-xs text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1"
-                      >
-                        <Trash2 size={13} /> Vider la classe
-                      </button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {isBatchEditingMatricules ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleSaveBatchMatricules}
+                              disabled={savingStudents}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs disabled:opacity-60"
+                            >
+                              {savingStudents ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                              <span>Enregistrer tous les matricules</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsBatchEditingMatricules(false);
+                                setBatchMatriculeDrafts({});
+                              }}
+                              className="px-3 py-1.5 bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold"
+                            >
+                              Annuler
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleStartBatchEditMatricules}
+                            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                          >
+                            <Edit2 size={13} />
+                            <span>Modifier plusieurs matricules</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleClearClass}
+                          className="text-xs text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1 ml-1"
+                        >
+                          <Trash2 size={13} /> Vider la classe
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -1096,11 +1176,27 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                         <tbody className="divide-y divide-slate-100">
                           {studentsForCurrentGrade.map((stu, idx) => {
                             const isEditing = editingStudentId === stu.id;
+                            const batchDraft = batchMatriculeDrafts[stu.id];
                             return (
                               <tr key={stu.id} className="hover:bg-slate-50/80 transition">
                                 <td className="px-4 py-2.5 font-bold text-slate-400">{idx + 1}</td>
                                 <td className="px-4 py-2.5">
-                                  {isEditing ? (
+                                  {isBatchEditingMatricules ? (
+                                    <input
+                                      type="text"
+                                      value={batchDraft?.name ?? stu.name}
+                                      onChange={e =>
+                                        setBatchMatriculeDrafts(prev => ({
+                                          ...prev,
+                                          [stu.id]: {
+                                            name: e.target.value,
+                                            studentNumber: prev[stu.id]?.studentNumber ?? stu.studentNumber,
+                                          },
+                                        }))
+                                      }
+                                      className="w-full border border-indigo-300 rounded-lg px-2.5 py-1 text-xs font-bold bg-white"
+                                    />
+                                  ) : isEditing ? (
                                     <input
                                       type="text"
                                       value={editStudentName}
@@ -1112,12 +1208,27 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                                   )}
                                 </td>
                                 <td className="px-4 py-2.5">
-                                  {isEditing ? (
+                                  {isBatchEditingMatricules ? (
+                                    <input
+                                      type="text"
+                                      value={batchDraft?.studentNumber ?? stu.studentNumber}
+                                      onChange={e =>
+                                        setBatchMatriculeDrafts(prev => ({
+                                          ...prev,
+                                          [stu.id]: {
+                                            name: prev[stu.id]?.name ?? stu.name,
+                                            studentNumber: e.target.value.toUpperCase(),
+                                          },
+                                        }))
+                                      }
+                                      className="w-40 border-2 border-indigo-300 focus:border-indigo-600 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-indigo-950 uppercase bg-indigo-50/40 outline-none"
+                                    />
+                                  ) : isEditing ? (
                                     <input
                                       type="text"
                                       value={editStudentNumber}
-                                      onChange={e => setEditStudentNumber(e.target.value)}
-                                      className="w-36 border border-indigo-300 rounded-lg px-2.5 py-1 text-xs font-mono"
+                                      onChange={e => setEditStudentNumber(e.target.value.toUpperCase())}
+                                      className="w-36 border border-indigo-300 rounded-lg px-2.5 py-1 text-xs font-mono uppercase"
                                     />
                                   ) : (
                                     <span className="font-mono text-slate-600">{stu.studentNumber}</span>
@@ -1129,7 +1240,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onExportCSV, onImportC
                                   </span>
                                 </td>
                                 <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                                  {isEditing ? (
+                                  {isBatchEditingMatricules ? (
+                                    <span className="text-[11px] text-indigo-600 font-semibold">
+                                      {(batchDraft?.studentNumber || '').trim().toUpperCase() !== (stu.studentNumber || '').trim().toUpperCase()
+                                        ? '🔄 Sera remplacé'
+                                        : 'Inchangé'}
+                                    </span>
+                                  ) : isEditing ? (
                                     <div className="inline-flex items-center gap-1">
                                       <button
                                         type="button"

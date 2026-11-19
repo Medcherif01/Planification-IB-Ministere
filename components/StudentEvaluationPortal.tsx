@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Award, CheckCircle, Clock, FileText, LogOut, Printer, Send, ShieldCheck, User, AlertCircle,
   ChevronRight, Save, Image as ImageIcon, Check, Lock, AlertTriangle, Palette, Compass, Ruler,
-  Square, Circle, Triangle, Edit3, Calculator, Layers, List, Keyboard, X
+  Square, Circle, Triangle, Edit3, Calculator, Layers, List, Keyboard, X, Loader2
 } from 'lucide-react';
 import { OnlineEvaluation, StudentSubmission, StudentAnswer, AssessmentExercise, AssessmentSubQuestion } from '../types';
 import { fetchAllStudents, normalizeMatricule, normalizeGradeLabel, convertGoogleDriveUrl, extractGoogleDriveId } from '../services/studentRosterService';
@@ -15,7 +15,15 @@ import RichExerciseContent from './RichExerciseContent';
 import InteractiveExerciseWidgets from './InteractiveExerciseWidgets';
 import { resolveArtworkOrImage, findMatchingArtwork, generateDynamicMuseumArtCard, getSafeArtworkImageUrl } from '../services/artworkService';
 import { sanitizeExerciseVisualsForDisplay, stripHtmlTags } from '../services/educationalDiagramService';
-import { getEvaluationByAccessCode, getStudentSubmission, getLocalSubmissions, createOrUpdateEvaluation, submitStudentEvaluation, resolveMainExerciseResponseText } from '../services/onlineEvaluationService';
+import {
+  getEvaluationByAccessCode,
+  getStudentSubmission,
+  getLocalSubmissions,
+  submitStudentEvaluationGuaranteed,
+  markStudentAccessUsed,
+  flushPendingSubmissions,
+  resolveMainExerciseResponseText,
+} from '../services/onlineEvaluationService';
 
 interface StudentEvaluationPortalProps {
   initialAccessCode?: string;
@@ -544,6 +552,9 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
   // - `${criterion}_${exIdx}` or `${criterion}_${exIdx}_sub_${subIdx}` -> dataUrl
   const [drawings, setDrawings] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitRetryNotice, setSubmitRetryNotice] = useState<string | null>(null);
+  const [submissionSyncStatus, setSubmissionSyncStatus] = useState<'idle' | 'synced' | 'pending_retry'>('idle');
+  const [isRetryingSync, setIsRetryingSync] = useState(false);
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [lastAutoSave, setLastAutoSave] = useState<string | null>(null);
@@ -616,6 +627,27 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setAccessCode(initialAccessCode.trim().toUpperCase());
     }
   }, [initialAccessCode]);
+
+  // Synchronisation automatique en arrière-plan des copies en file d'attente (si connexion rétablie)
+  useEffect(() => {
+    const tryFlush = async () => {
+      const res = await flushPendingSubmissions();
+      if (res.synced > 0 && res.remaining === 0) {
+        setSubmissionSyncStatus(prev => (prev === 'pending_retry' ? 'synced' : prev));
+      }
+    };
+    tryFlush();
+    window.addEventListener('online', tryFlush);
+    const interval = setInterval(() => {
+      if (submissionSyncStatus === 'pending_retry') {
+        tryFlush();
+      }
+    }, 5000);
+    return () => {
+      window.removeEventListener('online', tryFlush);
+      clearInterval(interval);
+    };
+  }, [submissionSyncStatus]);
 
   // Reconnaissance automatique du nom de l'élève uniquement LORSQUE l'élève saisit son Matricule exact (le matricule n'est jamais pré-rempli)
   useEffect(() => {
@@ -997,13 +1029,13 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         } catch {}
       }
 
-      // 5. Marquer uniquement le matricule de CET élève comme en cours d'utilisation / utilisé
+      // 5. Marquer atomiquement uniquement le matricule de CET élève (sans écraser les autres élèves connectés)
       if (evalData.studentAccessCodes && evalData.studentAccessCodes.length > 0) {
         const hasMatch = evalData.studentAccessCodes.some(
           sc => sc.studentNumber && normalizeMatricule(sc.studentNumber) === enteredMat
         );
         if (hasMatch) {
-          const updatedCodes = evalData.studentAccessCodes.map(sc => {
+          evalData.studentAccessCodes = evalData.studentAccessCodes.map(sc => {
             if (sc.studentNumber && normalizeMatricule(sc.studentNumber) === enteredMat) {
               return {
                 ...sc,
@@ -1011,16 +1043,18 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                 studentNumber: sc.studentNumber || cleanNum,
                 isUsed: true,
                 usedAt: sc.usedAt || new Date().toISOString(),
-                allowedRetake: sc.allowedRetake, // Conservé durant la passation pour autoriser le rechargement de page si besoin
+                allowedRetake: sc.allowedRetake,
               };
             }
             return sc;
           });
-          evalData.studentAccessCodes = updatedCodes;
-          createOrUpdateEvaluation({
-            ...evalData,
-            studentAccessCodes: updatedCodes,
-          }).catch(console.error);
+          markStudentAccessUsed({
+            evaluationId: evalData.id,
+            accessCode: evalData.accessCode,
+            studentNumber: cleanNum,
+            studentName: cleanName,
+            consumeRetake: false,
+          }).catch(() => {});
         }
       }
 
@@ -1218,18 +1252,21 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
     const fullPayload: StudentSubmission = {
       ...payload,
-      id: `sub_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id:
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? `sub_${crypto.randomUUID()}`
+          : `sub_${Date.now()}_${Math.random().toString(36).slice(2, 9)}${Math.random().toString(36).slice(2, 6)}`,
       submittedAt: new Date().toISOString(),
       status: 'submitted',
     };
 
-    // 2. Sauvegarde locale de la soumission
+    // 2. Sauvegarde locale de la soumission dans la file d'attente persistante
     try {
-      const raw = localStorage.getItem('ib_student_submissions');
+      const raw = localStorage.getItem('ib_pending_submissions_queue_v1');
       const existing = raw ? JSON.parse(raw) : [];
       const filtered = existing.filter((s: any) => !(s.evaluationId === fullPayload.evaluationId && s.studentNumber === cleanNum));
       filtered.unshift(fullPayload);
-      localStorage.setItem('ib_student_submissions', JSON.stringify(filtered));
+      localStorage.setItem('ib_pending_submissions_queue_v1', JSON.stringify(filtered));
     } catch {}
 
     // 3. Transmission réseau synchrone/résistante à la fermeture
@@ -1522,40 +1559,29 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
         });
       });
 
-      const submission = await submitStudentEvaluation({
-        evaluationId: curEval.id,
-        accessCode: curEval.accessCode,
-        studentNumber: curNum,
-        studentName: curName,
-        isLocked: true,
-        answers: formattedAnswers,
-      });
+      setSubmitRetryNotice('Enregistrement sécurisé sur le serveur en cours...');
+      const submitResult = await submitStudentEvaluationGuaranteed(
+        {
+          evaluationId: curEval.id,
+          accessCode: curEval.accessCode,
+          studentNumber: curNum,
+          studentName: curName,
+          isLocked: true,
+          answers: formattedAnswers,
+        },
+        (attempt, max) => {
+          setSubmitRetryNotice(`Réseau chargé — nouvelle tentative automatique (${attempt}/${max})...`);
+        }
+      );
 
-      // ── VERROUILLAGE DÉFINITIF DU MATRICULE DE L'ÉLÈVE ──
+      const submission = submitResult.submission;
+      setSubmissionSyncStatus(submitResult.syncedToServer ? 'synced' : 'pending_retry');
+      setSubmitRetryNotice(null);
+
+      // Le verrouillage du matricule côté serveur est déjà effectué atomiquement dans /api/online-evaluations?action=submit
+      // sans jamais écraser les autres élèves qui soumettent en même temps.
       const cleanNum = curNum;
-      const enteredMat = normalizeMatricule(cleanNum);
       const cleanCode = curEval.accessCode.trim().toUpperCase();
-
-      if (curEval.studentAccessCodes && curEval.studentAccessCodes.length > 0) {
-        const updatedCodes = curEval.studentAccessCodes.map(sc => {
-          if (sc.studentNumber && normalizeMatricule(sc.studentNumber) === enteredMat) {
-            return {
-              ...sc,
-              isUsed: true,
-              allowedRetake: false, // Usage unique consommé
-              usedAt: new Date().toISOString(),
-              studentName: sc.studentName || curName,
-              studentNumber: sc.studentNumber || cleanNum,
-            };
-          }
-          return sc;
-        });
-
-        createOrUpdateEvaluation({
-          ...curEval,
-          studentAccessCodes: updatedCodes,
-        }).catch(err => console.warn('Erreur verrouillage matricule:', err));
-      }
 
       // VERROUILLAGE DÉFINITIF EN LOCAL (avec purge préalable des brouillons pour éviter tout dépassement de quota)
       try {
@@ -1590,6 +1616,7 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
       setIsLockedAlready(true);
       setShowConfirmSubmit(false);
     } catch (err: any) {
+      setSubmitRetryNotice(null);
       alert(`Erreur lors de la remise : ${err.message || 'Impossible de soumettre la copie'}`);
     } finally {
       setIsSubmitting(false);
@@ -1796,6 +1823,50 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
 
         {/* Contenu copie verrouillée */}
         <main className="max-w-4xl mx-auto w-full p-4 sm:p-6 space-y-6 flex-1">
+          {/* Statut de synchronisation serveur (alerte si connexion perdue pendant l'envoi + bouton renvoi immédiat) */}
+          {submissionSyncStatus === 'pending_retry' && (
+            <div className="bg-orange-50 border-2 border-orange-400 rounded-2xl p-5 text-orange-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={24} className="text-orange-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-sm font-black text-orange-900">
+                    ⏳ Connexion instable — Vos réponses sont sauvegardées en sécurité et en cours d'envoi au serveur
+                  </h3>
+                  <p className="text-xs text-orange-800 mt-1">
+                    Ne fermez pas encore cette page : le système renvoie automatiquement votre copie toutes les 5 secondes jusqu'à confirmation par le serveur.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isRetryingSync}
+                onClick={async () => {
+                  setIsRetryingSync(true);
+                  try {
+                    const res = await flushPendingSubmissions();
+                    if (res.remaining === 0) {
+                      setSubmissionSyncStatus('synced');
+                    }
+                  } finally {
+                    setIsRetryingSync(false);
+                  }
+                }}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-black shadow-xs transition flex-shrink-0 disabled:opacity-60"
+              >
+                {isRetryingSync ? 'Envoi en cours...' : '🔄 Renvoyer au serveur maintenant'}
+              </button>
+            </div>
+          )}
+
+          {submissionSyncStatus === 'synced' && (
+            <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl px-5 py-3.5 text-emerald-900 flex items-center gap-3 text-xs font-bold">
+              <CheckCircle size={20} className="text-emerald-600 flex-shrink-0" />
+              <span>
+                ✅ Copie enregistrée et confirmée sur le serveur de l'enseignant (Matricule {existingSubmission?.studentNumber || studentNumber}).
+              </span>
+            </div>
+          )}
+
           {/* Notification si l'épreuve a été clôturée pour sortie d'écran / changement d'onglet */}
           {terminatedReason && (
             <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-5 text-rose-950 flex items-start gap-4">
@@ -3228,6 +3299,13 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                 </div>
               )}
 
+              {isSubmitting && submitRetryNotice && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-800 flex items-center gap-2 font-semibold animate-pulse">
+                  <Loader2 size={15} className="text-indigo-600 animate-spin flex-shrink-0" />
+                  <span>{submitRetryNotice}</span>
+                </div>
+              )}
+
               <div className="flex items-center gap-3 pt-2">
                 <button
                   onClick={() => setShowConfirmSubmit(false)}
@@ -3245,6 +3323,19 @@ const StudentEvaluationPortal: React.FC<StudentEvaluationPortalProps> = ({ initi
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── OVERLAY ENVOI AUTOMATIQUE EN COURS ── */}
+      {isSubmitting && !showConfirmSubmit && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full text-center space-y-3 border border-indigo-100">
+            <Loader2 size={32} className="text-indigo-600 animate-spin mx-auto" />
+            <h4 className="font-black text-slate-800 text-base">Enregistrement de votre copie…</h4>
+            <p className="text-xs text-slate-600 font-medium">
+              {submitRetryNotice || 'Synchronisation sécurisée avec le serveur en cours. Ne fermez pas cette fenêtre.'}
+            </p>
           </div>
         </div>
       )}
